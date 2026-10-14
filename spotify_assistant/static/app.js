@@ -151,7 +151,7 @@ function showGate(message) {
 // ---------- Playlists
 
 function current() {
-  return state.overview?.playlists.find((playlist) => playlist.name === state.selected);
+  return state.overview?.playlists.find((playlist) => playlist.key === state.selected);
 }
 
 function colorOf(playlist) {
@@ -192,13 +192,14 @@ function go(key) {
 }
 
 function shelfKeys() {
-  return [...state.overview.playlists.map((playlist) => playlist.name), ...Object.keys(VIEWS)];
+  return [...state.overview.playlists.map((playlist) => playlist.key), ...Object.keys(VIEWS)];
 }
 
-async function select(name) {
+async function select(key) {
   const playlists = state.overview.playlists;
+  if (!playlists.length) return openView("sensacoes");  // amigo sem playlists ainda: começa explorando
   state.view = "playlist";
-  state.selected = playlists.some((playlist) => playlist.name === name) ? name : playlists[0].name;
+  state.selected = playlists.some((playlist) => playlist.key === key) ? key : playlists[0].key;
   memory.set("selected", state.selected);
   history.replaceState(null, "", `#${encodeURIComponent(state.selected)}`);
   state.detail = null;
@@ -242,11 +243,11 @@ function renderShelf() {
     h("span", { class: "nav-mark", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
     h("span", null, label));
   const playlists = state.overview.playlists.map((playlist, index) => item({
-    key: playlist.name,
+    key: playlist.key,
     label: playlist.name,
     color: colorOf(playlist),
     uri: playlist.uri,
-    current: onPlaylist && playlist.name === state.selected,
+    current: onPlaylist && playlist.key === state.selected,
     number: index + 1,
   }));
   const explore = Object.entries(VIEWS).map(([key, label], index) => item({
@@ -259,7 +260,8 @@ function renderShelf() {
   const group = (label, items) => h("div", { class: "nav-group", role: "group", "aria-label": label },
     h("span", { class: "nav-label", "aria-hidden": "true" }, label),
     items);
-  $("#shelf").replaceChildren(group("Playlists", playlists), group("Explorar", explore));
+  const emptyShelf = !playlists.length && h("span", { class: "nav-empty" }, "Nenhuma ainda");
+  $("#shelf").replaceChildren(group("Playlists", playlists.length ? playlists : [emptyShelf]), group("Explorar", explore));
   markPlaying();
 }
 
@@ -295,13 +297,15 @@ function renderSleeve() {
   const refresh = !playlist.uri ? "Criar no meu Spotify"
     : playlist.kind === "podcasts" ? "Atualizar agora" : "Refazer seleção";
   // Os programas da Tech Radar são escolhidos pelo dono; amigos adicionam faixas só na própria cópia.
-  const canAdd = playlist.uri && (playlist.kind === "music" || (playlist.kind === "podcasts" && isOwner));
+  const canAdd = playlist.uri && (["music", "library"].includes(playlist.kind) || (playlist.kind === "podcasts" && isOwner));
+  // Estante curada do dono tem curadoria automática; playlists da própria conta, não.
+  const curated = playlist.kind !== "library";
   const actions = h("div", { class: "actions" },
     h("button", { class: "play-button", type: "button", disabled: !playlist.uri, onclick: () => play(playlist.uri) },
       playIcon(), "Tocar"),
     playlist.uri && h("a", { class: "ghost-button", href: playlist.uri }, "Abrir no app"),
-    h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refresh),
-    h("button", { class: "text-button", type: "button", onclick: () => startJob(true) }, "Ver prévia"),
+    curated && h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refresh),
+    curated && h("button", { class: "text-button", type: "button", onclick: () => startJob(true) }, "Ver prévia"),
     canAdd && h("button", {
       class: "text-button",
       type: "button",
@@ -328,7 +332,9 @@ function renderTracks() {
   }
   const items = state.detail.items;
   if (!items.length) {
-    let message = "Esta playlist está vazia. Use “Refazer seleção” para montá-la.";
+    let message = playlist.kind === "library"
+      ? "Esta playlist está vazia. Use “Adicionar faixa” para começar."
+      : "Esta playlist está vazia. Use “Refazer seleção” para montá-la.";
     if (!playlist.uri) message = "Esta playlist ainda não existe no seu Spotify. Use “Criar no meu Spotify” para montar a sua.";
     else if (playlist.kind === "podcasts") message = "Nenhum episódio novo nos últimos dias. Use “Atualizar agora” para procurar de novo.";
     list.replaceChildren(h("li", { class: "tracks-empty" }, message));
@@ -411,7 +417,7 @@ function resultRow(result, playlist) {
 async function addItem(playlist, result, button) {
   button.disabled = true;
   try {
-    const { message } = await api(`/api/playlists/${encodeURIComponent(playlist.name)}/items`, {
+    const { message } = await api(`/api/playlists/${encodeURIComponent(playlist.key)}/items`, {
       uri: result.uri,
       entry: result.entry,
     });
@@ -1133,7 +1139,7 @@ function bindGlobal() {
       $("#console").hidden = true;
       return;
     }
-    if (event.target.closest("input, textarea, select") || document.body.classList.contains("is-gated")) return;
+    if (event.target.closest?.("input, textarea, select") || document.body.classList.contains("is-gated")) return;
     if (event.code === "Space") {
       event.preventDefault();
       togglePlay();

@@ -40,6 +40,10 @@ class FakeSpotify:
     def my_playlists(self):
         yield {"id": "pl-jazz", "uri": "spotify:playlist:pl-jazz", "images": [{"url": "mosaic", "width": None}],
                "items": {"total": 1}, "owner": {"id": "paulo"}}
+        yield {"id": "anamix", "name": "Mix da Ana", "uri": "spotify:playlist:anamix", "images": [],
+               "items": {"total": 3}, "owner": {"id": "ana"}, "description": "S&#x27;ó as boas"}
+        yield {"id": "seguida", "name": "Top Brasil", "uri": "spotify:playlist:seguida", "images": [],
+               "items": {"total": 50}, "owner": {"id": "spotify"}}
 
     def playlist_items(self, playlist_id):
         return [TRACK]
@@ -179,6 +183,17 @@ class ServerTest(unittest.TestCase):
         friend = json.loads(self.request("/api/overview", as_user="ana")[1])
         self.assertEqual(friend["me"], {"id": "ana", "name": "Ana", "is_owner": False})
 
+    def test_friend_sees_only_own_playlists(self):
+        friend = json.loads(self.request("/api/overview", as_user="ana")[1])
+        # Nada da estante do dono (Tech, Jazz, Mix), nem playlists só seguidas: só as que ela criou.
+        self.assertEqual([p["name"] for p in friend["playlists"]], ["Mix da Ana"])
+        mix = friend["playlists"][0]
+        self.assertEqual((mix["key"], mix["kind"], mix["total"], mix["description"]),
+                         ("id:anamix", "library", 3, "S'ó as boas"))
+        self.assertIsNone(friend["schedule"])
+        owner = json.loads(self.request("/api/overview")[1])
+        self.assertNotIn("Mix da Ana", [p["name"] for p in owner["playlists"]])
+
     def test_playlist_detail_with_encoded_name(self):
         status, body = self.request("/api/playlists/Jazz")
         self.assertEqual(status, 200)
@@ -192,14 +207,19 @@ class ServerTest(unittest.TestCase):
         saved = json.loads((self.data / "playlists.json").read_text(encoding="utf-8"))
         self.assertIn("Bill Evans - Peace Piece", saved["playlists"][1]["tracks"])
 
-    def test_friend_adds_only_to_own_copy(self):
-        status, body = self.request("/api/playlists/Jazz/items", {"uri": "spotify:track:2", "entry": "X - Y"}, as_user="ana")
+    def test_friend_uses_own_playlist_and_cannot_touch_the_owner_shelf(self):
+        status, body = self.request("/api/playlists/id%3Aanamix", as_user="ana")
         self.assertEqual(status, 200, body)
-        self.assertEqual(self.fake.added, [("pl-ana", ["spotify:track:2"])])
+        status, body = self.request("/api/playlists/id%3Aanamix/items", {"uri": "spotify:track:2", "entry": "X - Y"}, as_user="ana")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(self.fake.added, [("anamix", ["spotify:track:2"])])
+        # A estante curada do dono não existe para ela: nem ver, nem editar, nem montar.
+        self.assertEqual(self.request("/api/playlists/Jazz", as_user="ana")[0], 404)
+        self.assertEqual(self.request("/api/playlists/Jazz/items", {"uri": "spotify:track:2", "entry": "X - Y"}, as_user="ana")[0], 404)
+        self.assertEqual(self.request("/api/jobs", {"playlist": "Jazz"}, as_user="ana")[0], 404)
         saved = json.loads((self.data / "playlists.json").read_text(encoding="utf-8"))
         self.assertNotIn("X - Y", saved["playlists"][1]["tracks"])
-        status, _ = self.request("/api/playlists/Tech/items", {"uri": "spotify:show:abc", "entry": "Data Hackers"}, as_user="ana")
-        self.assertEqual(status, 403)
+        self.assertEqual(self.request("/api/playlists/id%3A..%2Fx", as_user="ana")[0], 404)
 
     def test_owner_adds_show_and_caches_its_id(self):
         status, _ = self.request("/api/playlists/Tech/items", {"uri": "spotify:show:abc", "entry": "Data Hackers"})

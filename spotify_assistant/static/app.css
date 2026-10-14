@@ -110,6 +110,7 @@ body.is-gated .console { display: none; }
 .account-name { color: var(--linen); font-weight: 600; }
 .nav-group + .nav-group { padding-left: 18px; border-left: 1px solid var(--line); }
 .nav-label { margin-right: 10px; color: var(--smoke); font-size: .8125rem; }
+.nav-empty { padding: 0 6px; color: var(--smoke); font-size: .875rem; font-style: italic; }
 
 .nav-item {
   display: inline-flex;

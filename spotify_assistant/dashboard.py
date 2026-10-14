@@ -51,6 +51,8 @@ TASK_NAME = "Spotify Assistant - Tech Radar BR"  # mesmo nome do scripts/agendar
 SCHEDULE_TTL_S = 60
 MAX_BODY_BYTES = 64_000
 COOKIE_NAME = "sala"
+LIBRARY_SHELF_SIZE = 12  # playlists da própria conta que um amigo vê na estante
+LIBRARY_KEY = re.compile(r"id:(?P<id>[A-Za-z0-9]{1,64})")
 PENDING_LOGIN_TTL_S = 15 * 60
 
 log = logging.getLogger(__name__)
@@ -209,12 +211,43 @@ class App:
 
     def overview(self, user: Profile) -> dict:
         sp = self.spotify(user)
-        owned = {playlist["id"]: playlist for playlist in sp.my_playlists()}
+        library = list(sp.my_playlists())
+        # A estante curada (playlists.json) é só do dono; cada amigo vê as playlists da própria conta.
+        playlists = self._curated_shelf(user, library) if user.is_owner else self._library_shelf(user, library)
+        return {
+            "me": {"id": user.id, "name": accounts.display_name(user.id), "is_owner": user.is_owner},
+            "playlists": playlists,
+            "player_ready": not missing_scopes(user.paths.token),
+            "search_paused_s": gate.remaining("search"),
+            "schedule": self.schedule() if user.is_owner else None,
+        }
+
+    @staticmethod
+    def _library_shelf(user: Profile, library: list[dict]) -> list[dict]:
+        mine = [playlist for playlist in library if (playlist.get("owner") or {}).get("id") == user.id]
+        return [
+            {
+                "key": f"id:{playlist['id']}",
+                "name": playlist["name"],
+                "kind": "library",
+                "description": html.unescape(playlist.get("description") or ""),
+                "color": None,
+                "uri": playlist["uri"],
+                "image": pick_image(playlist.get("images"), 300),
+                "total": (playlist.get("items") or playlist.get("tracks") or {}).get("total", 0),
+            }
+            for playlist in mine[:LIBRARY_SHELF_SIZE]
+        ]
+
+    @staticmethod
+    def _curated_shelf(user: Profile, library: list[dict]) -> list[dict]:
+        owned = {playlist["id"]: playlist for playlist in library}
         ids = load_state(user.paths.state).get("playlists", {})
         playlists = []
         for spec in load_playlists()["playlists"]:
             remote = owned.get(ids.get(spec["name"]))
             summary = {
+                "key": spec["name"],
                 "name": spec["name"],
                 "kind": playlist_kind(spec),
                 "description": spec.get("description", ""),
@@ -232,17 +265,21 @@ class App:
                     total=(remote.get("items") or remote.get("tracks") or {}).get("total", 0),
                 )
             playlists.append(summary)
-        return {
-            "me": {"id": user.id, "name": accounts.display_name(user.id), "is_owner": user.is_owner},
-            "playlists": playlists,
-            "player_ready": not missing_scopes(user.paths.token),
-            "search_paused_s": gate.remaining("search"),
-            "schedule": self.schedule(),
-        }
+        return playlists
+
+    @staticmethod
+    def _require_owner(user: Profile) -> None:
+        """A estante curada e a seleção base são do dono: amigos nem veem."""
+        if not user.is_owner:
+            raise UserError("Playlist não encontrada.", 404)
 
     def playlist(self, user: Profile, name: str) -> dict:
-        find_spec(load_playlists(), name)
-        playlist_id = load_state(user.paths.state).get("playlists", {}).get(name)
+        if match := LIBRARY_KEY.fullmatch(name):
+            playlist_id = match["id"]
+        else:
+            self._require_owner(user)
+            find_spec(load_playlists(), name)
+            playlist_id = load_state(user.paths.state).get("playlists", {}).get(name)
         items: list[dict] = []
         if playlist_id:
             try:
@@ -417,19 +454,23 @@ class App:
 
     @staticmethod
     def _seed_artists(user: Profile, sp: Spotify) -> list[str]:
-        """Artistas das playlists de música da pessoa: ponto de partida da toca do coelho."""
+        """Artistas das playlists da própria pessoa: ponto de partida da toca do coelho."""
         if not user.seeds:
-            ids = load_state(user.paths.state).get("playlists", {})
+            if user.is_owner:
+                ids = load_state(user.paths.state).get("playlists", {})
+                sources = [ids[spec["name"]] for spec in load_playlists()["playlists"]
+                           if playlist_kind(spec) == "music" and ids.get(spec["name"])]
+            else:
+                sources = [p["id"] for p in sp.my_playlists() if (p.get("owner") or {}).get("id") == user.id][:4]
             names: dict[str, None] = {}
-            for spec in load_playlists()["playlists"]:
-                if playlist_kind(spec) == "music" and ids.get(spec["name"]):
-                    for item in sp.playlist_items(ids[spec["name"]]):
-                        for artist in item.get("artists", [])[:1]:
-                            if artist["name"] != "Various Artists":
-                                names[artist["name"]] = None
+            for playlist_id in sources:
+                for item in sp.playlist_items(playlist_id):
+                    for artist in item.get("artists", [])[:1]:
+                        if artist["name"] != "Various Artists":
+                            names[artist["name"]] = None
             user.seeds = list(names)
         if not user.seeds:
-            raise UserError("Digite um artista para começar, ou crie suas playlists na estante.")
+            raise UserError("Digite um artista para começar a descer a toca.")
         return user.seeds
 
     def save_hunt(self, user: Profile) -> dict:
@@ -516,18 +557,20 @@ class App:
         entry, uri = body.get("entry", "").strip(), body.get("uri", "")
         if not entry or not uri.startswith("spotify:"):
             raise UserError("Escolha um item da busca.")
+        if match := LIBRARY_KEY.fullmatch(name):
+            # Playlist da própria conta: só vai para o Spotify (a Spotify recusa se não for da pessoa).
+            try:
+                self.spotify(user).add_items(match["id"], [uri])
+            except SpotifyError as err:
+                if err.status in (403, 404):
+                    raise UserError("Você só pode adicionar em playlists que são suas.", 403) from None
+                raise
+            return {"message": "Adicionada."}
+        self._require_owner(user)
         config_data = load_playlists()
         spec = find_spec(config_data, name)
         state = load_state(user.paths.state)
         playlist_id = state.get("playlists", {}).get(name)
-        if not user.is_owner:
-            # Amigos mexem só na própria cópia da playlist; a seleção base é do dono.
-            if playlist_kind(spec) != "music":
-                raise UserError("Só o dono da sala muda os programas e as misturas.", 403)
-            if not playlist_id:
-                raise UserError(f"Crie {name} no seu Spotify primeiro.")
-            self.spotify(user).add_items(playlist_id, [uri])
-            return {"message": f"Adicionada à sua {name}."}
         add_to_config(config_data, name, entry)
         if playlist_kind(spec) == "podcasts":
             state.setdefault("shows", {})[entry] = uri.rsplit(":", 1)[-1]
@@ -541,6 +584,7 @@ class App:
         return {"message": message}
 
     def start_job(self, user: Profile, body: dict) -> dict:
+        self._require_owner(user)
         name = body.get("playlist", "")
         find_spec(load_playlists(), name)
         dry_run = bool(body.get("dry_run"))
