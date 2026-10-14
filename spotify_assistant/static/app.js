@@ -510,7 +510,7 @@ function discoverIntro() {
           "Sorteia álbuns pouco ouvidos de qualquer ano e faixas de gêneros do mundo todo, do zamrock ao enka."),
         h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "roulette" }) },
           "Girar a roleta"),
-        wheel()),
+        digger()),
       h("section", { class: "path", style: "--tone: #9DB4E6" },
         h("h2", { class: "path-name" }, "Toca do coelho"),
         h("p", { class: "path-text" },
@@ -522,87 +522,97 @@ function discoverIntro() {
   ];
 }
 
-// ---------- Roda da roleta
-// Começa vazia; cada música sorteada pinta uma fatia com o gênero ou o ano que saiu.
+// ---------- Garimpeiro da roleta
+// Bonequinho com lupa revirando um caixote de discos. Cada música achada vai para
+// a pilha ao lado, que começa vazia e vai enchendo; no fim ele levanta um disco.
 
-const WHEEL_SLICES = 12;
-const WHEEL_COLORS = ["#5CC8C0", "#D4A84B", "#E3909E", "#E6D5AA", "#9DB4E6", "#F06A4F"];
-const WHEEL_LABEL_MAX = 10;
+const PILE_SLOTS = 12;
+const PILE_COLORS = ["#5CC8C0", "#D4A84B", "#E3909E", "#E6D5AA", "#9DB4E6", "#F06A4F"];
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-function svg(tag, attrs) {
+function svg(tag, attrs, ...children) {
   const el = document.createElementNS(SVG_NS, tag);
-  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
+  for (const [key, value] of Object.entries(attrs || {})) el.setAttribute(key, String(value));
+  el.append(...children);
   return el;
 }
 
-function wheel() {
-  const size = 100;
-  const radius = 48;
-  const center = size / 2;
-  const slice = 360 / WHEEL_SLICES;
-  const root = svg("svg", { class: "wheel", id: "wheel", viewBox: `0 0 ${size} ${size}`, "aria-hidden": "true" });
-  for (let index = 0; index < WHEEL_SLICES; index++) {
-    const start = (index * slice - 90) * (Math.PI / 180);
-    const end = ((index + 1) * slice - 90) * (Math.PI / 180);
-    const path = `M${center},${center} L${center + radius * Math.cos(start)},${center + radius * Math.sin(start)} `
-      + `A${radius},${radius} 0 0 1 ${center + radius * Math.cos(end)},${center + radius * Math.sin(end)} Z`;
-    root.append(svg("path", { class: "wheel-slice", d: path }));
-    root.append(svg("text", {
-      class: "wheel-label",
-      x: center + 15,
-      y: center,
-      "dominant-baseline": "middle",
-      transform: `rotate(${index * slice + slice / 2 - 90} ${center} ${center})`,
-    }));
-  }
-  return h("div", { class: "wheel-wrap" },
-    h("span", { class: "wheel-pointer", "aria-hidden": "true" }),
-    root,
-    h("span", { class: "wheel-hub", id: "wheel-hub", "aria-hidden": "true" }));
+function digger() {
+  const records = svg("g", { class: "crate-records" },
+    ...Array.from({ length: 7 }, (_, i) => svg("rect", {
+      class: "crate-record",
+      x: 86 + i * 9.5, y: 66, width: 8, height: 36, rx: 1,
+      fill: PILE_COLORS[(i + 2) % PILE_COLORS.length],
+    })));
+  const crate = svg("g", { class: "crate" },
+    svg("rect", { x: 80, y: 94, width: 76, height: 42, rx: 3, fill: "#8C5E36" }),
+    svg("rect", { x: 80, y: 94, width: 76, height: 5, rx: 2, fill: "#A87444" }),
+    svg("line", { x1: 80, y1: 109, x2: 156, y2: 109, stroke: "#6E4627", "stroke-width": 2 }),
+    svg("line", { x1: 80, y1: 123, x2: 156, y2: 123, stroke: "#6E4627", "stroke-width": 2 }),
+    svg("rect", { x: 110, y: 101, width: 16, height: 5, rx: 2.5, fill: "#5B3A20" }));
+  const person = svg("g", { class: "person" },
+    // pernas e tênis
+    svg("rect", { x: 41, y: 100, width: 9, height: 34, rx: 4, fill: "#2A3552" }),
+    svg("rect", { x: 53, y: 100, width: 9, height: 34, rx: 4, fill: "#2A3552" }),
+    svg("ellipse", { cx: 47, cy: 135, rx: 7, ry: 3.5, fill: "#EEE7D7" }),
+    svg("ellipse", { cx: 59, cy: 135, rx: 7, ry: 3.5, fill: "#EEE7D7" }),
+    // braço de trás, com a lupa varrendo os discos
+    svg("g", { class: "arm-glass" },
+      svg("line", { x1: 66, y1: 76, x2: 98, y2: 66, stroke: "#D9573F", "stroke-width": 7, "stroke-linecap": "round" }),
+      svg("line", { x1: 98, y1: 66, x2: 104, y2: 62, stroke: "#EEE7D7", "stroke-width": 3, "stroke-linecap": "round" }),
+      svg("circle", { cx: 110, cy: 57, r: 8, fill: "rgba(157,180,230,.25)", stroke: "#EEE7D7", "stroke-width": 2.5 })),
+    // tronco inclinado para o caixote, com a cabeça de gorro
+    svg("g", { class: "torso", transform: "rotate(22 50 102)" },
+      svg("rect", { x: 37, y: 66, width: 27, height: 40, rx: 10, fill: "#F06A4F" }),
+      svg("g", { class: "head" },
+        svg("circle", { cx: 51, cy: 54, r: 11, fill: "#E8B98F" }),
+        svg("path", { d: "M40 52 a11 11 0 0 1 22 0 z", fill: "#5CC8C0" }),
+        svg("rect", { x: 39, y: 49, width: 24, height: 4, rx: 2, fill: "#4AA9A2" }),
+        svg("circle", { cx: 57.5, cy: 56, r: 1.5, fill: "#0E1525" }))),
+    // braço da frente revirando os discos
+    svg("g", { class: "arm-dig" },
+      svg("line", { x1: 70, y1: 78, x2: 95, y2: 90, stroke: "#F06A4F", "stroke-width": 7, "stroke-linecap": "round" }),
+      svg("circle", { cx: 96, cy: 91, r: 4, fill: "#E8B98F" })),
+    // comemoração: braço para cima com o disco achado
+    svg("g", { class: "arm-cheer" },
+      svg("line", { x1: 70, y1: 78, x2: 93, y2: 45, stroke: "#F06A4F", "stroke-width": 7, "stroke-linecap": "round" }),
+      svg("rect", { x: 83, y: 20, width: 22, height: 22, rx: 2, fill: "#F2C14E" }),
+      svg("circle", { cx: 94, cy: 31, r: 6, fill: "#0E1525" }),
+      svg("circle", { cx: 93, cy: 45, r: 4, fill: "#E8B98F" }),
+      svg("path", { d: "M111 20 l6 -4 M113 31 l7 0 M78 16 l-6 -4", stroke: "#F2C14E", "stroke-width": 2, "stroke-linecap": "round" })));
+  const pile = svg("g", { class: "pile" },
+    ...Array.from({ length: PILE_SLOTS }, (_, i) => svg("rect", {
+      class: "pile-slot",
+      x: 170, y: 131 - i * 6, width: 40, height: 4.5, rx: 1,
+    }, svg("title", {}))));
+  const root = svg("svg", { class: "digger", id: "digger", viewBox: "0 0 220 145", "aria-hidden": "true" },
+    svg("line", { x1: 18, y1: 138, x2: 216, y2: 138, stroke: "#2A3552", "stroke-width": 2 }),
+    records, crate, person, pile);
+  return h("div", { class: "digger-wrap" }, root, h("p", { class: "digger-count", id: "digger-count" }));
 }
 
-function shorten(text) {
-  return text.length > WHEEL_LABEL_MAX ? `${text.slice(0, WHEEL_LABEL_MAX - 1)}…` : text;
-}
-
-function currentAngle(el) {
-  const matrix = getComputedStyle(el).transform;
-  if (!matrix || matrix === "none") return 0;
-  const [a, b] = matrix.slice(7, -1).split(",").map(Number);
-  return (Math.atan2(b, a) * 180) / Math.PI;
-}
-
-/** Pinta as fatias já sorteadas, gira enquanto sorteia e desacelera até parar no fim. */
-function updateWheel(hunt) {
-  const el = $("#wheel");
+/** Bonequinho cavando enquanto a roleta sorteia; a pilha enche a cada música achada. */
+function updateDigger(hunt) {
+  const el = $("#digger");
   if (!el) return;
   const roulette = hunt?.kind === "roulette" ? hunt : null;
   const finds = roulette ? roulette.finds : [];
-  const slices = el.querySelectorAll(".wheel-slice");
-  const labels = el.querySelectorAll(".wheel-label");
-  slices.forEach((slice, index) => {
+  el.classList.toggle("is-digging", roulette?.status === "running");
+  el.classList.toggle("is-done", roulette?.status === "done" && finds.length > 0);
+  const filledBefore = Number(el.dataset.filled || 0);
+  el.querySelectorAll(".pile-slot").forEach((slot, index) => {
     const find = finds[index];
-    slice.classList.toggle("is-filled", Boolean(find));
-    slice.style.fill = find ? WHEEL_COLORS[index % WHEEL_COLORS.length] : "";
-    labels[index].textContent = find ? shorten(find.tag || "") : "";
+    slot.classList.toggle("is-filled", Boolean(find));
+    slot.classList.toggle("is-new", Boolean(find) && index >= filledBefore);
+    slot.style.fill = find ? PILE_COLORS[index % PILE_COLORS.length] : "";
+    slot.querySelector("title").textContent = find ? (find.tag || find.title) : "";
   });
-  const hub = $("#wheel-hub");
-  if (hub) hub.textContent = roulette ? `${finds.length}/${roulette.total || WHEEL_SLICES}` : "";
-
-  const spinning = roulette?.status === "running";
-  if (spinning && !el.classList.contains("is-spinning")) {
-    el.style.transition = "none";
-    el.style.transform = "";
-    el.classList.add("is-spinning");
-  } else if (!spinning && el.classList.contains("is-spinning")) {
-    const angle = currentAngle(el);
-    el.classList.remove("is-spinning");
-    el.style.transition = "none";
-    el.style.transform = `rotate(${angle}deg)`;
-    el.getBoundingClientRect(); // aplica o ângulo atual antes de animar a parada
-    el.style.transition = "transform 2.2s cubic-bezier(.12, .8, .2, 1)";
-    el.style.transform = `rotate(${angle + 540 + Math.random() * 360}deg)`;
+  el.dataset.filled = String(finds.length);
+  const count = $("#digger-count");
+  if (count) {
+    count.textContent = roulette
+      ? `${finds.length} de ${roulette.total || PILE_SLOTS} ${roulette.status === "running" ? "achadas até agora" : "achadas"}`
+      : "";
   }
 }
 
@@ -646,7 +656,7 @@ function renderHunt() {
   const panel = $("#hunt");
   const list = $("#tracks");
   const hunt = huntHere();
-  updateWheel(hunt);
+  updateDigger(hunt);
   if (!hunt) {
     panel.hidden = true;
     list.replaceChildren();

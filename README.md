@@ -62,11 +62,15 @@ usadas como fonte. Medições ficam em `data/tempo-cache.json` para não ouvir a
 
 ### Descobrir
 
-- **Roleta**: sorteia álbuns pouco ouvidos de um ano qualquer e faixas menos populares de playlists
+- **Roleta**: um bonequinho garimpa um caixote de discos enquanto sorteia álbuns pouco ouvidos de um ano qualquer e faixas menos populares de playlists
   de gêneros do mundo todo (zamrock, enka, huayno, ethio jazz...). A lista de gêneros fica em
   `WORLD_GENRES`, no `spotify_assistant/discovery.py`.
 - **Toca do coelho**: parte de um artista (digitado ou sorteado das suas playlists) e pula 4 vezes
   para artistas relacionados, sempre entre os menos conhecidos. Mostra o caminho e o número de fãs.
+
+**Nada religioso**: a descoberta descarta faixas, álbuns e playlists com sinais religiosos de qualquer
+denominação (lista `RELIGIOUS_WORDS` em `spotify_assistant/discovery.py`). Uma playlist inteira é
+descartada quando várias faixas dela têm esses sinais.
 
 **Guardar** manda a faixa para a playlist `Achados da Sala`, criada na primeira vez. O ⓘ de cada
 música mostra por que ela apareceu (BPM e energia medidos, gênero ou ano sorteado, de onde a toca partiu).

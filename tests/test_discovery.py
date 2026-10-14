@@ -116,6 +116,31 @@ class RulesTest(unittest.TestCase):
         self.assertEqual([t["rank"] for t in discovery.lesser_known(tracks)], [100, 300])
 
 
+class ReligiousFilterTest(unittest.TestCase):
+    def test_words_from_any_denomination(self):
+        for text in ("Louvor e Adoração", "Gospel Hits", "Hare Krishna Mantra", "Ponto de Umbanda",
+                     "Ave Maria", "Nasheed", "Jesus Cristo", "Hinos da Harpa Cristã", "Gregorian Chant"):
+            self.assertTrue(discovery.is_religious(text), text)
+
+    def test_secular_lookalikes_pass(self):
+        for text in ("Chantaje", "Godsmack", "Reza Sadeghi", "Santana", "Paradise City"):
+            self.assertFalse(discovery.is_religious(text), text)
+
+    def test_track_checks_title_artist_and_album(self):
+        self.assertTrue(discovery.religious_track({"title": "Vitória", "artist": {"name": "Ministério Zoe"}}))
+        self.assertTrue(discovery.religious_track({"name": "X", "artists": [{"name": "Y"}], "album": {"name": "Hinos Avulsos"}}))
+
+    def test_playlist_full_of_hints_is_dropped(self):
+        # Nenhum título diz "gospel", mas várias faixas falam de Senhor, glória, milagre...
+        tracks = [dz_track(i, 80, title=title) for i, title in enumerate(
+            ["Senhor do Céu", "Glória", "Milagres", "Ressuscita-me", "Sonhos", "Estrada", "Mar"])]
+        self.assertTrue(discovery.religious_collection("Esperança", tracks))
+        self.assertFalse(discovery.religious_collection("Esperança", [dz_track(1, 80, title="Mar")] * 7))
+
+    def test_devotional_genres_are_not_in_the_roulette(self):
+        self.assertFalse({"qawwali", "gnawa", "carnatic"} & set(discovery.WORLD_GENRES))
+
+
 class FeelingTextTest(unittest.TestCase):
     def test_dictionary_recognizes_word_forms(self):
         for text in ("ÓDIO", "tô com muita raiva", "odeio segunda", "furioso"):
@@ -126,8 +151,8 @@ class FeelingTextTest(unittest.TestCase):
         self.assertEqual(discovery.spec_from_text("chorando no banho")["bpm"], [55, 100])
 
     def test_short_stems_need_the_whole_word(self):
-        self.assertEqual(discovery.spec_from_text("fé")["bpm"], [70, 125])
-        self.assertIsNone(discovery.spec_from_text("feira de domingo")["bpm"])
+        self.assertEqual(discovery.spec_from_text("paz")["bpm"], [50, 88])
+        self.assertIsNone(discovery.spec_from_text("pazuzu")["bpm"])
 
     def test_unknown_text_learns_the_rhythm(self):
         spec = discovery.spec_from_text("domingo de manhã")

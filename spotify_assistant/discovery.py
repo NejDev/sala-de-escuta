@@ -42,7 +42,7 @@ LISTEN_THREADS = 6
 WORLD_GENRES = (
     "zamrock", "ethio jazz", "afrobeat", "highlife", "city pop", "enka", "rebetiko", "fado",
     "chamamé", "cumbia psicodélica", "chicha peruana", "tropicália", "baião", "frevo", "carimbó",
-    "lambada", "kizomba", "semba", "mbalax", "soukous", "gnawa", "raï", "qawwali", "dangdut",
+    "lambada", "kizomba", "semba", "mbalax", "soukous", "raï", "dangdut",
     "kroncong", "j-jazz", "shibuya-kei", "anatolian rock", "arabesk", "klezmer", "balkan brass",
     "tango nuevo", "chacarera", "son cubano", "bolero", "mambo", "salsa dura", "calypso", "soca",
     "rocksteady", "dub", "lovers rock", "zydeco", "bluegrass", "delta blues", "doo-wop",
@@ -52,7 +52,7 @@ WORLD_GENRES = (
     "jovem guarda", "exotica", "space age pop", "library music", "vaporwave", "shoegaze",
     "dream pop", "math rock", "post-rock", "midwest emo", "trip hop", "jungle", "uk garage",
     "footwork", "amapiano", "gqom", "kuduro", "grime", "zouk", "gamelan", "throat singing",
-    "carnatic", "hawaiian slack key", "bossa nova japonesa", "turkish psych", "persian pop",
+    "hawaiian slack key", "bossa nova japonesa", "turkish psych", "persian pop",
 )
 
 # Faixas "de algoritmo" que lotam playlists de foco/relaxamento e não são música para descobrir.
@@ -97,7 +97,7 @@ FEELINGS: tuple[tuple[tuple[str, ...], dict], ...] = (
     (("confian", "poderos", "chefe", "boss", "foda", "imbativel", "marra"),
      {"bpm": [85, 145], "energy": [0.65, 1.0], "color": "#D4A84B",
       "sources": ["confiança", "boss music", "rap motivação", "músicas de vilão"]}),
-    (("esperanc", "recomec", "superac", "hope", "fe"),
+    (("esperanc", "recomec", "superac", "hope"),
      {"bpm": [70, 125], "energy": [0.35, 0.88], "color": "#9FD3A8",
       "sources": ["esperança", "superação", "uplifting", "hopeful indie"]}),
     (("ansied", "ansios", "nervos", "estress", "stress", "panico", "preocupad"),
@@ -123,6 +123,28 @@ CONSENSUS_LISTEN = 48
 CONSENSUS_MIN_MEASURED = 6
 CONSENSUS_BPM_OCTAVES = 0.2  # ±15% em torno do pulso típico
 CONSENSUS_ENERGY = 0.22
+
+# Nada religioso, de nenhuma denominação. Palavras fortes descartam a faixa sozinhas;
+# as "pistas" só contam para descartar uma playlist inteira quando aparecem em várias faixas
+# (playlists chamadas "paz" ou "esperança" costumam ser gospel sem dizer no título da música).
+RELIGIOUS_WORDS = (
+    "gospel", "worship", "louvor", "louvores", "adoracao", "christian", "cristao", "crista", "cristaos",
+    "evangelico", "evangelica", "catolico", "catolica", "catholic", "igreja", "church", "hino", "hinos",
+    "hymn", "hymns", "harpa crista", "cantor cristao", "aleluia", "hallelujah", "jesus", "cristo", "christ",
+    "deus", "dios", "dieu", "gott", "god", "espirito santo", "holy spirit", "salmo", "salmos", "psalm",
+    "psalms", "biblia", "bible", "evangelho", "pastor", "pastora", "padre", "ministerio", "missionario",
+    "pregacao", "sermon", "culto", "terco", "rosario", "rosary", "ave maria", "gregorian", "gregoriano",
+    "liturgia", "liturgical", "mantra", "mantras", "bhajan", "kirtan", "devotional", "devocional",
+    "nasheed", "quran", "alcorao", "allah", "sufi", "qawwali", "umbanda", "candomble", "orixa", "orixas",
+    "spiritual", "spirituals", "espiritual", "buddhist", "budista", "chant", "torah", "shabbat",
+    "krishna", "yahweh", "adonai", "messias", "messiah", "amem", "amen", "oracao", "prayer",
+    "rezar", "fe", "praise",
+)
+RELIGIOUS_HINTS = (
+    "senhor", "ceu", "gloria", "graca", "santo", "santa", "anjo", "anjos", "milagre", "milagres",
+    "promessa", "adorar", "sobrenatural", "uncao", "altar", "cruz", "pai", "eterno", "redencao",
+    "salvacao", "ressuscita", "fiel", "heaven", "lord", "grace", "holy", "angel",
+)
 
 log = logging.getLogger(__name__)
 
@@ -238,7 +260,10 @@ def fits(analysis: tempo.Analysis | None, spec: dict) -> int | None:
 
 def next_hop(options: list[dict], visited: set, rng: random.Random) -> dict | None:
     """Entre os relacionados, sorteia no terço menos conhecido (com um mínimo de fãs)."""
-    fresh = [artist for artist in options if artist["id"] not in visited and artist.get("nb_fan", 0) >= MIN_FANS]
+    fresh = [
+        artist for artist in options
+        if artist["id"] not in visited and artist.get("nb_fan", 0) >= MIN_FANS and not is_religious(artist.get("name", ""))
+    ]
     if not fresh:
         return None
     fresh.sort(key=lambda artist: artist.get("nb_fan", 0))
@@ -250,8 +275,39 @@ def is_junk(track: dict) -> bool:
     return any(f" {word} " in text for word in JUNK_WORDS)
 
 
+def _says(texts: tuple[str, ...], words: tuple[str, ...]) -> bool:
+    text = f" {curation.normalize(' '.join(t for t in texts if t))} "
+    return any(f" {word} " in text for word in words)
+
+
+def is_religious(*texts: str) -> bool:
+    return _says(texts, RELIGIOUS_WORDS)
+
+
+def _track_texts(track: dict) -> tuple[str, ...]:
+    """Título, artista e álbum de uma faixa do Deezer ou do Spotify."""
+    artists = [track.get("artist", {}).get("name", "")] + [a.get("name", "") for a in track.get("artists", [])]
+    album = track.get("album") or {}
+    return (track.get("title") or track.get("name") or "", *artists, album.get("title") or album.get("name") or "")
+
+
+def religious_track(track: dict) -> bool:
+    return is_religious(*_track_texts(track))
+
+
+def religious_collection(name: str, tracks: list[dict], owner: str = "") -> bool:
+    """Playlist/álbum religioso: nome explícito, ou várias faixas com palavras e pistas religiosas."""
+    if is_religious(name, owner):
+        return True
+    hits = sum(1 for track in tracks if _says(_track_texts(track), RELIGIOUS_WORDS + RELIGIOUS_HINTS))
+    return hits >= max(2, len(tracks) // 10)
+
+
 def usable(track: dict) -> bool:
-    return bool(track.get("preview")) and track.get("readable", True) and not is_junk(track)
+    return (
+        bool(track.get("preview")) and track.get("readable", True)
+        and not is_junk(track) and not religious_track(track)
+    )
 
 
 def _mentions(tokens: list[str], text: str, stem: str) -> bool:
@@ -368,8 +424,11 @@ def gather_candidates(dz: Deezer, queries: list[str], rng: random.Random) -> lis
     for query in queries:
         playlists = [p for p in dz.search_playlists(query) if p.get("nb_tracks", 0) >= 10][:6]
         for playlist in rng.sample(playlists, min(PLAYLISTS_PER_SOURCE, len(playlists))):
+            listed = dz.playlist_tracks(playlist["id"])
+            if religious_collection(playlist.get("title", ""), listed, playlist.get("user", {}).get("name", "")):
+                continue
             tracks = []
-            for track in dz.playlist_tracks(playlist["id"]):
+            for track in listed:
                 if usable(track) and track["id"] not in seen:
                     seen.add(track["id"])
                     tracks.append(track)
@@ -508,10 +567,14 @@ def obscure_album_pick(sp: Spotify, rng: random.Random) -> Find | None:
         return None
     album = rng.choice(albums)
     tracks = sp.album_tracks(album["id"])
-    if not tracks:
+    album_artists = " ".join(artist["name"] for artist in album.get("artists", []))
+    if not tracks or religious_collection(album.get("name", ""), tracks, album_artists):
+        return None
+    secular = [track for track in tracks if not religious_track(track)]
+    if not secular:
         return None
     return find_from(
-        rng.choice(tracks),
+        rng.choice(secular),
         reason=f"Sorteada de um álbum de {year} que quase ninguém ouve.",
         image=pick_image(album.get("images"), 64),
         tag=str(year),
@@ -524,7 +587,11 @@ def world_genre_pick(sp: Spotify, dz: Deezer, rng: random.Random) -> Find | None
     playlists = [p for p in dz.search_playlists(genre, limit=6) if p.get("nb_tracks", 0) >= 10]
     if not playlists:
         return None
-    tracks = [track for track in dz.playlist_tracks(rng.choice(playlists)["id"]) if usable(track)]
+    playlist = rng.choice(playlists)
+    listed = dz.playlist_tracks(playlist["id"])
+    if religious_collection(playlist.get("title", ""), listed, playlist.get("user", {}).get("name", "")):
+        return None
+    tracks = [track for track in listed if usable(track)]
     if not tracks:
         return None
     match = to_spotify(sp, rng.choice(lesser_known(tracks)))
@@ -575,8 +642,10 @@ def artist_picks(sp: Spotify, dz: Deezer, artist: dict, wanted: int, reason: str
         title = curation.normalize(curation.base_title(top.get("title", "")))
         if title and title in taken:  # a mesma música em outra gravação
             continue
+        if religious_track(top):
+            continue
         match = to_spotify(sp, dz.track(top["id"]))  # o "top" não traz ISRC
-        if match and match["uri"] not in taken:
+        if match and match["uri"] not in taken and not religious_track(match):
             taken.update({title, match["uri"]})
             picks.append(find_from(match, reason=reason))
         if len(picks) == wanted:

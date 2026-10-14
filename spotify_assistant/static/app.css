@@ -438,41 +438,47 @@ body.is-gated .console { display: none; }
 
 /* Roleta: roda que gira enquanto sorteia e desacelera até parar. */
 .path.path-roulette { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto 1fr; gap: 10px 24px; align-items: start; }
-.path-roulette > :not(.wheel-wrap) { grid-column: 1; }
+.path-roulette > :not(.digger-wrap) { grid-column: 1; }
 .path-roulette .play-button { justify-self: start; }
-.wheel-wrap { position: relative; grid-column: 2; grid-row: 1 / span 3; }
-.wheel { display: block; width: 168px; height: auto; transform: rotate(0deg); }
-.wheel.is-spinning { animation: spin .7s linear infinite; }
-.wheel-slice { fill: var(--night); stroke: var(--line); stroke-width: .6; transition: fill .4s; }
-.wheel-slice.is-filled { stroke: var(--night); }
-.wheel-label { fill: var(--ink); stroke: none; font-size: 7px; font-stretch: 62%; font-weight: 800; }
-.wheel-pointer {
-  position: absolute;
-  top: -6px;
-  left: 50%;
-  width: 0;
-  height: 0;
-  border: 9px solid transparent;
-  border-top: 14px solid var(--linen);
-  transform: translateX(-50%);
-  filter: drop-shadow(0 2px 2px rgb(0 0 0 / .5));
-}
-.wheel-hub {
-  position: absolute;
-  inset: 50% auto auto 50%;
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  background: var(--night);
-  color: var(--linen);
-  font-size: .875rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  transform: translate(-50%, -50%);
-}
-@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Garimpeiro: bonequinho com lupa revirando um caixote; a pilha ao lado enche a cada achado. */
+.digger-wrap { grid-column: 2; grid-row: 1 / span 3; text-align: center; }
+.digger { display: block; width: 270px; height: auto; fill: none; stroke: none; overflow: visible; }
+.digger-count { min-height: 1.2em; margin: 4px 0 0; color: var(--smoke); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+
+.digger .arm-dig,
+.digger .arm-glass,
+.digger .head,
+.digger .crate-record { transform-box: view-box; }
+.digger .arm-dig { transform-origin: 70px 78px; }
+.digger .arm-glass { transform-origin: 66px 76px; }
+.digger .head { transform-origin: 69px 58px; }
+.digger .arm-cheer { display: none; }
+
+.digger.is-digging .arm-dig { animation: dig .45s ease-in-out infinite alternate; }
+.digger.is-digging .arm-glass { animation: scan 1.6s ease-in-out infinite alternate; }
+.digger.is-digging .head { animation: bob 1.1s ease-in-out infinite; }
+.digger.is-digging .crate-record { animation: riffle .9s ease-in-out infinite; }
+.digger.is-digging .crate-record:nth-child(2) { animation-delay: -.13s; }
+.digger.is-digging .crate-record:nth-child(3) { animation-delay: -.26s; }
+.digger.is-digging .crate-record:nth-child(4) { animation-delay: -.39s; }
+.digger.is-digging .crate-record:nth-child(5) { animation-delay: -.52s; }
+.digger.is-digging .crate-record:nth-child(6) { animation-delay: -.65s; }
+.digger.is-digging .crate-record:nth-child(7) { animation-delay: -.78s; }
+
+.digger.is-done .arm-dig { display: none; }
+.digger.is-done .arm-cheer { display: inline; animation: cheer .6s cubic-bezier(.3, 1.6, .5, 1); transform-box: view-box; transform-origin: 70px 78px; }
+
+.pile-slot { fill: transparent; stroke: var(--line); stroke-width: .8; transition: fill .3s; }
+.pile-slot.is-filled { stroke: var(--night); }
+.pile-slot.is-new { animation: drop .5s cubic-bezier(.3, 1.4, .5, 1); transform-box: fill-box; }
+
+@keyframes dig { from { transform: rotate(-14deg); } to { transform: rotate(10deg); } }
+@keyframes scan { from { transform: translateX(-6px) rotate(-3deg); } to { transform: translateX(8px) rotate(3deg); } }
+@keyframes bob { 50% { transform: translateY(2px); } }
+@keyframes riffle { 50% { transform: translateY(-7px); } }
+@keyframes cheer { from { transform: rotate(40deg); } }
+@keyframes drop { from { transform: translateY(-46px); opacity: 0; } }
 
 .paths {
   display: grid;
@@ -878,8 +884,8 @@ body.is-gated .console { display: none; }
   .hunt-title { font-size: 2.25rem; }
   .feeling-input { font-size: 2.25rem; }
   .path.path-roulette { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
-  .wheel-wrap { grid-column: 1; grid-row: auto; justify-self: center; }
-  .wheel { width: 150px; }
+  .digger-wrap { grid-column: 1; grid-row: auto; justify-self: center; }
+  .digger { width: 220px; }
 
   .player {
     grid-template-columns: minmax(0, 1fr) auto;
