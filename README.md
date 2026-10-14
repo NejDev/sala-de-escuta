@@ -96,7 +96,15 @@ das playlists (botão "Criar no meu Spotify"). O painel roda no PC do dono e fic
    contando o dono, no Development Mode).
 4. Mande o endereço para eles. O player só funciona para quem tem Premium; descobrir e salvar, para todos.
 
-O site só fica no ar com o PC ligado e o painel aberto. A seleção base das playlists (`playlists.json`)
+O site só fica no ar com o PC ligado e o painel aberto. Para o painel abrir sozinho, escondido,
+toda vez que você entra no Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\iniciar-com-windows.ps1            # liga
+powershell -ExecutionPolicy Bypass -File .\scripts\iniciar-com-windows.ps1 -Remover   # desfaz
+```
+
+Com ele ligado, `abrir-painel.cmd` só abre a sala no navegador. A seleção base das playlists (`playlists.json`)
 é do dono; amigos adicionam faixas só nas próprias cópias. `weekly` atualiza a Tech Radar de todos que a criaram.
 
 ## Linha de comando
