@@ -55,7 +55,14 @@ def http_request(
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 raw = response.read()
-                return json.loads(raw) if raw else None
+            if not raw.strip():
+                return None
+            try:
+                return json.loads(raw)
+            except ValueError:
+                # Comandos do player (próxima, anterior...) às vezes respondem 200 com texto solto.
+                log.debug("Resposta não-JSON de %s %s: %r", method, url, raw[:80])
+                return None
         except urllib.error.HTTPError as err:
             body = err.read().decode(errors="replace")
             if (err.code == 429 or err.code >= 500) and attempt < MAX_ATTEMPTS:

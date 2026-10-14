@@ -13,6 +13,7 @@
   --error: #F08A7E;
   --mood: #D4A84B;
   --player-h: 92px;
+  --gutter: clamp(16px, 3vw, 40px);
   color-scheme: dark;
 }
 
@@ -51,7 +52,9 @@ svg .solid { fill: currentColor; stroke: none; }
 
 .room {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  /* Coluna presa à largura da tela: a barra de navegação rola por dentro em vez de alargar a página. */
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: calc(100dvh - var(--player-h));
 }
 
@@ -59,63 +62,68 @@ body.is-gated .room,
 body.is-gated .player,
 body.is-gated .console { display: none; }
 
-/* ---------- Estante */
+/* ---------- Estante (topo): lombadas deitadas, em seções */
+
+.topbar { padding: 18px var(--gutter) 0; }
 
 .shelf {
   display: flex;
-  gap: 6px;
-  padding: 28px 8px 28px 28px;
+  align-items: flex-end;
+  gap: 32px;
+  padding-bottom: 14px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
+
+.shelf-group { flex: none; }
+.shelf-label { margin: 0 0 8px 2px; color: var(--smoke); font-size: .8125rem; }
+.shelf-row { display: flex; gap: 6px; padding-top: 4px; }
 
 .spine {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  width: 50px;
-  padding: 16px 0 14px;
+  gap: 10px;
+  height: 42px;
+  padding: 0 14px 0 16px;
   border: 0;
   border-radius: 3px;
   background: var(--spine, var(--mood));
   color: var(--ink);
-  box-shadow: inset 4px 0 0 rgb(255 255 255 / .16), inset -2px 0 0 rgb(0 0 0 / .14);
+  box-shadow: inset 0 3px 0 rgb(255 255 255 / .16), inset 0 -2px 0 rgb(0 0 0 / .14);
   filter: saturate(.6) brightness(.72);
+  white-space: nowrap;
   cursor: pointer;
-  transition: width .32s cubic-bezier(.2, .7, .2, 1), filter .32s;
+  transition: filter .25s, transform .25s cubic-bezier(.2, .7, .2, 1);
 }
-.spine:hover { filter: saturate(.75) brightness(.8); }
-.spine[aria-current="true"] { width: 78px; filter: none; }
+.spine:hover { filter: saturate(.8) brightness(.86); }
+/* A escolhida sai um pouco da pilha. */
+.spine[aria-current="true"] { filter: none; transform: translateY(-4px); }
 
 .spine-name {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  font-size: 1.3125rem;
+  font-size: 1.125rem;
   font-stretch: 62%;
   font-weight: 800;
   line-height: 1;
-  white-space: nowrap;
-  text-overflow: ellipsis;
 }
 
 .spine-count {
-  font-size: .8125rem;
+  font-size: .75rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  opacity: .7;
 }
 
 .spine-eq {
-  display: flex;
+  display: none;
   align-items: flex-end;
   gap: 2px;
   height: 12px;
-  visibility: hidden;
 }
 .spine-eq i { width: 3px; height: 45%; background: var(--ink); }
 .spine.is-playing .spine-eq,
-.spine.is-paused .spine-eq { visibility: visible; }
+.spine.is-paused .spine-eq { display: flex; }
 .spine.is-playing .spine-eq i { animation: eq 1.1s ease-in-out infinite; }
 .spine.is-playing .spine-eq i:nth-child(2) { animation-delay: -.45s; }
 .spine.is-playing .spine-eq i:nth-child(3) { animation-delay: -.8s; }
@@ -125,21 +133,19 @@ body.is-gated .console { display: none; }
   50% { height: 100%; }
 }
 
-/* Lombadas vazadas: Sensações e Descobrir, o espaço da estante para música nova. */
-.shelf-gap { flex: none; width: 10px; }
-
+/* Explorar: lombadas vazadas, o espaço da estante para música nova. */
 .spine.is-hollow {
   background: transparent;
   color: var(--linen);
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--linen) 40%, transparent);
   filter: none;
-  opacity: .7;
+  opacity: .75;
 }
 .spine.is-hollow:hover { filter: none; opacity: 1; }
 .spine.is-hollow[aria-current="true"] {
   background: var(--linen);
   color: var(--ink);
-  box-shadow: inset 4px 0 0 rgb(255 255 255 / .3);
+  box-shadow: inset 0 3px 0 rgb(255 255 255 / .3);
   opacity: 1;
 }
 
@@ -147,7 +153,7 @@ body.is-gated .console { display: none; }
 
 .stage {
   overflow-y: auto;
-  padding: 44px clamp(24px, 4vw, 56px) 72px 32px;
+  padding: 36px var(--gutter) 72px;
   scrollbar-color: var(--line) transparent;
 }
 
@@ -401,6 +407,64 @@ body.is-gated .console { display: none; }
 }
 .mood-text { grid-area: text; color: var(--smoke); font-size: .875rem; }
 
+/* Campo livre: o sentimento escrito é o elemento principal da tela. */
+.feeling { max-width: 760px; }
+.feeling-label { display: block; margin-bottom: 4px; color: var(--smoke); font-size: .875rem; }
+.feeling-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; }
+.feeling-input {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 4px 0 8px;
+  border: 0;
+  border-bottom: 2px solid var(--line);
+  background: transparent;
+  color: var(--linen);
+  font-size: 3rem;
+  font-stretch: 62%;
+  font-weight: 850;
+  line-height: 1.1;
+}
+.feeling-input::placeholder { color: color-mix(in srgb, var(--smoke) 55%, transparent); }
+.feeling-input:focus-visible { outline: none; border-bottom-color: var(--mood); }
+.feeling-hint { margin: 10px 0 0; color: var(--smoke); font-size: .8125rem; }
+.moods-label { margin: 8px 0 -14px; color: var(--smoke); font-size: .875rem; }
+
+/* Roleta: roda que gira enquanto sorteia e desacelera até parar. */
+.path.path-roulette { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto 1fr; gap: 10px 24px; align-items: start; }
+.path-roulette > :not(.wheel-wrap) { grid-column: 1; }
+.path-roulette .play-button { justify-self: start; }
+.wheel-wrap { position: relative; grid-column: 2; grid-row: 1 / span 3; }
+.wheel { display: block; width: 168px; height: auto; transform: rotate(0deg); }
+.wheel.is-spinning { animation: spin .7s linear infinite; }
+.wheel text { fill: var(--ink); stroke: none; font-size: 7.5px; font-stretch: 62%; font-weight: 800; }
+.wheel-pointer {
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border: 9px solid transparent;
+  border-top: 14px solid var(--linen);
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 2px rgb(0 0 0 / .5));
+}
+.wheel-hub {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--night);
+  color: var(--linen);
+  font-size: .875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transform: translate(-50%, -50%);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .paths {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -456,26 +520,38 @@ body.is-gated .console { display: none; }
 
 .find {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .find .track-button { grid-template-columns: 2rem 44px minmax(0, 1fr) auto auto; }
 
-.tempo { display: flex; align-items: center; gap: 10px; }
+/* Detalhes ("por que essa música?") só quando a pessoa pede. */
+.find-details { display: none; margin-top: 2px; color: var(--smoke); font-size: .8125rem; white-space: normal; }
+.find.is-open .find-details { display: block; }
+
+.info-button {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--smoke);
+  cursor: pointer;
+}
+.info-button:hover,
+.info-button[aria-expanded="true"] { color: var(--linen); background: var(--velvet); }
+.info-button svg { width: 18px; height: 18px; }
+
+/* Música que acabou de cair da roleta. */
+.find.is-new { animation: land .45s cubic-bezier(.2, .9, .3, 1.25); }
+@keyframes land { from { opacity: 0; transform: translateY(-14px) scale(.98); } }
+
 .bpm { color: var(--smoke); font-size: .75rem; white-space: nowrap; }
 .bpm b { color: var(--linen); font-size: .9375rem; font-variant-numeric: tabular-nums; }
-.energy { width: 44px; height: 4px; overflow: hidden; border-radius: 2px; background: var(--line); }
-.energy i { display: block; height: 100%; background: var(--mood); }
-
-.reason {
-  max-width: 220px;
-  overflow: hidden;
-  color: var(--smoke);
-  font-size: .8125rem;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 
 .keep-button {
   padding: 6px 14px;
@@ -778,28 +854,23 @@ body.is-gated .console { display: none; }
 @media (max-width: 760px) {
   :root { --player-h: 132px; }
 
-  .room {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .shelf { height: 212px; padding: 16px 16px 8px; overflow-x: auto; }
-  .spine { flex: none; width: 44px; padding: 12px 0; }
-  .spine[aria-current="true"] { width: 64px; }
-  .spine-name { font-size: 1.125rem; }
+  .topbar { padding-top: 12px; }
+  .shelf { gap: 20px; }
+  .spine { height: 38px; padding: 0 12px; }
   .spine-count { display: none; }
 
-  .stage { padding: 24px 16px 56px; }
+  .stage { padding-top: 24px; padding-bottom: 56px; }
   .sleeve { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .cover { width: 148px; }
 
   .track-button { grid-template-columns: 1.5rem 40px minmax(0, 1fr) auto; gap: 12px; padding: 7px 4px; }
   .find .track-button { grid-template-columns: 1.5rem 40px minmax(0, 1fr) auto; }
-  .find .track-time,
-  .find .energy,
-  .find .reason { display: none; }
+  .find .track-time { display: none; }
   .hunt-title { font-size: 2.25rem; }
-  .shelf-gap { width: 6px; }
+  .feeling-input { font-size: 2.25rem; }
+  .path.path-roulette { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .wheel-wrap { grid-column: 1; grid-row: auto; justify-self: center; }
+  .wheel { width: 150px; }
 
   .player {
     grid-template-columns: minmax(0, 1fr) auto;

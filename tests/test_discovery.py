@@ -101,6 +101,7 @@ class RulesTest(unittest.TestCase):
     def test_junk_filter(self):
         self.assertTrue(discovery.is_junk(dz_track(1, 60, title="Deep Sleep Binaural Beats")))
         self.assertTrue(discovery.is_junk(dz_track(2, 60, title="Cura 432 Hz")))
+        self.assertTrue(discovery.is_junk(dz_track(4, 170, title="California Gurls - Workout Remix 170 Bpm")))
         self.assertFalse(discovery.is_junk(dz_track(3, 60, title="Hertz e Amor")))
 
     def test_next_hop_goes_to_lesser_known(self):
@@ -113,6 +114,35 @@ class RulesTest(unittest.TestCase):
     def test_lesser_known_is_bottom_half_by_rank(self):
         tracks = [{"rank": rank} for rank in (900, 100, 500, 300)]
         self.assertEqual([t["rank"] for t in discovery.lesser_known(tracks)], [100, 300])
+
+
+class FeelingTextTest(unittest.TestCase):
+    def test_dictionary_recognizes_word_forms(self):
+        for text in ("ÓDIO", "tô com muita raiva", "odeio segunda", "furioso"):
+            spec = discovery.spec_from_text(text)
+            self.assertEqual(spec["bpm"], [125, 185], text)
+            self.assertEqual(spec["sources"][0], text)  # a frase é a primeira busca
+        self.assertEqual(discovery.spec_from_text("coração partido")["color"], "#9C7AA8")
+        self.assertEqual(discovery.spec_from_text("chorando no banho")["bpm"], [55, 100])
+
+    def test_short_stems_need_the_whole_word(self):
+        self.assertEqual(discovery.spec_from_text("fé")["bpm"], [70, 125])
+        self.assertIsNone(discovery.spec_from_text("feira de domingo")["bpm"])
+
+    def test_unknown_text_learns_the_rhythm(self):
+        spec = discovery.spec_from_text("domingo de manhã")
+        self.assertIsNone(spec["bpm"])
+        self.assertEqual(spec["name"], "Domingo de manhã")
+        self.assertEqual(spec["sources"][0], "domingo de manhã")
+
+    def test_consensus_finds_the_shared_pulse(self):
+        analyses = [Analysis(bpm, 0.5, energy) for bpm, energy in
+                    [(92, 0.6), (184, 0.62), (90, 0.58), (95, 0.65), (46, 0.6), (150, 0.2), (91, 0.61)]]
+        center = discovery.consensus(analyses)
+        self.assertAlmostEqual(center[0], 92, delta=2)  # 184 e 46 dobram/metade para ~92
+        self.assertIsNotNone(discovery.consensus_distance(Analysis(186, 0.5, 0.6), center))
+        self.assertIsNone(discovery.consensus_distance(Analysis(150, 0.5, 0.2), center))
+        self.assertIsNone(discovery.consensus(analyses[:3]))  # poucas prévias
 
 
 class SenseTest(unittest.TestCase):
@@ -141,6 +171,19 @@ class SenseTest(unittest.TestCase):
         self.assertEqual(found, {"spotify:track:1": 128, "spotify:track:3": 140, "spotify:track:7": 145})
         self.assertEqual(hunt.progress, 6)
         self.assertIn("3 músicas", hunt.message)
+
+    def test_unknown_feeling_keeps_tracks_near_the_shared_rhythm(self):
+        deezer = FakeDeezer(
+            playlists={"domingo": [{"id": "d", "nb_tracks": 20}]},
+            tracks={"d": [dz_track(i, bpm, energy) for i, (bpm, energy) in enumerate(
+                [(96, 0.5), (98, 0.52), (192, 0.5), (95, 0.48), (100, 0.55), (97, 0.5), (160, 0.95), (60, 0.1)], start=1)]},
+        )
+        spec = {"name": "Domingo", "bpm": None, "energy": None, "sources": ["domingo"]}
+        hunt = discovery.Hunt("sense", "Domingo")
+        discovery.sense(hunt, spec, FakeSpotify(), deezer, random.Random(4), MemoryCache(), fake_measure)
+        kept = {find.uri.rsplit(":", 1)[1] for find in hunt.finds}
+        self.assertEqual(kept, {"1", "2", "3", "4", "5", "6"})  # 160/0.95 e 60/0.1 fogem do padrão
+        self.assertIn("perto de", hunt.message)
 
     def test_cached_measurements_skip_download(self):
         cache = MemoryCache()

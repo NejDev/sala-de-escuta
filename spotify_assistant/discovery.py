@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import random
 import threading
@@ -58,7 +59,70 @@ WORLD_GENRES = (
 JUNK_WORDS = (
     "binaural", "white noise", "brown noise", "pink noise", "rain sounds", "ruido branco",
     "asmr", "hz", "solfeggio", "sleep music", "study music", "relaxing music", "musica relaxante",
+    "bpm", "workout remix", "workout music", "fitness music",
 )
+
+# Dicionário local de sentimentos para o campo livre das Sensações (sem IA paga).
+# Cada entrada: radicais em português/inglês -> faixa de BPM, energia, cor e buscas extras.
+# Radicais com 4+ letras casam por prefixo ("raiv" pega "raiva" e "raivoso").
+FEELINGS: tuple[tuple[tuple[str, ...], dict], ...] = (
+    (("odio", "odiar", "odiand", "odei", "raiv", "furi", "puto", "puta da vida", "brav", "irritad", "revolt",
+      "vinganc", "rage", "angry", "hate"),
+     {"bpm": [125, 185], "energy": [0.72, 1.0], "color": "#D8453B",
+      "sources": ["raiva", "rage music", "metal pesado", "hardcore punk", "nu metal"]}),
+    (("coracao partido", "termino", "fossa", "sofrenci", "corno", "breakup", "heartbreak"),
+     {"bpm": [60, 115], "energy": [0.2, 0.8], "color": "#9C7AA8",
+      "sources": ["sofrência", "fossa", "breakup songs", "músicas de término"]}),
+    (("trist", "chor", "depre", "melancol", "deprimid", "sad", "luto"),
+     {"bpm": [55, 100], "energy": [0.0, 0.62], "color": "#8E9AAF",
+      "sources": ["músicas tristes", "sad songs", "sad piano", "sad indie"]}),
+    (("saudad", "nostalg", "lembranc", "infancia", "memoria"),
+     {"bpm": [60, 115], "energy": [0.0, 0.72], "color": "#C9A27E",
+      "sources": ["saudade", "nostalgia", "mpb saudade", "anos 80 nostalgia"]}),
+    (("solid", "sozinh", "lonely", "isolad"),
+     {"bpm": [55, 100], "energy": [0.0, 0.6], "color": "#7C8BA6",
+      "sources": ["solidão", "lonely songs", "sad indie"]}),
+    (("amor", "apaixon", "paixao", "romant", "love", "namor", "crush"),
+     {"bpm": [60, 115], "energy": [0.2, 0.78], "color": "#E3909E",
+      "sources": ["músicas românticas", "love songs", "r&b romântico", "mpb romântica"]}),
+    (("sexy", "sensual", "desejo", "tesao", "safad"),
+     {"bpm": [65, 110], "energy": [0.3, 0.78], "color": "#C0587E",
+      "sources": ["sensual", "slow jams", "r&b sensual"]}),
+    (("feliz", "felicid", "alegri", "alegre", "happy", "bom humor", "good vibes", "contente"),
+     {"bpm": [100, 135], "energy": [0.55, 1.0], "color": "#F2C14E",
+      "sources": ["músicas felizes", "happy hits", "good vibes"]}),
+    (("eufori", "hype", "empolgad", "energia", "pilhad", "animad"),
+     {"bpm": [120, 150], "energy": [0.7, 1.0], "color": "#F06A4F",
+      "sources": ["hype", "euforia", "edm festival", "músicas animadas"]}),
+    (("confian", "poderos", "chefe", "boss", "foda", "imbativel", "marra"),
+     {"bpm": [85, 145], "energy": [0.65, 1.0], "color": "#D4A84B",
+      "sources": ["confiança", "boss music", "rap motivação", "músicas de vilão"]}),
+    (("esperanc", "recomec", "superac", "hope", "fe"),
+     {"bpm": [70, 125], "energy": [0.35, 0.88], "color": "#9FD3A8",
+      "sources": ["esperança", "superação", "uplifting", "hopeful indie"]}),
+    (("ansied", "ansios", "nervos", "estress", "stress", "panico", "preocupad"),
+     {"bpm": [55, 90], "energy": [0.0, 0.5], "color": "#7FB7BE",
+      "sources": ["calma ansiedade", "calm anxiety", "ambient calm", "piano calmo"]}),
+    (("calm", "paz", "tranquil", "zen", "medit", "relax", "sereno"),
+     {"bpm": [50, 88], "energy": [0.0, 0.48], "color": "#B8C4A0",
+      "sources": ["paz", "meditação", "ambient peaceful", "música calma"]}),
+    (("medo", "terror", "sombri", "dark", "tens", "assombr", "creepy"),
+     {"bpm": [60, 130], "energy": [0.15, 0.8], "color": "#6F5E8C",
+      "sources": ["dark ambient", "trilha de terror", "darkwave", "músicas sombrias"]}),
+    (("sono", "dormir", "cansad", "exaust", "sleep"),
+     {"bpm": [45, 78], "energy": [0.0, 0.38], "color": "#5B6C8F",
+      "sources": ["dormir", "sleep piano", "ambient sleep"]}),
+    (("foco", "concentr", "estud", "focus", "produtiv"),
+     {"bpm": [55, 100], "energy": [0.0, 0.7], "color": "#7FB7BE",
+      "sources": ["foco", "deep focus", "lofi estudar"]}),
+    (("festa", "balada", "danc", "rolê", "role", "party"),
+     {"bpm": [112, 132], "energy": [0.65, 1.0], "color": "#E3909E",
+      "sources": ["festa", "dance hits", "balada"]}),
+)
+CONSENSUS_LISTEN = 48
+CONSENSUS_MIN_MEASURED = 6
+CONSENSUS_BPM_OCTAVES = 0.2  # ±15% em torno do pulso típico
+CONSENSUS_ENERGY = 0.22
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +151,7 @@ class Hunt:
     finds: list[Find] = field(default_factory=list)
     chains: list[dict] = field(default_factory=list)
     cancelled: bool = False
+    spec: dict | None = None  # parâmetros da sensação (usados ao salvar como playlist)
 
     def snapshot(self) -> dict:
         return {
@@ -188,6 +253,76 @@ def usable(track: dict) -> bool:
     return bool(track.get("preview")) and track.get("readable", True) and not is_junk(track)
 
 
+def _mentions(tokens: list[str], text: str, stem: str) -> bool:
+    stem = curation.normalize(stem)
+    if " " in stem:
+        return f" {stem} " in text
+    if len(stem) >= 4:
+        return any(token.startswith(stem) for token in tokens)
+    return stem in tokens
+
+
+def spec_from_text(text: str) -> dict:
+    """Transforma o que a pessoa escreveu ("ódio", "saudade de casa") numa sensação.
+
+    A própria frase é a primeira busca: há muita playlist batizada com sentimentos.
+    Se o dicionário reconhece o sentimento, ele dá o ritmo e amplia as buscas;
+    senão "bpm" fica None e o ritmo é aprendido com as músicas (ver consensus).
+    """
+    clean = " ".join(text.split())
+    normalized = curation.normalize(clean)
+    tokens = normalized.split()
+    label = clean[:1].upper() + clean[1:]
+    for stems, params in FEELINGS:
+        if any(_mentions(tokens, f" {normalized} ", stem) for stem in stems):
+            extra = [s for s in params["sources"] if curation.normalize(s) != normalized]
+            return {
+                "name": label,
+                "description": f"Músicas para {clean.lower()}.",
+                "color": params["color"],
+                "bpm": params["bpm"],
+                "energy": params["energy"],
+                "sources": [clean, *extra],
+            }
+    return {
+        "name": label,
+        "description": f"Músicas para {clean.lower()}, no ritmo que as playlists sobre isso têm em comum.",
+        "color": None,
+        "bpm": None,
+        "energy": None,
+        "sources": [clean, f"músicas {clean}", f"{clean} playlist"],
+    }
+
+
+def fold_bpm(bpm: float) -> float:
+    """Leva o BPM para a oitava 70–140, onde metade/dobro viram o mesmo pulso."""
+    while bpm < 70:
+        bpm *= 2
+    while bpm >= 140:
+        bpm /= 2
+    return bpm
+
+
+def consensus(analyses: list[tempo.Analysis]) -> tuple[float, float] | None:
+    """Pulso e energia típicos (medianas) de um conjunto de prévias."""
+    if len(analyses) < CONSENSUS_MIN_MEASURED:
+        return None
+    bpms = sorted(fold_bpm(a.bpm) for a in analyses)
+    energies = sorted(a.energy for a in analyses)
+    middle = len(analyses) // 2
+    return bpms[middle], energies[middle]
+
+
+def consensus_distance(analysis: tempo.Analysis, center: tuple[float, float]) -> float | None:
+    """Distância até o centro (0 = igual); None se ficou fora do padrão."""
+    center_bpm, center_energy = center
+    bpm_gap = abs(math.log2(fold_bpm(analysis.bpm) / center_bpm)) / CONSENSUS_BPM_OCTAVES
+    energy_gap = abs(analysis.energy - center_energy) / CONSENSUS_ENERGY
+    if bpm_gap > 1 or energy_gap > 1:
+        return None
+    return bpm_gap + energy_gap
+
+
 def lesser_known(tracks: list[dict]) -> list[dict]:
     """Metade menos popular de uma busca (o Deezer ordena da mais para a menos ouvida)."""
     ranked = sorted(tracks, key=lambda track: track.get("rank", 0))
@@ -282,27 +417,80 @@ def sense(
     measure: Callable[[bytes], tempo.Analysis | None] = measure_in_process,
 ) -> None:
     hunt.message = "Procurando playlists feitas para esse momento…"
-    candidates = gather_candidates(dz, spec["sources"], rng)[:SENSE_MAX_LISTEN]
+    candidates = gather_candidates(dz, spec["sources"], rng)
+    if not candidates:
+        hunt.message = f"Não achei playlists sobre “{spec['name']}”. Tente outra palavra."
+        return
+    if spec.get("bpm") is None:
+        _sense_by_consensus(hunt, spec, sp, dz, candidates[:CONSENSUS_LISTEN], cache, measure)
+        return
+    candidates = candidates[:SENSE_MAX_LISTEN]
     hunt.total = len(candidates)
-    seen = set()
+    seen: set[str] = set()
     for track, analysis in listen(dz, candidates, cache, measure):
         if hunt.cancelled:
             return
         hunt.progress += 1
         bpm = fits(analysis, spec)
         if bpm is not None:
-            match = to_spotify(sp, track)
-            key = match and curation.normalize(f"{match['name']} {match['artists'][0]['name']}")
-            if match and key not in seen:
-                seen.add(key)
-                hunt.finds.append(find_from(match, reason=spec["name"], bpm=bpm, energy=analysis.energy))
+            _add_find(hunt, sp, track, analysis, bpm, seen)
         hunt.message = f"Ouvindo prévias: {hunt.progress} de {hunt.total}. {len(hunt.finds)} no ritmo certo."
         if len(hunt.finds) >= SENSE_TARGET:
             break
     if hunt.finds:
-        hunt.message = f"{len(hunt.finds)} músicas no ritmo de {spec['name'].lower()}, de {hunt.progress} prévias ouvidas."
+        hunt.message = f"{len(hunt.finds)} músicas no ritmo de “{spec['name']}”, de {hunt.progress} prévias ouvidas."
     else:
         hunt.message = "Nenhuma prévia ficou no ritmo desta vez. Gere de novo para ouvir outras."
+
+
+def _add_find(hunt: Hunt, sp: Spotify, track: dict, analysis: tempo.Analysis, bpm: float, seen: set[str]) -> None:
+    match = to_spotify(sp, track)
+    key = match and curation.normalize(f"{match['name']} {match['artists'][0]['name']}")
+    if match and key not in seen:
+        seen.add(key)
+        hunt.finds.append(find_from(match, bpm=bpm, energy=analysis.energy))
+
+
+def _sense_by_consensus(
+    hunt: Hunt,
+    spec: dict,
+    sp: Spotify,
+    dz: Deezer,
+    candidates: list[dict],
+    cache: TempoCache,
+    measure: Callable[[bytes], tempo.Analysis | None],
+) -> None:
+    """Palavra fora do dicionário: ouve tudo primeiro, descobre o ritmo em comum e fica com quem segue ele."""
+    hunt.total = len(candidates)
+    measured: list[tuple[dict, tempo.Analysis]] = []
+    for track, analysis in listen(dz, candidates, cache, measure):
+        if hunt.cancelled:
+            return
+        hunt.progress += 1
+        if analysis is not None:
+            measured.append((track, analysis))
+        hunt.message = f"Ouvindo para entender o ritmo de “{spec['name']}”: {hunt.progress} de {hunt.total}."
+    center = consensus([analysis for _, analysis in measured])
+    if center is None:
+        hunt.message = f"Poucas músicas para entender “{spec['name']}”. Tente outra palavra."
+        return
+    hunt.message = f"O ritmo de “{spec['name']}” fica perto de {round(center[0])} BPM. Separando as músicas…"
+    ranked = sorted(
+        ((distance, track, analysis) for track, analysis in measured
+         if (distance := consensus_distance(analysis, center)) is not None),
+        key=lambda item: item[0],
+    )
+    seen: set[str] = set()
+    for _, track, analysis in ranked:
+        if hunt.cancelled:
+            return
+        _add_find(hunt, sp, track, analysis, round(analysis.bpm), seen)
+        if len(hunt.finds) >= SENSE_TARGET:
+            break
+    hunt.message = (
+        f"{len(hunt.finds)} músicas no ritmo de “{spec['name']}”, perto de {round(center[0])} BPM."
+        if hunt.finds else f"As músicas sobre “{spec['name']}” não têm um ritmo em comum. Tente outra palavra."
+    )
 
 
 # ---------- Roleta
@@ -322,7 +510,7 @@ def obscure_album_pick(sp: Spotify, rng: random.Random) -> Find | None:
         return None
     return find_from(
         rng.choice(tracks),
-        reason=f"Álbum pouco ouvido de {year}",
+        reason=f"Sorteada de um álbum de {year} que quase ninguém ouve.",
         image=pick_image(album.get("images"), 64),
     )
 
@@ -337,7 +525,7 @@ def world_genre_pick(sp: Spotify, dz: Deezer, rng: random.Random) -> Find | None
     if not tracks:
         return None
     match = to_spotify(sp, rng.choice(lesser_known(tracks)))
-    return find_from(match, reason=genre.capitalize()) if match else None
+    return find_from(match, reason=f"Sorteada de uma playlist de {genre}.") if match else None
 
 
 def roulette(hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int = ROULETTE_COUNT) -> None:
@@ -400,7 +588,7 @@ def rabbit_hole(
                     match = to_spotify(sp, dz.track(top["id"]))  # o "top" não traz ISRC
                     if match:
                         titles.add(title)
-                        finds.append(find_from(match, reason=f"A partir de {seed}"))
+                        finds.append(find_from(match, reason=f"Chegou aqui a partir de {seed}."))
                     if len(finds) == RABBIT_TRACKS:
                         break
         except (SpotifyError, DeezerError) as err:

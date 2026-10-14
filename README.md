@@ -22,7 +22,8 @@ pip install -r requirements.txt
 Dê dois cliques em `abrir-painel.cmd` (ou rode `python -m spotify_assistant ui`). O painel abre em
 http://127.0.0.1:8888 e fica no ar enquanto a janela preta estiver aberta.
 
-- **Estante**: cada playlist é uma lombada colorida; a escolhida vira a cor do painel.
+- **Estante**: no topo, em duas seções ("Suas playlists" e "Explorar"); cada playlist é uma lombada
+  colorida e a escolhida vira a cor do painel.
 - **Player**: tocar, pausar, pular, aleatório, volume e barra de progresso. Clique numa faixa para
   tocar a partir dela. Funciona com o Spotify aberto no PC ou no celular (exige Premium).
 - **Atualizar agora / Refazer seleção**: roda a curadoria com o log aparecendo ao vivo.
@@ -37,7 +38,16 @@ As cores das lombadas ficam no campo `color` de cada playlist no `playlists.json
 
 ### Sensações
 
-Escolha o que vai fazer (treino pesado, corrida, foco profundo, festa, dia de chuva...). A sala busca
+**Escreva o que está sentindo** ("ódio", "saudade de casa", "chorando no banho") ou escolha um momento
+pronto. O texto livre não usa nenhuma IA paga:
+
+1. A frase vira a primeira busca: muita gente batiza playlists com sentimentos.
+2. Um dicionário local (`FEELINGS`, em `spotify_assistant/discovery.py`) reconhece o sentimento,
+   define o ritmo (ódio: 125–185 BPM e energia alta) e amplia a busca ("rage music", "metal pesado").
+3. Se a frase não estiver no dicionário ("domingo de manhã"), a sala ouve as prévias, descobre o
+   BPM e a energia que elas têm em comum e fica com as músicas que seguem esse padrão.
+
+Nos momentos prontos (treino pesado, corrida, foco profundo, festa, dia de chuva...) a sala busca
 playlists que pessoas montaram para esse momento no Deezer, **ouve a prévia de 30 s de cada faixa e
 mede BPM e energia**, e fica só com o que cabe na faixa daquela sensação. As músicas aparecem
 conforme são aprovadas; dá para tocar tudo direto no Spotify ou salvar como playlist
@@ -58,7 +68,13 @@ usadas como fonte. Medições ficam em `data/tempo-cache.json` para não ouvir a
 - **Toca do coelho**: parte de um artista (digitado ou sorteado das suas playlists) e pula 4 vezes
   para artistas relacionados, sempre entre os menos conhecidos. Mostra o caminho e o número de fãs.
 
-**Guardar** manda a faixa para a playlist `Achados da Sala`, criada na primeira vez.
+**Guardar** manda a faixa para a playlist `Achados da Sala`, criada na primeira vez. O ⓘ de cada
+música mostra por que ela apareceu (BPM e energia medidos, gênero ou ano sorteado, de onde a toca partiu).
+
+### Custo
+
+Zero. A Spotify Web API e a API pública do Deezer são gratuitas (só têm limite de requisições, que o
+painel respeita), o BPM é medido no seu PC e o texto livre é interpretado localmente.
 
 ## Linha de comando
 

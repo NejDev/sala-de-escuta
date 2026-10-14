@@ -38,6 +38,8 @@ const state = {
   lastHunt: null,
   seed: "",
   kept: new Set(),
+  openDetails: new Set(),
+  landed: new Set(),
   addingOpen: false,
   player: null,
   playerSyncedAt: 0,
@@ -225,12 +227,11 @@ function renderShelf() {
     "aria-current": state.view === key ? "true" : null,
     title: `${label} (tecla ${offset + index + 1})`,
     onclick: () => openView(key),
-  },
-    h("span", { class: "spine-eq", "aria-hidden": "true" }),
-    h("span", { class: "spine-name" }, label),
-    h("span", { class: "spine-count", "aria-hidden": "true" }, "+"),
-  ));
-  $("#shelf").replaceChildren(...spines, h("span", { class: "shelf-gap", "aria-hidden": "true" }), ...hollow);
+  }, h("span", { class: "spine-name" }, label)));
+  const group = (label, buttons) => h("section", { class: "shelf-group", "aria-label": label },
+    h("p", { class: "shelf-label", "aria-hidden": "true" }, label),
+    h("div", { class: "shelf-row" }, buttons));
+  $("#shelf").replaceChildren(group("Suas playlists", spines), group("Explorar", hollow));
   markPlaying();
 }
 
@@ -431,15 +432,39 @@ function renderIntro() {
 function senseIntro() {
   const { sensations, tempo_ready: ready } = state.sensations;
   const active = huntHere();
+  const feeling = h("input", {
+    class: "feeling-input",
+    id: "feeling-input",
+    type: "text",
+    maxlength: "60",
+    autocomplete: "off",
+    spellcheck: "false",
+    placeholder: "ódio, saudade, euforia…",
+    disabled: !ready,
+  });
+  if (active?.kind === "sense" && !sensations.some((s) => s.name === active.label)) feeling.value = active.label;
+  const submit = (event) => {
+    event.preventDefault();
+    const text = feeling.value.trim();
+    if (text) startHunt({ kind: "sense", text });
+  };
   return [
     h("div", { class: "sleeve-text" },
       h("h1", { class: "title" }, "Sensações"),
       h("p", { class: "description" },
-        "Diga o que você vai fazer. A sala procura músicas feitas para esse momento, ouve a prévia de cada uma "
-        + "e mede o BPM e a energia para ficar só com o que combina."),
+        "Escreva o que está sentindo ou escolha um momento. A sala acha músicas para isso, ouve a prévia "
+        + "de cada uma e fica só com as que têm o ritmo certo."),
       !ready && h("p", { class: "meta is-warning" },
         "Para medir o BPM, instale o decodificador com pip install miniaudio e reabra o painel."),
     ),
+    h("form", { class: "feeling", onsubmit: submit },
+      h("label", { class: "feeling-label", for: "feeling-input" }, "O que você está sentindo?"),
+      h("div", { class: "feeling-row" },
+        feeling,
+        h("button", { class: "play-button", type: "submit", disabled: !ready }, "Montar")),
+      h("p", { class: "feeling-hint" },
+        "Vale qualquer coisa: uma palavra, uma frase, um momento do dia.")),
+    h("p", { class: "moods-label" }, "Ou escolha um momento"),
     h("ul", { class: "moods" }, sensations.map((sensation) => h("li", null,
       h("button", {
         class: "mood",
@@ -475,12 +500,13 @@ function discoverIntro() {
       h("h1", { class: "title" }, "Descobrir"),
       h("p", { class: "description" }, "Duas formas de chegar em músicas que você nunca ouviu.")),
     h("div", { class: "paths" },
-      h("section", { class: "path", style: "--tone: #F2C14E" },
+      h("section", { class: "path path-roulette", style: "--tone: #F2C14E" },
         h("h2", { class: "path-name" }, "Roleta"),
         h("p", { class: "path-text" },
           "Sorteia álbuns pouco ouvidos de qualquer ano e faixas de gêneros do mundo todo, do zamrock ao enka."),
         h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "roulette" }) },
-          "Girar a roleta")),
+          "Girar a roleta"),
+        wheel()),
       h("section", { class: "path", style: "--tone: #9DB4E6" },
         h("h2", { class: "path-name" }, "Toca do coelho"),
         h("p", { class: "path-text" },
@@ -490,6 +516,76 @@ function discoverIntro() {
         h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "rabbit", seed: seed.value }) },
           "Entrar na toca"))),
   ];
+}
+
+// ---------- Roda da roleta
+
+const WHEEL_GENRES = ["Zamrock", "Enka", "Fado", "Huayno", "Ethio jazz", "City pop",
+  "Schlager", "Choro", "Rebetiko", "Italo disco", "Tropicália", "Zydeco"];
+const WHEEL_COLORS = ["#5CC8C0", "#D4A84B", "#E3909E", "#E6D5AA", "#9DB4E6", "#F06A4F"];
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svg(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, String(value));
+  return el;
+}
+
+function wheel() {
+  const size = 100;
+  const radius = 48;
+  const center = size / 2;
+  const slice = 360 / WHEEL_GENRES.length;
+  const root = svg("svg", { class: "wheel", id: "wheel", viewBox: `0 0 ${size} ${size}`, "aria-hidden": "true" });
+  WHEEL_GENRES.forEach((genre, index) => {
+    const start = (index * slice - 90) * (Math.PI / 180);
+    const end = ((index + 1) * slice - 90) * (Math.PI / 180);
+    const path = `M${center},${center} L${center + radius * Math.cos(start)},${center + radius * Math.sin(start)} `
+      + `A${radius},${radius} 0 0 1 ${center + radius * Math.cos(end)},${center + radius * Math.sin(end)} Z`;
+    root.append(svg("path", { d: path, fill: WHEEL_COLORS[index % WHEEL_COLORS.length], stroke: "#0E1525", "stroke-width": 0.6 }));
+    const label = svg("text", {
+      x: center + 26,
+      y: center,
+      "text-anchor": "middle",
+      "dominant-baseline": "middle",
+      transform: `rotate(${index * slice + slice / 2 - 90} ${center} ${center})`,
+    });
+    label.textContent = genre;
+    root.append(label);
+  });
+  return h("div", { class: "wheel-wrap" },
+    h("span", { class: "wheel-pointer", "aria-hidden": "true" }),
+    root,
+    h("span", { class: "wheel-hub", id: "wheel-hub", "aria-hidden": "true" }));
+}
+
+function currentAngle(el) {
+  const matrix = getComputedStyle(el).transform;
+  if (!matrix || matrix === "none") return 0;
+  const [a, b] = matrix.slice(7, -1).split(",").map(Number);
+  return (Math.atan2(b, a) * 180) / Math.PI;
+}
+
+/** Gira enquanto a roleta sorteia; quando termina, desacelera até parar. */
+function updateWheel(hunt) {
+  const el = $("#wheel");
+  if (!el) return;
+  const hub = $("#wheel-hub");
+  const spinning = hunt?.kind === "roulette" && hunt.status === "running";
+  if (hub) hub.textContent = hunt?.kind === "roulette" && hunt.total ? `${hunt.progress}/${hunt.total}` : "";
+  if (spinning && !el.classList.contains("is-spinning")) {
+    el.style.transition = "none";
+    el.style.transform = "";
+    el.classList.add("is-spinning");
+  } else if (!spinning && el.classList.contains("is-spinning")) {
+    const angle = currentAngle(el);
+    el.classList.remove("is-spinning");
+    el.style.transition = "none";
+    el.style.transform = `rotate(${angle}deg)`;
+    el.getBoundingClientRect(); // aplica o ângulo atual antes de animar a parada
+    el.style.transition = "transform 2.2s cubic-bezier(.12, .8, .2, 1)";
+    el.style.transform = `rotate(${angle + 540 + Math.random() * 360}deg)`;
+  }
 }
 
 async function startHunt(body) {
@@ -532,12 +628,15 @@ function renderHunt() {
   const panel = $("#hunt");
   const list = $("#tracks");
   const hunt = huntHere();
+  updateWheel(hunt);
   if (!hunt) {
     panel.hidden = true;
     list.replaceChildren();
     return;
   }
-  const signature = JSON.stringify([hunt.status, hunt.progress, hunt.finds.length, hunt.message, state.kept.size]);
+  const signature = JSON.stringify([
+    hunt.status, hunt.progress, hunt.finds.length, hunt.message, state.kept.size, state.openDetails.size,
+  ]);
   if (!panel.hidden && signature === state.huntSignature) return;
   state.huntSignature = signature;
   if (hunt.color) setMood(hunt.color);
@@ -569,39 +668,53 @@ function renderHunt() {
   ];
   panel.replaceChildren(...header.filter(Boolean));
 
+  // Só as músicas que acabaram de chegar ganham a animação de "cair" na lista.
+  const fresh = (find) => {
+    const isNew = !state.landed.has(find.uri);
+    state.landed.add(find.uri);
+    return isNew && hunt.kind === "roulette";
+  };
   if (hunt.kind === "rabbit") {
     list.replaceChildren(...hunt.chains.flatMap((chain) => [
       chainRow(chain),
-      ...chain.finds.map((find, index) => findRow(find, hunt.finds, index, false)),
+      ...chain.finds.map((find, index) => findRow(find, hunt.finds, index, fresh(find))),
     ]));
   } else {
-    list.replaceChildren(...hunt.finds.map((find, index) => findRow(find, hunt.finds, index, true)));
+    list.replaceChildren(...hunt.finds.map((find, index) => findRow(find, hunt.finds, index, fresh(find))));
   }
   markPlaying();
 }
 
-function findRow(find, finds, index, showReason) {
+function findDetails(find) {
+  if (!find.bpm) return find.reason;
+  const energy = Math.round((find.energy || 0) * 100);
+  return `BPM medido na prévia: ${find.bpm}. Energia: ${energy} de 100.`;
+}
+
+function findRow(find, finds, index, isNew) {
   const kept = state.kept.has(find.uri);
-  let detail = null;
-  if (find.bpm) {
-    const energy = Math.round((find.energy || 0) * 100);
-    detail = h("span", { class: "tempo" },
-      h("span", { class: "bpm" }, h("b", null, String(find.bpm)), " BPM"),
-      h("span", { class: "energy", role: "img", "aria-label": `Energia ${energy} de 100`, title: `Energia ${energy} de 100` },
-        h("i", { style: `width: ${energy}%` })));
-  } else if (showReason && find.reason) {
-    detail = h("span", { class: "reason", title: find.reason }, find.reason);
-  }
-  return h("li", { class: "track find", "data-uri": find.uri },
+  const details = findDetails(find);
+  const open = state.openDetails.has(find.uri);
+  const classes = ["track", "find", open && "is-open", isNew && "is-new"].filter(Boolean).join(" ");
+  return h("li", { class: classes, "data-uri": find.uri },
     h("button", { class: "track-button", type: "button", title: `Tocar ${find.title}`, onclick: () => playFinds(finds, find.uri) },
       h("span", { class: "track-index" }, String(index + 1)),
       find.image ? h("img", { class: "track-art", src: find.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
       h("span", { class: "track-text" },
         h("span", { class: "track-title" }, find.title),
-        h("span", { class: "track-sub" }, find.subtitle)),
-      detail || h("span"),
+        h("span", { class: "track-sub" }, find.subtitle),
+        details && h("span", { class: "find-details" }, details)),
+      find.bpm ? h("span", { class: "bpm" }, h("b", null, String(find.bpm)), " BPM") : h("span"),
       h("span", { class: "track-time" }, clock(find.duration_ms)),
     ),
+    details ? h("button", {
+      class: "info-button",
+      type: "button",
+      "aria-expanded": String(open),
+      "aria-label": `Detalhes de ${find.title}`,
+      title: "Por que essa música?",
+      onclick: () => toggleDetails(find.uri),
+    }, infoIcon()) : h("span"),
     h("button", {
       class: "keep-button",
       type: "button",
@@ -611,6 +724,18 @@ function findRow(find, finds, index, showReason) {
       onclick: (event) => keep([find.uri], event.currentTarget),
     }, kept ? "Guardada" : "Guardar"),
   );
+}
+
+function toggleDetails(uri) {
+  if (state.openDetails.has(uri)) state.openDetails.delete(uri);
+  else state.openDetails.add(uri);
+  renderHunt();
+}
+
+function infoIcon() {
+  const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
+  icon.append(svg("circle", { cx: 12, cy: 12, r: 9 }), svg("path", { d: "M12 11v5M12 7.5v.5" }));
+  return icon;
 }
 
 function fans(count) {

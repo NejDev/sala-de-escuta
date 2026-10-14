@@ -290,12 +290,18 @@ class App:
         sp = self.spotify()
         rng = random.Random()
         if kind == "sense":
-            spec = next((s for s in load_sensations() if s["name"] == body.get("name")), None)
-            if spec is None:
-                raise UserError("Sensação não encontrada no sensacoes.json.", 404)
+            text = " ".join((body.get("text") or "").split())
+            if len(text) > 60:
+                raise UserError("Escreva algo mais curto, até 60 letras.")
+            if text:
+                spec = discovery.spec_from_text(text)
+            else:
+                spec = next((s for s in load_sensations() if s["name"] == body.get("name")), None)
+                if spec is None:
+                    raise UserError("Sensação não encontrada no sensacoes.json.", 404)
             if not tempo.available():
                 raise UserError("Para medir o BPM, instale o decodificador: pip install miniaudio", 409)
-            hunt = Hunt("sense", spec["name"], color=spec.get("color"))
+            hunt = Hunt("sense", spec["name"], color=spec.get("color"), spec=spec)
             cache = discovery.TempoCache()
 
             def task() -> None:
@@ -363,11 +369,14 @@ class App:
         hunt = self._hunt
         if not hunt or hunt.kind != "sense" or not hunt.finds:
             raise UserError("Gere uma sensação antes de salvar.")
-        spec = next((s for s in load_sensations() if s["name"] == hunt.label), {})
-        low, high = spec.get("bpm", ("?", "?"))
+        spec = hunt.spec or {}
+        rhythm = (
+            f"Entre {spec['bpm'][0]} e {spec['bpm'][1]} BPM, medidos pela Sala de escuta."
+            if spec.get("bpm") else "Ritmo aprendido pela Sala de escuta com playlists sobre isso."
+        )
         playlist = {
             "name": f"Sensação: {hunt.label}",
-            "description": f"{spec.get('description', '')} Entre {low} e {high} BPM, medidos pela Sala de escuta.",
+            "description": f"{spec.get('description', '')} {rhythm}".strip(),
             "public": False,
         }
         sp = self.spotify()
