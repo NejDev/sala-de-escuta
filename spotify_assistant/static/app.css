@@ -466,7 +466,7 @@ body.is-gated .console { display: none; }
 .feeling-hint { margin: 10px 0 0; color: var(--smoke); font-size: .8125rem; }
 .moods-label { margin: 0 0 12px; color: var(--smoke); font-size: .875rem; }
 
-.sense-layout { display: grid; gap: 44px; }
+.sense-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 44px; }
 .sense-main { display: grid; align-content: start; gap: 32px; }
 /* Tela larga: duas colunas, para a direita não ficar vazia. */
 @media (min-width: 1100px) {
@@ -928,12 +928,21 @@ body.is-gated .console { display: none; }
 @media (max-width: 760px) {
   :root { --player-h: 132px; }
 
-  .topbar { gap: 16px; padding-top: 10px; padding-bottom: 10px; }
-  .brand { display: none; }
-  .shelf { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .nav-group + .nav-group { padding-left: 14px; }
+  /* A página inteira rola (o topo sai de cena ao descer); só o player fica fixo. */
+  .room { height: auto; }
+  .stage { overflow: visible; padding-top: 24px; padding-bottom: calc(var(--player-h) + 40px); }
 
-  .stage { padding-top: 24px; padding-bottom: 56px; }
+  /* Menu em duas linhas: playlists arrastam para o lado, Explorar fica sempre à vista. */
+  .topbar { flex-wrap: wrap; row-gap: 8px; padding-top: 8px; padding-bottom: 10px; }
+  .brand { display: none; }
+  .account { order: -1; width: 100%; justify-content: flex-end; font-size: .8125rem; }
+  /* min-width: 0 deixa cada linha rolar por dentro em vez de alargar a página (e esconder o player). */
+  .topbar { min-width: 0; }
+  .shelf { flex-direction: column; align-items: stretch; gap: 6px; width: 100%; min-width: 0; }
+  .nav-group { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .nav-group + .nav-group { padding-left: 0; border-left: 0; }
+  .nav-label { flex: none; min-width: 60px; margin-right: 4px; }
+  .nav-item { padding: 0 9px 0 8px; }
   .sleeve { grid-template-columns: minmax(0, 1fr); gap: 20px; }
   .cover { width: 148px; }
 

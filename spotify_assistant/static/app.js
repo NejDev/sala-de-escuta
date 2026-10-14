@@ -222,7 +222,7 @@ async function select(key) {
   renderSleeve();
   renderAdder();
   renderTracks();
-  $("#stage").scrollTo({ top: 0 });
+  scrollToTop();
   await loadDetail();
 }
 
@@ -276,6 +276,12 @@ function renderShelf() {
   const emptyShelf = !playlists.length && h("span", { class: "nav-empty" }, "Nenhuma ainda");
   $("#shelf").replaceChildren(group("Playlists", playlists.length ? playlists : [emptyShelf]), group("Explorar", explore));
   markPlaying();
+}
+
+/** Volta ao topo: no computador quem rola é o palco; no celular, a página inteira. */
+function scrollToTop() {
+  $("#stage").scrollTo({ top: 0 });
+  window.scrollTo({ top: 0 });
 }
 
 function setMood(color) {
@@ -452,7 +458,7 @@ async function openView(key) {
   history.replaceState(null, "", `#${key}`);
   document.title = `Sala de escuta: ${VIEWS[key]}`;
   $("#adder").hidden = true;
-  $("#stage").scrollTo({ top: 0 });
+  scrollToTop();
   renderShelf();
   if (key === "sensacoes" && !state.sensations) {
     try {
