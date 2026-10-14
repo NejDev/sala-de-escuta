@@ -84,6 +84,21 @@ música mostra por que ela apareceu (BPM e energia medidos, gênero ou ano sorte
 Zero. A Spotify Web API e a API pública do Deezer são gratuitas (só têm limite de requisições, que o
 painel respeita), o BPM é medido no seu PC e o texto livre é interpretado localmente.
 
+## Sala para amigos
+
+Cada pessoa entra com o próprio Spotify e tem player, buscas, Achados, bloqueados e a própria cópia
+das playlists (botão "Criar no meu Spotify"). O painel roda no PC do dono e fica público pelo
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel), num endereço fixo `https://<pc>.<rede>.ts.net`.
+
+1. `SALA_PUBLIC_URL` no `.env` com o endereço do Funnel (`tailscale funnel status` mostra).
+2. No app do Spotify for Developers → Settings: adicione `<SALA_PUBLIC_URL>/callback` em Redirect URIs.
+3. Em User Management, adicione nome e e-mail da conta Spotify de cada amigo (limite de 5 pessoas,
+   contando o dono, no Development Mode).
+4. Mande o endereço para eles. O player só funciona para quem tem Premium; descobrir e salvar, para todos.
+
+O site só fica no ar com o PC ligado e o painel aberto. A seleção base das playlists (`playlists.json`)
+é do dono; amigos adicionam faixas só nas próprias cópias. `weekly` atualiza a Tech Radar de todos que a criaram.
+
 ## Linha de comando
 
 ```powershell
