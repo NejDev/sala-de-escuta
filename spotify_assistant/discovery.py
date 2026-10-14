@@ -20,7 +20,7 @@ import random
 import threading
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Callable, Collection, Iterator
 
 from . import config, curation, tempo
@@ -37,6 +37,9 @@ RABBIT_HOPS = 4
 RABBIT_TRACKS = 2  # do último artista; dos do meio sai uma de cada
 MIN_FANS = 100
 LISTEN_THREADS = 6
+NEWS_RESULTS = 24
+NEWS_MAX_ARTISTS = 45  # artistas do tamanho certo cujos lançamentos a gente olha
+NEWS_ARTIST_POOL = 120  # artistas do gênero levantados nas playlists, antes do filtro de fãs
 
 # Buscas que trazem faixas típicas de cada gênero no Deezer. Edite à vontade.
 WORLD_GENRES = (
@@ -161,6 +164,59 @@ class Find:
     energy: float | None = None
     tag: str = ""  # rótulo curto (gênero ou ano) que aparece na pilha da roleta
     artists: list[str] = field(default_factory=list)  # para "não mostrar mais este artista"
+    released: str | None = None  # data de lançamento (Novidades)
+    fans: int | None = None  # fãs do artista, quando a gente sabe
+
+
+@dataclass(frozen=True)
+class FanRange:
+    """Tamanho do artista escolhido pela pessoa: mínimo e (opcional) máximo de fãs."""
+
+    min: int = 0
+    max: int | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.min > 0 or self.max is not None
+
+    def ok(self, fans: int | None) -> bool:
+        fans = fans or 0
+        return fans >= self.min and (self.max is None or fans <= self.max)
+
+
+ANY_SIZE = FanRange()
+
+
+class FanCounts:
+    """Fãs por artista, guardados enquanto o painel está aberto (cada consulta custa um pedido)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._by_id: dict[int, int] = {}
+        self._by_name: dict[str, int | None] = {}
+
+    def by_id(self, dz: Deezer, artist_id: int) -> int:
+        with self._lock:
+            if artist_id in self._by_id:
+                return self._by_id[artist_id]
+        fans = dz.artist(artist_id).get("nb_fan") or 0
+        with self._lock:
+            self._by_id[artist_id] = fans
+        return fans
+
+    def by_name(self, dz: Deezer, name: str) -> int | None:
+        key = curation.normalize(name)
+        with self._lock:
+            if key in self._by_name:
+                return self._by_name[key]
+        found = dz.search_artist(name)
+        fans = found.get("nb_fan") if found else None
+        with self._lock:
+            self._by_name[key] = fans
+        return fans
+
+
+fan_counts = FanCounts()
 
 
 @dataclass
@@ -261,11 +317,14 @@ def fits(analysis: tempo.Analysis | None, spec: dict) -> int | None:
 
 def next_hop(
     options: list[dict], visited: set, rng: random.Random, blocked: Collection[str] = frozenset(),
+    size: FanRange = ANY_SIZE,
 ) -> dict | None:
-    """Entre os relacionados, sorteia no terço menos conhecido (com um mínimo de fãs)."""
+    """Entre os relacionados do tamanho pedido, sorteia no terço menos conhecido."""
+    floor = max(MIN_FANS, size.min)  # abaixo de 100 fãs costuma ser perfil vazio ou duplicado
     fresh = [
         artist for artist in options
-        if artist["id"] not in visited and artist.get("nb_fan", 0) >= MIN_FANS
+        if artist["id"] not in visited and artist.get("nb_fan", 0) >= floor
+        and (size.max is None or artist.get("nb_fan", 0) <= size.max)
         and not is_religious(artist.get("name", "")) and curation.normalize(artist.get("name", "")) not in blocked
     ]
     if not fresh:
@@ -471,7 +530,7 @@ def to_spotify(sp: Spotify, track: dict) -> dict | None:
 
 
 def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: float | None = None,
-              image: str | None = None, tag: str = "") -> Find:
+              image: str | None = None, tag: str = "", released: str | None = None, fans: int | None = None) -> Find:
     return Find(
         uri=track["uri"],
         title=track["name"],
@@ -483,6 +542,8 @@ def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: f
         energy=energy,
         tag=tag,
         artists=[artist["name"] for artist in track.get("artists", [])],
+        released=released,
+        fans=fans,
     )
 
 
@@ -639,7 +700,10 @@ def _sense_by_consensus(
 # ---------- Roleta
 
 
-def obscure_album_pick(sp: Spotify, rng: random.Random, blocked: Collection[str] = frozenset()) -> Find | None:
+def obscure_album_pick(
+    sp: Spotify, rng: random.Random, blocked: Collection[str] = frozenset(),
+    dz: Deezer | None = None, size: FanRange = ANY_SIZE,
+) -> Find | None:
     year = rng.randint(1955, date.today().year)
     albums = [
         album for album in sp.search(f"tag:hipster year:{year}", "album", offset=rng.randrange(0, 90))
@@ -655,19 +719,27 @@ def obscure_album_pick(sp: Spotify, rng: random.Random, blocked: Collection[str]
     secular = [track for track in tracks if not religious_track(track) and not blocked_track(track, blocked)]
     if not secular:
         return None
+    fans = None
+    if size.active and dz is not None:
+        first_artist = (album.get("artists") or [{}])[0].get("name", "")
+        fans = fan_counts.by_name(dz, first_artist) if first_artist else None
+        if fans is None or not size.ok(fans):
+            return None
     return find_from(
         rng.choice(secular),
         reason=f"Sorteada de um álbum de {year} que quase ninguém ouve.",
         image=pick_image(album.get("images"), 64),
         tag=str(year),
+        fans=fans,
     )
 
 
 def world_genre_pick(
     sp: Spotify, dz: Deezer, rng: random.Random, blocked: Collection[str] = frozenset(),
+    genre: str | None = None, size: FanRange = ANY_SIZE,
 ) -> Find | None:
-    """Faixa pouco popular de uma playlist com o nome do gênero (buscar faixas casaria só o título)."""
-    genre = rng.choice(WORLD_GENRES)
+    """Faixa de uma playlist com o nome do gênero (buscar faixas casaria só o título)."""
+    genre = genre or rng.choice(WORLD_GENRES)
     playlists = [p for p in dz.search_playlists(genre, limit=6) if p.get("nb_tracks", 0) >= 10]
     if not playlists:
         return None
@@ -678,23 +750,35 @@ def world_genre_pick(
     tracks = [track for track in listed if usable(track, blocked)]
     if not tracks:
         return None
-    match = to_spotify(sp, rng.choice(lesser_known(tracks)))
-    if not match or blocked_track(match, blocked):
-        return None
-    return find_from(match, reason=f"Sorteada de uma playlist de {genre}.", tag=genre.capitalize())
+    # Sem tamanho escolhido, puxa para o lado menos popular; com tamanho, quem decide é o filtro.
+    pool = lesser_known(tracks) if not size.active else tracks
+    rng.shuffle(pool)
+    for track in pool[:6]:
+        fans = fan_counts.by_id(dz, track["artist"]["id"]) if size.active else None
+        if size.active and not size.ok(fans):
+            continue
+        match = to_spotify(sp, track)
+        if match and not blocked_track(match, blocked):
+            return find_from(match, reason=f"Sorteada de uma playlist de {genre}.", tag=genre.capitalize(), fans=fans)
+    return None
 
 
 def roulette(
     hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int = ROULETTE_COUNT,
-    blocked: Collection[str] = frozenset(),
+    blocked: Collection[str] = frozenset(), genre: str | None = None, size: FanRange = ANY_SIZE,
 ) -> None:
     hunt.total = count
     hunt.message = "Girando a roleta…"
     attempts = 0
-    while len(hunt.finds) < count and attempts < count * 4 and not hunt.cancelled:
+    budget = count * (6 if genre or size.active else 4)  # filtros descartam mais tentativas
+    while len(hunt.finds) < count and attempts < budget and not hunt.cancelled:
         attempts += 1
         try:
-            find = obscure_album_pick(sp, rng, blocked) if attempts % 2 else world_genre_pick(sp, dz, rng, blocked)
+            # Com gênero escolhido, só playlists desse gênero; sem, alterna com álbuns perdidos de um ano qualquer.
+            if genre or attempts % 2 == 0:
+                find = world_genre_pick(sp, dz, rng, blocked, genre=genre, size=size)
+            else:
+                find = obscure_album_pick(sp, rng, blocked, dz=dz, size=size)
         except (SpotifyError, DeezerError) as err:
             if isinstance(err, SpotifyError) and err.status == 429:
                 raise  # pausa da Spotify: insistir só aumenta o castigo
@@ -708,18 +792,151 @@ def roulette(
     hunt.message = f"{len(hunt.finds)} músicas sorteadas." if hunt.finds else "A roleta não achou nada desta vez. Gire de novo."
 
 
+# ---------- Novidades
+
+
+def genre_artists(dz: Deezer, genre: str, blocked: Collection[str] = frozenset()) -> list[dict]:
+    """Artistas que aparecem em playlists do gênero, incluindo as de lançamentos."""
+    artists: dict[int, dict] = {}
+    for query in (f"{genre} new releases", f"{genre} lançamentos", f"new {genre}", genre):
+        playlists = [p for p in dz.search_playlists(query, limit=5) if p.get("nb_tracks", 0) >= 10][:2]
+        for playlist in playlists:
+            listed = dz.playlist_tracks(playlist["id"])
+            if religious_collection(playlist.get("title", ""), listed, playlist.get("user", {}).get("name", "")):
+                continue
+            for track in listed:
+                artist = track.get("artist") or {}
+                name = artist.get("name", "")
+                if artist.get("id") and artist["id"] not in artists and name and not is_religious(name) \
+                        and curation.normalize(name) not in blocked:
+                    artists[artist["id"]] = artist
+        if len(artists) >= NEWS_ARTIST_POOL:
+            break
+    return list(artists.values())[:NEWS_ARTIST_POOL]
+
+
+def recent_albums(albums: list[dict], since: date) -> list[dict]:
+    """Discos lançados de 'since' para cá, do mais novo para o mais antigo."""
+    fresh = []
+    for album in albums:
+        try:
+            released = date.fromisoformat(album.get("release_date", ""))
+        except ValueError:
+            continue
+        if since <= released <= date.today() and not is_religious(album.get("title", "")):
+            fresh.append(album)
+    return sorted(fresh, key=lambda album: album["release_date"], reverse=True)
+
+
+def focus_track(album: dict, tracks: list[dict], artist_id: int | None = None) -> dict | None:
+    """A faixa que dá nome ao lançamento; senão, a primeira do próprio artista (trilhas têm vários)."""
+    playable = [track for track in tracks if track.get("readable", True)]
+    if artist_id is not None:
+        own = [track for track in playable if (track.get("artist") or {}).get("id") == artist_id]
+        playable = own or playable
+    title = curation.normalize(curation.base_title(album.get("title", "")))
+    named = next((t for t in playable if curation.normalize(curation.base_title(t.get("title", ""))) == title), None)
+    return named or (playable[0] if playable else None)
+
+
+RECORD_TYPES = {"single": "Single", "ep": "EP", "album": "Álbum", "compile": "Coletânea"}
+
+
+def _is_edit(title: str) -> bool:
+    return any(word in curation.normalize(title).split() for word in ("clean", "edit", "radio"))
+
+
+def news(
+    hunt: Hunt, sp: Spotify, dz: Deezer, genre: str, size: FanRange = ANY_SIZE, days: int = 30,
+    blocked: Collection[str] = frozenset(),
+) -> None:
+    """Lançamentos recentes de artistas do gênero, dentro do tamanho escolhido."""
+    since = date.today() - timedelta(days=days)
+    hunt.message = f"Procurando artistas de {genre}…"
+    artists = genre_artists(dz, genre, blocked)
+    if not artists:
+        hunt.message = f"Não achei artistas de “{genre}”. Tente escrever o gênero de outro jeito."
+        return
+    hunt.total = len(artists)
+    releases: list[tuple[dict, dict, int | None]] = []
+
+    def inspect(artist: dict) -> tuple[dict, int | None, list[dict] | None]:
+        fans = fan_counts.by_id(dz, artist["id"]) if size.active else None
+        if size.active and not size.ok(fans):
+            return artist, fans, None
+        return artist, fans, recent_albums(dz.artist_albums(artist["id"]), since)
+
+    # Vários artistas ao mesmo tempo; o freio do cliente Deezer segura o ritmo de pedidos.
+    executor = ThreadPoolExecutor(max_workers=LISTEN_THREADS)
+    futures = [executor.submit(inspect, artist) for artist in artists]
+    checked = 0
+    try:
+        for future in as_completed(futures):
+            if hunt.cancelled:
+                return
+            hunt.progress += 1
+            artist, fans, albums = future.result()
+            if albums is None:
+                continue
+            checked += 1
+            releases.extend((album, artist, fans) for album in albums)
+            hunt.message = f"Olhando {hunt.progress} de {hunt.total} artistas. {len(releases)} lançamentos até agora."
+            if checked >= NEWS_MAX_ARTISTS:
+                break
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    if not releases:
+        hunt.message = f"Nenhum lançamento de {genre} nesse tamanho nos últimos {days} dias. Aumente o período ou o tamanho."
+        return
+
+    hunt.message = "Separando a faixa principal de cada lançamento…"
+    seen: set[tuple[int, str]] = set()
+    # Mais novo primeiro; no mesmo dia, a versão original antes da "clean"/"edit".
+    releases.sort(key=lambda item: (item[0]["release_date"], not _is_edit(item[0].get("title", ""))), reverse=True)
+    for album, artist, fans in releases:
+        if hunt.cancelled:
+            return
+        key = (artist["id"], curation.normalize(curation.base_title(album.get("title", ""))))
+        if key in seen:  # mesmo lançamento em outra versão (clean, explícita, deluxe do mesmo dia)
+            continue
+        seen.add(key)
+        track = focus_track(album, dz.album_tracks(album["id"]), artist["id"])
+        if track is None or religious_track(track) or blocked_track(track, blocked):
+            continue
+        match = to_spotify(sp, track)
+        if not match or blocked_track(match, blocked) or any(found.uri == match["uri"] for found in hunt.finds):
+            continue
+        released = date.fromisoformat(album["release_date"])
+        kind = RECORD_TYPES.get(album.get("record_type", ""), "Lançamento")
+        who = artist["name"] + (f" ({fans:,} fãs)".replace(",", ".") if fans is not None else "")
+        hunt.finds.append(find_from(
+            match,
+            reason=f"{kind} lançado em {released:%d/%m/%Y} por {who}.",
+            released=album["release_date"],
+            fans=fans,
+            tag=f"{released:%d/%m}",
+        ))
+        if len(hunt.finds) >= NEWS_RESULTS:
+            break
+    hunt.message = (
+        f"{len(hunt.finds)} lançamentos de {genre} dos últimos {days} dias." if hunt.finds
+        else f"Os lançamentos encontrados não estão no Spotify do Brasil. Tente outro gênero ou período."
+    )
+
+
 # ---------- Toca do coelho
 
 
 def walk(
     dz: Deezer, seed: str, hops: int, rng: random.Random, blocked: Collection[str] = frozenset(),
+    size: FanRange = ANY_SIZE,
 ) -> list[dict]:
     start = dz.search_artist(seed)
     if not start:
         return []
     path, visited = [start], {start["id"]}
     for _ in range(hops):
-        step = next_hop(dz.related(path[-1]["id"]), visited, rng, blocked)
+        step = next_hop(dz.related(path[-1]["id"]), visited, rng, blocked, size)
         if step is None:
             break
         path.append(step)
@@ -742,7 +959,7 @@ def artist_picks(
         match = to_spotify(sp, dz.track(top["id"]))  # o "top" não traz ISRC
         if match and match["uri"] not in taken and not religious_track(match) and not blocked_track(match, blocked):
             taken.update({title, match["uri"]})
-            picks.append(find_from(match, reason=reason))
+            picks.append(find_from(match, reason=reason, fans=artist.get("nb_fan")))
         if len(picks) == wanted:
             break
     return picks
@@ -756,6 +973,7 @@ def rabbit_hole(
     seeds: list[str],
     walks: int = RABBIT_WALKS,
     blocked: Collection[str] = frozenset(),
+    size: FanRange = ANY_SIZE,
 ) -> None:
     """Cada caminho vira uma viagem: uma faixa de cada artista no meio e duas do último."""
     hunt.total = walks
@@ -765,7 +983,7 @@ def rabbit_hole(
         seed = rng.choice(seeds)
         hunt.message = f"Descendo a toca a partir de {seed}…"
         try:
-            path = walk(dz, seed, RABBIT_HOPS, rng, blocked)
+            path = walk(dz, seed, RABBIT_HOPS, rng, blocked, size)
             finds: list[Find] = []
             taken: set[str] = set()
             steps = path[1:]
@@ -790,5 +1008,5 @@ def rabbit_hole(
         hunt.progress = index + 1
     hunt.message = (
         f"{len(hunt.chains)} caminhos, {len(hunt.finds)} músicas do conhecido ao desconhecido." if hunt.chains
-        else "A toca não levou a lugar nenhum desta vez. Tente de novo ou escolha outro artista."
+        else "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho."
     )

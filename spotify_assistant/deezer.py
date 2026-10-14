@@ -82,6 +82,17 @@ class Deezer:
         same_name = [artist for artist in found if normalize(artist["name"]) == wanted]
         return max(same_name or found[:1], key=lambda artist: artist.get("nb_fan", 0), default=None)
 
+    def artist(self, artist_id: int) -> dict:
+        """Artista completo (inclui nb_fan, o número de fãs)."""
+        return self.get(f"/artist/{artist_id}")
+
+    def artist_albums(self, artist_id: int, limit: int = 25) -> list[dict]:
+        """Discos do artista com release_date e record_type (single, ep, album). Sem ordem garantida."""
+        return self.get(f"/artist/{artist_id}/albums", limit=limit).get("data", [])
+
+    def album_tracks(self, album_id: int) -> list[dict]:
+        return self.get(f"/album/{album_id}/tracks", limit=50).get("data", [])
+
     def related(self, artist_id: int, limit: int = 20) -> list[dict]:
         return self.get(f"/artist/{artist_id}/related", limit=limit).get("data", [])
 

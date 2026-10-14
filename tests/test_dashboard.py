@@ -124,6 +124,8 @@ class ServerTest(unittest.TestCase):
             mock.patch.object(config, "PLAYLISTS_FILE", data / "playlists.json"),
             mock.patch.object(config, "DATA_DIR", data),
             mock.patch.object(dashboard, "read_schedule", return_value=None),
+            # Independe de pausas reais da Spotify registradas nesta máquina.
+            mock.patch.object(dashboard.gate, "remaining", return_value=0),
         ]
         for patcher in patches:
             patcher.start()
@@ -287,6 +289,28 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertIn("User Management".encode(), body)
         self.assertIn(b"Paulo", body)
+
+    def test_discovery_filters_are_validated(self):
+        def start(body):
+            return self.request("/api/hunts", body)[0]
+
+        # Não dispara a busca de verdade (trocar threading.Thread derrubaria o próprio servidor de teste).
+        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda hunt, task: None)):
+            self.assertEqual(start({"kind": "news", "genre": ""}), 400)
+            self.assertEqual(start({"kind": "news", "genre": "k-pop", "days": 3}), 400)
+            self.assertEqual(start({"kind": "roulette", "min_fans": 5000, "max_fans": 1000}), 400)
+            self.assertEqual(start({"kind": "roulette", "min_fans": "muito"}), 400)
+            self.assertEqual(start({"kind": "news", "genre": "gospel"}), 400)
+            self.assertEqual(start({"kind": "news", "genre": "k-pop", "days": 30, "min_fans": 1000}), 200)
+            self.assertEqual(start({"kind": "roulette", "genre": "k-pop", "max_fans": 100000}), 200)
+        hunt = self.server.app.profile("paulo").hunt
+        self.assertEqual(hunt.label, "Roleta: k-pop")
+
+    def test_discoveries_refuse_right_away_while_search_is_paused(self):
+        with mock.patch.object(dashboard.gate, "remaining", return_value=3600):
+            status, body = self.request("/api/hunts", {"kind": "roulette"})
+        self.assertEqual(status, 429)
+        self.assertIn("pausou as buscas", json.loads(body)["error"])
 
     def test_unknown_route(self):
         self.assertEqual(self.request("/api/nada")[0], 404)

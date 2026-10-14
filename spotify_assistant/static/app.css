@@ -419,6 +419,31 @@ body.is-gated .console { display: none; }
 }
 .mood-text { grid-area: text; color: var(--smoke); font-size: .875rem; }
 
+/* Filtros de Descobrir e Novidades. */
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px 18px;
+  max-width: var(--content);
+  padding: 18px 20px;
+  border-radius: 8px;
+  background: var(--velvet);
+}
+.filter { display: flex; flex-direction: column; gap: 6px; }
+.filter-label { color: var(--smoke); font-size: .8125rem; }
+.filter-control {
+  min-width: 150px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--night);
+  color: var(--linen);
+}
+.filter-control:focus-visible { outline: none; border-color: var(--mood); }
+.filter-genre { min-width: 240px; }
+.filter-hint { flex-basis: 100%; margin: 0; color: var(--smoke); font-size: .8125rem; }
+
 /* Campo livre: o sentimento escrito é o elemento principal da tela. */
 .feeling { max-width: 760px; }
 .feeling-label { display: block; margin-bottom: 4px; color: var(--smoke); font-size: .875rem; }

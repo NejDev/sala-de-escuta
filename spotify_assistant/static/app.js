@@ -20,8 +20,20 @@ const memory = {
 const VIEWS = {
   sensacoes: "Sensações",
   descobrir: "Descobrir",
+  novidades: "Novidades",
 };
-const HUNT_KINDS = { sensacoes: ["sense"], descobrir: ["roulette", "rabbit"] };
+const HUNT_KINDS = { sensacoes: ["sense"], descobrir: ["roulette", "rabbit"], novidades: ["news"] };
+
+// Filtros de Descobrir e Novidades. O tamanho do artista é medido em fãs: nenhuma API gratuita
+// diz quantas vezes uma música foi tocada.
+const SIZE_MIN = [["", "Qualquer"], ["100", "100"], ["1000", "1 mil"], ["10000", "10 mil"], ["100000", "100 mil"], ["1000000", "1 milhão"]];
+const SIZE_MAX = [["", "Sem teto"], ["1000", "1 mil"], ["10000", "10 mil"], ["100000", "100 mil"], ["1000000", "1 milhão"], ["10000000", "10 milhões"]];
+const PERIODS = [["7", "Na última semana"], ["14", "Nas últimas 2 semanas"], ["30", "No último mês"], ["90", "Nos últimos 3 meses"]];
+const GENRE_SUGGESTIONS = [
+  "K-pop", "J-pop", "Funk", "Trap", "Rap", "Drill", "Phonk", "Sertanejo", "Pagode", "Samba", "MPB", "Forró",
+  "Piseiro", "Rock", "Indie", "Pop", "Emo", "Metal", "Punk", "Eletrônica", "House", "Techno", "Lo-fi", "Jazz",
+  "R&B", "Soul", "Reggaeton", "Afrobeats", "Amapiano", "City pop", "Shoegaze", "Hyperpop", "Bossa nova", "Clássica",
+];
 const ROOM_LIGHT = "#EEE7D7";
 const compactNumber = new Intl.NumberFormat("pt-BR", { notation: "compact" });
 
@@ -37,6 +49,7 @@ const state = {
   huntSignature: "",
   lastHunt: null,
   seed: "",
+  filters: { rouletteGenre: "", newsGenre: "", min: "", max: "", days: "30", ...savedFilters() },
   kept: new Set(),
   openDetails: new Set(),
   landed: new Set(),
@@ -476,7 +489,8 @@ function renderIntro() {
   const sleeve = $("#sleeve");
   sleeve.className = "sleeve is-plain";
   setMood(huntHere()?.color || ROOM_LIGHT);
-  sleeve.replaceChildren(...(state.view === "sensacoes" ? senseIntro() : discoverIntro()));
+  const intro = { sensacoes: senseIntro, descobrir: discoverIntro, novidades: newsIntro }[state.view];
+  sleeve.replaceChildren(...intro());
 }
 
 /** Aviso quando a Spotify pausou as buscas: Sensações e Descobrir dependem delas. */
@@ -488,7 +502,7 @@ function pauseNotice() {
   const day = days === 0 ? "hoje" : days === 1 ? "amanhã" : `em ${back.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
   const time = back.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
   return h("p", { class: "meta is-warning" },
-    `A Spotify pausou as buscas deste app por excesso de pedidos. Sensações e Descobrir voltam por volta de ${time} ${day}.`);
+    `A Spotify pausou as buscas deste app por excesso de pedidos. Sensações, Descobrir e Novidades voltam por volta de ${time} ${day}.`);
 }
 
 function senseIntro() {
@@ -562,13 +576,21 @@ function discoverIntro() {
       h("h1", { class: "title" }, "Descobrir"),
       h("p", { class: "description" }, "Duas formas de chegar em músicas que você nunca ouviu."),
       pauseNotice()),
+    h("div", { class: "filters" },
+      genreField("roulette-genre", "rouletteGenre", "Gênero da roleta (opcional)", "Qualquer gênero"),
+      ...sizeFilters(),
+      h("p", { class: "filter-hint" }, "O tamanho do artista vale para a roleta e para a toca."),
+      genreList()),
     h("div", { class: "paths" },
       h("section", { class: "path path-roulette", style: "--tone: #F2C14E" },
         h("h2", { class: "path-name" }, "Roleta"),
         h("p", { class: "path-text" },
           "Sorteia álbuns pouco ouvidos de qualquer ano e faixas de gêneros do mundo todo, do zamrock ao enka."),
-        h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "roulette" }) },
-          "Girar a roleta"),
+        h("button", {
+          class: "play-button",
+          type: "button",
+          onclick: () => startHunt({ kind: "roulette", genre: state.filters.rouletteGenre, ...sizeBody() }),
+        }, "Girar a roleta"),
         digger()),
       h("section", { class: "path", style: "--tone: #9DB4E6" },
         h("h2", { class: "path-name" }, "Toca do coelho"),
@@ -576,8 +598,79 @@ function discoverIntro() {
           "Parte de um artista e pula de relacionado em relacionado, sempre para os menos conhecidos."),
         h("label", { class: "adder-label", for: "seed-input" }, "Artista de partida"),
         seed,
-        h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "rabbit", seed: seed.value }) },
+        h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "rabbit", seed: seed.value, ...sizeBody() }) },
           "Entrar na toca"))),
+  ];
+}
+
+function savedFilters() {
+  try {
+    return JSON.parse(memory.get("filtros") || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveFilters() {
+  memory.set("filtros", JSON.stringify(state.filters));
+}
+
+function sizeBody() {
+  return { min_fans: state.filters.min || null, max_fans: state.filters.max || null };
+}
+
+function choice(id, label, options, key) {
+  const control = h("select", { class: "filter-control", id },
+    options.map(([value, text]) => h("option", { value, selected: String(state.filters[key] ?? "") === value }, text)));
+  control.addEventListener("change", () => { state.filters[key] = control.value; saveFilters(); });
+  return h("label", { class: "filter", for: id }, h("span", { class: "filter-label" }, label), control);
+}
+
+function genreField(id, key, label, placeholder, required = false) {
+  const input = h("input", {
+    class: "filter-control filter-genre",
+    id,
+    type: "text",
+    list: "genre-list",
+    maxlength: "40",
+    autocomplete: "off",
+    spellcheck: "false",
+    required,
+    placeholder,
+  });
+  input.value = state.filters[key] || "";
+  input.addEventListener("input", () => { state.filters[key] = input.value; saveFilters(); });
+  return h("label", { class: "filter", for: id }, h("span", { class: "filter-label" }, label), input);
+}
+
+function sizeFilters() {
+  return [
+    choice("min-fans", "Fãs do artista: no mínimo", SIZE_MIN, "min"),
+    choice("max-fans", "No máximo", SIZE_MAX, "max"),
+  ];
+}
+
+function genreList() {
+  return h("datalist", { id: "genre-list" }, GENRE_SUGGESTIONS.map((genre) => h("option", { value: genre })));
+}
+
+function newsIntro() {
+  const submit = (event) => {
+    event.preventDefault();
+    startHunt({ kind: "news", genre: state.filters.newsGenre, days: state.filters.days, ...sizeBody() });
+  };
+  return [
+    h("div", { class: "sleeve-text" },
+      h("h1", { class: "title" }, "Novidades"),
+      h("p", { class: "description" },
+        "Os lançamentos mais recentes de um gênero, só de artistas do tamanho que você escolher."),
+      pauseNotice()),
+    h("form", { class: "filters", onsubmit: submit },
+      genreField("news-genre", "newsGenre", "Gênero", "Ex.: K-pop, funk, indie", true),
+      ...sizeFilters(),
+      choice("news-days", "Lançadas", PERIODS, "days"),
+      h("button", { class: "play-button", type: "submit" }, "Buscar novidades"),
+      genreList()),
   ];
 }
 
@@ -731,7 +824,7 @@ function renderHunt() {
 
   const running = hunt.status === "running";
   const uris = hunt.finds.map((find) => find.uri);
-  const again = { sense: "Gerar de novo", roulette: "Girar de novo", rabbit: "Descer de novo" }[hunt.kind];
+  const again = { sense: "Gerar de novo", roulette: "Girar de novo", rabbit: "Descer de novo", news: "Buscar de novo" }[hunt.kind];
   const percent = hunt.total ? Math.max(4, Math.round((hunt.progress / hunt.total) * 100)) : 4;
   panel.hidden = false;
   const header = [
@@ -785,9 +878,13 @@ function renderHunt() {
 }
 
 function findDetails(find) {
-  if (!find.bpm) return find.reason;
-  const energy = Math.round((find.energy || 0) * 100);
-  return `BPM medido na prévia: ${find.bpm}. Energia: ${energy} de 100.`;
+  if (find.bpm) {
+    const energy = Math.round((find.energy || 0) * 100);
+    return `BPM medido na prévia: ${find.bpm}. Energia: ${energy} de 100.`;
+  }
+  const parts = [find.reason];
+  if (find.fans != null && !(find.reason || "").includes("fãs")) parts.push(`Artista com ${fans(find.fans)}.`);
+  return parts.filter(Boolean).join(" ");
 }
 
 function findRow(find, finds, index, isNew) {
@@ -803,7 +900,9 @@ function findRow(find, finds, index, isNew) {
       h("span", { class: "track-text" },
         h("span", { class: "track-title" }, find.title),
         h("span", { class: "track-sub" }, find.subtitle)),
-      find.bpm ? h("span", { class: "bpm" }, h("b", null, String(find.bpm)), " BPM") : h("span"),
+      find.bpm ? h("span", { class: "bpm" }, h("b", null, String(find.bpm)), " BPM")
+        : find.released ? h("span", { class: "bpm", title: find.released }, relativeDay(find.released))
+          : h("span"),
       h("span", { class: "track-time" }, clock(find.duration_ms)),
     ),
     h("button", {

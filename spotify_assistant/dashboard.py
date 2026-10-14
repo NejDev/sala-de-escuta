@@ -136,6 +136,42 @@ def add_to_config(config_data: dict, playlist_name: str, entry: str) -> dict:
     return spec
 
 
+NEWS_PERIODS = (7, 14, 30, 90)
+GENRE_MAX_CHARS = 40
+
+
+def fan_range(body: dict) -> discovery.FanRange:
+    """Tamanho do artista pedido no painel ("min_fans"/"max_fans"; vazio = sem limite)."""
+
+    def number(key: str) -> int | None:
+        raw = body.get(key)
+        if raw in (None, ""):
+            return None
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            raise UserError("Número de fãs inválido.") from None
+        if value < 0:
+            raise UserError("Número de fãs inválido.")
+        return value
+
+    low, high = number("min_fans") or 0, number("max_fans")
+    if high is not None and high < low:
+        raise UserError("O máximo de fãs precisa ser maior que o mínimo.")
+    return discovery.FanRange(low, high)
+
+
+def genre_from(body: dict, required: bool = False) -> str | None:
+    genre = " ".join(str(body.get("genre") or "").split())[:GENRE_MAX_CHARS]
+    if not genre:
+        if required:
+            raise UserError("Escolha um gênero para ver as novidades.")
+        return None
+    if discovery.is_religious(genre):
+        raise UserError("Gêneros religiosos ficam fora da sala.")
+    return genre
+
+
 def pause_message(err: SpotifyError) -> str:
     """'A Spotify pausou as buscas deste app ... voltam por volta de 11:20 de amanhã.'"""
     what = "as buscas" if err.family == "search" else "esse tipo de pedido"
@@ -379,6 +415,10 @@ class App:
         return {"sensations": load_sensations(), "tempo_ready": tempo.available()}
 
     def start_hunt(self, user: Profile, body: dict) -> dict:
+        # Toda descoberta termina localizando músicas na busca da Spotify: se ela está pausada, avisa já.
+        paused = gate.remaining("search")
+        if paused:
+            raise UserError(pause_message(SpotifyError(429, "pausado", retry_after=paused, family="search")), 429)
         kind = body.get("kind")
         sp = self.spotify(user)
         rng = random.Random()
@@ -403,17 +443,31 @@ class App:
                 finally:
                     cache.save()
         elif kind == "roulette":
-            hunt = Hunt("roulette", "Roleta")
+            genre, size = genre_from(body), fan_range(body)
+            hunt = Hunt("roulette", f"Roleta: {genre}" if genre else "Roleta")
 
             def task() -> None:
-                discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked)
+                discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked, genre=genre, size=size)
         elif kind == "rabbit":
             seed = (body.get("seed") or "").strip()
+            size = fan_range(body)
             hunt = Hunt("rabbit", "Toca do coelho")
 
             def task() -> None:
                 seeds = [seed] if seed else self._seed_artists(user, sp)
-                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=user.blocked)
+                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=user.blocked, size=size)
+        elif kind == "news":
+            genre, size = genre_from(body, required=True), fan_range(body)
+            try:
+                days = int(body.get("days") or 30)
+            except (TypeError, ValueError):
+                days = 0
+            if days not in NEWS_PERIODS:
+                raise UserError("Período inválido.")
+            hunt = Hunt("news", f"Novidades: {genre}")
+
+            def task() -> None:
+                discovery.news(hunt, sp, self.deezer, genre, size, days, blocked=user.blocked)
         else:
             raise UserError("Tipo de descoberta inválido.")
 

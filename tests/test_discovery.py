@@ -1,4 +1,5 @@
 import random
+from datetime import date, timedelta
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,12 +44,25 @@ def fake_measure(data: bytes) -> Analysis:
 
 
 class FakeDeezer:
-    def __init__(self, playlists=None, tracks=None, artists=None, related=None, tops=None):
+    def __init__(self, playlists=None, tracks=None, artists=None, related=None, tops=None,
+                 fans=None, albums=None, album_songs=None):
         self.playlists = playlists or {}
         self.tracks = tracks or {}
         self.artists = artists or {}
         self._related = related or {}
         self.tops = tops or {}
+        self.fans = fans or {}
+        self.albums = albums or {}
+        self.album_songs = album_songs or {}
+
+    def artist(self, artist_id):
+        return {"id": artist_id, "nb_fan": self.fans.get(artist_id, 0)}
+
+    def artist_albums(self, artist_id, limit=25):
+        return self.albums.get(artist_id, [])
+
+    def album_tracks(self, album_id):
+        return self.album_songs.get(album_id, [])
 
     def search_playlists(self, query, limit=8):
         return self.playlists.get(query, [])
@@ -316,6 +330,100 @@ class SpotifyLimitsTest(FreshMatches):
         with self.assertRaises(SpotifyError):
             discovery.roulette(hunt, sp, FakeDeezer(), random.Random(1))
         self.assertEqual(sp.search.call_count, 1)  # não fica insistindo
+
+
+def song(track_id, title, artist_id, artist_name):
+    return {"id": track_id, "title": title, "isrc": f"ISRC{track_id}", "readable": True,
+            "artist": {"id": artist_id, "name": artist_name}}
+
+
+class FiltersTest(FreshMatches):
+    def setUp(self):
+        super().setUp()
+        discovery.fan_counts = discovery.FanCounts()
+
+    def test_fan_range(self):
+        self.assertTrue(discovery.ANY_SIZE.ok(None))
+        self.assertFalse(discovery.FanRange(1000).ok(999))
+        self.assertTrue(discovery.FanRange(1000, 5000).ok(5000))
+        self.assertFalse(discovery.FanRange(1000, 5000).ok(5001))
+
+    def test_rabbit_hole_stays_inside_the_size(self):
+        options = [{"id": i, "name": f"A{i}", "nb_fan": fans} for i, fans in enumerate([150, 2000, 40000, 900000])]
+        size = discovery.FanRange(1000, 50000)
+        picks = {discovery.next_hop(options, set(), random.Random(s), size=size)["id"] for s in range(30)}
+        self.assertEqual(picks, {1})  # 2000 é o terço menos conhecido dentro de 1 mil..50 mil
+        self.assertIsNone(discovery.next_hop(options, set(), random.Random(), size=discovery.FanRange(10_000_000)))
+
+    def test_roulette_genre_pick_respects_size(self):
+        deezer = FakeDeezer(
+            playlists={"k-pop": [{"id": "p", "nb_tracks": 30, "title": "K-pop"}]},
+            tracks={"p": [dz_track(1, 120, artist="Grande"), dz_track(2, 120, artist="Pequena")]},
+            fans={},
+        )
+        deezer.tracks["p"][0]["artist"]["id"] = 10
+        deezer.tracks["p"][1]["artist"]["id"] = 20
+        deezer.fans = {10: 5_000_000, 20: 3_000}
+        find = discovery.world_genre_pick(FakeSpotify(), deezer, random.Random(1), genre="k-pop",
+                                          size=discovery.FanRange(1000, 100_000))
+        self.assertEqual((find.uri, find.fans, find.tag), ("spotify:track:2", 3_000, "K-pop"))
+
+
+class NewsTest(FreshMatches):
+    def setUp(self):
+        super().setUp()
+        discovery.fan_counts = discovery.FanCounts()
+
+    def deezer(self):
+        today = date.today()
+        recent = (today - timedelta(days=3)).isoformat()
+        newest = (today - timedelta(days=1)).isoformat()
+        old = (today - timedelta(days=200)).isoformat()
+        lineup = [song(1, "x", 10, "Banda Média"), song(2, "x", 20, "Gigante"), song(3, "x", 30, "Pequena")]
+        return FakeDeezer(
+            playlists={"k-pop": [{"id": "p", "nb_tracks": 30, "title": "K-pop"}]},
+            tracks={"p": lineup},
+            fans={10: 50_000, 20: 9_000_000, 30: 40},
+            albums={
+                10: [
+                    {"id": 100, "title": "Novo Single", "release_date": newest, "record_type": "single"},
+                    {"id": 101, "title": "Novo Single (Clean)", "release_date": newest, "record_type": "single"},
+                    {"id": 102, "title": "Trilha", "release_date": recent, "record_type": "album"},
+                    {"id": 103, "title": "Antigo", "release_date": old, "record_type": "album"},
+                ],
+                20: [{"id": 200, "title": "Hit", "release_date": newest, "record_type": "single"}],
+                30: [{"id": 300, "title": "Demo", "release_date": newest, "record_type": "single"}],
+            },
+            album_songs={
+                100: [song(1001, "Novo Single", 10, "Banda Média")],
+                101: [song(1011, "Novo Single (Clean)", 10, "Banda Média")],
+                # Trilha com vários artistas: a escolhida tem que ser a da própria banda.
+                102: [song(1021, "Tema de Outro", 99, "Outro"), song(1022, "Nossa Faixa", 10, "Banda Média")],
+                103: [song(1031, "Velha", 10, "Banda Média")],
+                200: [song(2001, "Hit", 20, "Gigante")],
+                300: [song(3001, "Demo", 30, "Pequena")],
+            },
+        )
+
+    def test_recent_releases_in_size_newest_first(self):
+        hunt = discovery.Hunt("news", "Novidades: K-pop")
+        discovery.news(hunt, FakeSpotify(), self.deezer(), "k-pop", discovery.FanRange(1000, 1_000_000), days=30)
+        self.assertEqual([f.uri for f in hunt.finds], ["spotify:track:1001", "spotify:track:1022"])
+        self.assertEqual(hunt.finds[0].fans, 50_000)
+        self.assertIn("Single lançado", hunt.finds[0].reason)
+        self.assertIn("2 lançamentos", hunt.message)
+
+    def test_without_size_everyone_counts(self):
+        hunt = discovery.Hunt("news", "Novidades: K-pop")
+        discovery.news(hunt, FakeSpotify(), self.deezer(), "k-pop", days=7)
+        self.assertEqual({f.uri for f in hunt.finds}, {"spotify:track:1001", "spotify:track:1022",
+                                                       "spotify:track:2001", "spotify:track:3001"})
+
+    def test_explains_when_nothing_fits(self):
+        hunt = discovery.Hunt("news", "Novidades: K-pop")
+        discovery.news(hunt, FakeSpotify(), self.deezer(), "k-pop", discovery.FanRange(100_000_000), days=30)
+        self.assertEqual(hunt.finds, [])
+        self.assertIn("Nenhum lançamento", hunt.message)
 
 
 class TempoCacheTest(unittest.TestCase):

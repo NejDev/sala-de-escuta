@@ -72,6 +72,17 @@ usadas como fonte. Medições ficam em `data/tempo-cache.json` para não ouvir a
 denominação (lista `RELIGIOUS_WORDS` em `spotify_assistant/discovery.py`). Uma playlist inteira é
 descartada quando várias faixas dela têm esses sinais.
 
+**Filtros**: na Roleta dá para escolher um gênero (opcional) e, na Roleta e na Toca do coelho, o
+tamanho do artista em fãs (mínimo e máximo). Nenhuma API gratuita informa quantas vezes uma música
+foi tocada; o número de fãs do artista é a medida disponível.
+
+### Novidades
+
+Escolha um gênero (ex.: K-pop), o tamanho do artista e o período (7, 14, 30 ou 90 dias). A sala junta
+artistas do gênero a partir de playlists, filtra pelo número de fãs, olha os lançamentos de cada um e
+mostra a faixa principal de cada lançamento, do mais novo para o mais antigo. Versões "clean" do mesmo
+lançamento são juntadas, e em trilhas sonoras entra a faixa do próprio artista.
+
 **Não mostrar mais**: no ⓘ de cada música há um botão para bloquear o artista. Ele some na hora e
 nunca mais aparece em Sensações ou Descobrir. A lista fica em `bloqueados.json`; para desfazer, use
 "Artistas bloqueados" acima dos resultados.
