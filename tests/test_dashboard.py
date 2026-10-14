@@ -69,6 +69,16 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual((row["subtitle"], row["image"], row["release_date"]), ("Hipsters", "s", "2026-10-13"))
 
 
+class PauseMessageTest(unittest.TestCase):
+    def test_says_what_is_paused_and_when_it_comes_back(self):
+        from spotify_assistant.api import SpotifyError
+
+        message = dashboard.spotify_message(SpotifyError(429, "x", retry_after=3600, family="search"))
+        self.assertIn("pausou as buscas", message)
+        self.assertRegex(message, r"Voltam por volta de \d\d:\d\d (hoje|amanhã)\.")
+        self.assertIn("esse tipo de pedido", dashboard.spotify_message(SpotifyError(429, "x", family="albums")))
+
+
 class AddToConfigTest(unittest.TestCase):
     def setUp(self):
         self.config = json.loads(json.dumps(CONFIG))
@@ -173,6 +183,26 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.request("/api/overview", headers={"Host": "evil.example:80"})[0], 403)
         status, _ = self.request("/api/player", {"action": "pause"}, headers={"Content-Type": "text/plain"})
         self.assertEqual(status, 415)
+
+    def test_block_and_unblock_artist(self):
+        from spotify_assistant.discovery import Find, Hunt
+
+        app = self.server.app
+        app._hunt = Hunt("roulette", "Roleta", status="done", finds=[
+            Find("spotify:track:1", "To Hell with the Devil", "Stryper", None, 1, artists=["Stryper"]),
+            Find("spotify:track:2", "Shy Moon", "Caetano Veloso", None, 1, artists=["Caetano Veloso"]),
+        ])
+        with mock.patch.object(config, "BLOCKED_FILE", self.data / "bloqueados.json"):
+            status, body = self.request("/api/blocked", {"artist": "Stryper", "blocked": True})
+            self.assertEqual(status, 200, body)
+            self.assertEqual(json.loads(body)["artists"], ["Stryper"])
+            # Some na hora do resultado na tela e fica valendo para as próximas buscas.
+            self.assertEqual([f.uri for f in app._hunt.finds], ["spotify:track:2"])
+            self.assertIn("stryper", app.blocked)
+
+            status, body = self.request("/api/blocked", {"artist": "stryper", "blocked": False})
+            self.assertEqual(json.loads(body)["artists"], [])
+            self.assertNotIn("stryper", app.blocked)
 
     def test_unknown_route(self):
         self.assertEqual(self.request("/api/nada")[0], 404)

@@ -72,6 +72,10 @@ usadas como fonte. Medições ficam em `data/tempo-cache.json` para não ouvir a
 denominação (lista `RELIGIOUS_WORDS` em `spotify_assistant/discovery.py`). Uma playlist inteira é
 descartada quando várias faixas dela têm esses sinais.
 
+**Não mostrar mais**: no ⓘ de cada música há um botão para bloquear o artista. Ele some na hora e
+nunca mais aparece em Sensações ou Descobrir. A lista fica em `bloqueados.json`; para desfazer, use
+"Artistas bloqueados" acima dos resultados.
+
 **Guardar** manda a faixa para a playlist `Achados da Sala`, criada na primeira vez. O ⓘ de cada
 música mostra por que ela apareceu (BPM e energia medidos, gênero ou ano sorteado, de onde a toca partiu).
 
@@ -121,3 +125,7 @@ O que não for encontrado aparece como `não encontrado:` na saída. Basta ajust
 - **403**: no Development Mode (regras de fev/2026), a conta dona do app precisa ser Premium e
   seu e-mail precisa estar em *User Management* no app do Spotify for Developers.
 - **"sessão expirou"**: rode `python -m spotify_assistant login` de novo.
+- **"A Spotify pausou as buscas"**: o app fez pedidos demais e a Spotify suspendeu a busca por algumas
+  horas (player e playlists continuam funcionando). O painel respeita a pausa sozinho, mostra a hora
+  em que volta e guarda as músicas já localizadas para não buscar de novo. Evite deixar várias abas
+  do painel abertas: cada uma consulta o player.

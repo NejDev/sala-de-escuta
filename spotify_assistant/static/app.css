@@ -542,8 +542,29 @@ body.is-gated .console { display: none; }
 .find .track-button { grid-template-columns: 2rem 44px minmax(0, 1fr) auto auto; }
 
 /* Detalhes ("por que essa música?") só quando a pessoa pede. */
-.find-details { display: none; margin-top: 2px; color: var(--smoke); font-size: .8125rem; white-space: normal; }
-.find.is-open .find-details { display: block; }
+.find-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  grid-column: 1 / -1;
+  /* alinhado com o título: número + capa + espaços da linha */
+  padding: 0 12px 10px calc(12px + 2rem + 16px + 44px + 16px);
+  color: var(--smoke);
+  font-size: .8125rem;
+}
+.find-details .text-button { font-size: .8125rem; }
+
+.blocked-list { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 14px 0 0; padding: 0; list-style: none; }
+.blocked-list li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: .875rem;
+}
 
 .info-button {
   display: grid;
@@ -881,6 +902,7 @@ body.is-gated .console { display: none; }
   .track-button { grid-template-columns: 1.5rem 40px minmax(0, 1fr) auto; gap: 12px; padding: 7px 4px; }
   .find .track-button { grid-template-columns: 1.5rem 40px minmax(0, 1fr) auto; }
   .find .track-time { display: none; }
+  .find-details { padding-left: 8px; }
   .hunt-title { font-size: 2.25rem; }
   .feeling-input { font-size: 2.25rem; }
   .path.path-roulette { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }

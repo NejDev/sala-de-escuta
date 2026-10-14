@@ -13,7 +13,10 @@ STATE_FILE = DATA_DIR / "state.json"
 LOG_FILE = DATA_DIR / "assistant.log"
 PLAYLISTS_FILE = ROOT / "playlists.json"
 SENSATIONS_FILE = ROOT / "sensacoes.json"
+BLOCKED_FILE = ROOT / "bloqueados.json"
 TEMPO_CACHE_FILE = DATA_DIR / "tempo-cache.json"
+MATCH_CACHE_FILE = DATA_DIR / "spotify-matches.json"
+SPOTIFY_PAUSES_FILE = DATA_DIR / "spotify-pausas.json"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 
@@ -52,6 +55,19 @@ def load_playlists() -> dict:
 
 def load_sensations() -> list[dict]:
     return json.loads(SENSATIONS_FILE.read_text(encoding="utf-8"))["sensacoes"]
+
+
+def load_blocked() -> list[str]:
+    """Artistas que nunca devem aparecer nas descobertas."""
+    try:
+        return json.loads(BLOCKED_FILE.read_text(encoding="utf-8"))["artistas"]
+    except FileNotFoundError:
+        return []
+
+
+def save_blocked(artists: list[str]) -> None:
+    data = {"artistas": sorted(set(artists), key=str.casefold)}
+    BLOCKED_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def save_playlists(config: dict) -> None:

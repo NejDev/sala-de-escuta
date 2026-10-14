@@ -16,13 +16,16 @@ import time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import discovery, tempo
-from .api import Spotify, SpotifyError
+from . import curation, discovery, tempo
+from .api import Spotify, SpotifyError, gate
 from .auth import AuthRequest, TokenManager, finish_authorization, missing_scopes, start_authorization
-from .config import Settings, load_playlists, load_sensations, load_state, save_playlists, save_state
+from .config import (
+    Settings, load_blocked, load_playlists, load_sensations, load_state, save_blocked, save_playlists, save_state,
+)
 from .deezer import Deezer, DeezerError
 from .discovery import Hunt
 from .playlists import ensure_playlist, owned_playlists, run
@@ -103,7 +106,20 @@ def add_to_config(config: dict, playlist_name: str, entry: str) -> dict:
     return spec
 
 
+def pause_message(err: SpotifyError) -> str:
+    """'A Spotify pausou as buscas deste app ... voltam por volta de 11:20 de amanhã.'"""
+    what = "as buscas" if err.family == "search" else "esse tipo de pedido"
+    if not err.retry_after:
+        return f"A Spotify pausou {what} deste app por excesso de pedidos. Tente de novo daqui a pouco."
+    back = datetime.now() + timedelta(seconds=err.retry_after)
+    days = (back.date() - date.today()).days
+    day = "hoje" if days == 0 else "amanhã" if days == 1 else f"em {back:%d/%m}"
+    return f"A Spotify pausou {what} deste app por excesso de pedidos. Voltam por volta de {back:%H:%M} {day}."
+
+
 def spotify_message(err: SpotifyError) -> str:
+    if err.status == 429:
+        return pause_message(err)
     text = str(err)
     if err.status == 404 and "device" in text.lower():
         return "Nenhum Spotify ativo. Toque uma playlist daqui ou abra o app no PC ou no celular."
@@ -124,6 +140,8 @@ class App:
         self._hunt_lock = threading.Lock()
         self._seeds: list[str] = []
         self.deezer = Deezer()
+        # Conjunto compartilhado com as buscas em andamento: bloquear vale na hora, até no meio de uma busca.
+        self.blocked: set[str] = discovery.blocked_set(load_blocked())
 
     # Sessão
 
@@ -181,6 +199,7 @@ class App:
             "user": me.get("display_name") or me["id"],
             "playlists": playlists,
             "player_ready": not missing_scopes(),
+            "search_paused_s": gate.remaining("search"),
             "schedule": self.schedule(),
         }
 
@@ -306,21 +325,21 @@ class App:
 
             def task() -> None:
                 try:
-                    discovery.sense(hunt, spec, sp, self.deezer, rng, cache)
+                    discovery.sense(hunt, spec, sp, self.deezer, rng, cache, blocked=self.blocked)
                 finally:
                     cache.save()
         elif kind == "roulette":
             hunt = Hunt("roulette", "Roleta")
 
             def task() -> None:
-                discovery.roulette(hunt, sp, self.deezer, rng)
+                discovery.roulette(hunt, sp, self.deezer, rng, blocked=self.blocked)
         elif kind == "rabbit":
             seed = (body.get("seed") or "").strip()
             hunt = Hunt("rabbit", "Toca do coelho")
 
             def task() -> None:
                 seeds = [seed] if seed else self._seed_artists(sp)
-                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds)
+                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=self.blocked)
         else:
             raise UserError("Tipo de descoberta inválido.")
 
@@ -348,6 +367,8 @@ class App:
             log.exception("Falha na descoberta")
             hunt.status = "error"
             hunt.message = "Erro inesperado. Detalhes em data/assistant.log."
+        finally:
+            discovery.matches.save()
 
     def _seed_artists(self, sp: Spotify) -> list[str]:
         """Artistas das suas playlists de música: ponto de partida da toca do coelho."""
@@ -384,6 +405,42 @@ class App:
         playlist_id = ensure_playlist(sp, playlist, state, owned_playlists(sp))
         sp.replace_items(playlist_id, [find.uri for find in hunt.finds])
         return {"message": f"Salva como {playlist['name']}.", "uri": f"spotify:playlist:{playlist_id}"}
+
+    def blocked_artists(self) -> dict:
+        return {"artists": load_blocked()}
+
+    def set_blocked(self, body: dict) -> dict:
+        artist = " ".join(str(body.get("artist") or "").split())
+        if not artist:
+            raise UserError("Diga qual artista.")
+        names = load_blocked()
+        key = curation.normalize(artist)
+        if body.get("blocked", True):
+            if key not in discovery.blocked_set(names):
+                names.append(artist)
+            self.blocked.add(key)
+            self._drop_artist_from_hunt(key)
+            message = f"{artist} não aparece mais nas descobertas."
+        else:
+            names = [name for name in names if curation.normalize(name) != key]
+            self.blocked.discard(key)
+            message = f"{artist} pode aparecer de novo."
+        save_blocked(names)
+        return {"message": message, "artists": load_blocked()}
+
+    def _drop_artist_from_hunt(self, key: str) -> None:
+        """Tira o artista recém-bloqueado do resultado que está na tela."""
+        hunt = self._hunt
+        if not hunt:
+            return
+
+        def keep(find) -> bool:
+            return all(curation.normalize(name) != key for name in find.artists)
+
+        hunt.finds = [find for find in hunt.finds if keep(find)]
+        for chain in hunt.chains:
+            chain["finds"] = [find for find in chain["finds"] if keep(find)]
+        hunt.chains = [chain for chain in hunt.chains if chain["finds"]]
 
     def keep_finds(self, body: dict) -> dict:
         uris = [uri for uri in body.get("uris") or [] if isinstance(uri, str) and uri.startswith("spotify:track:")]
@@ -550,6 +607,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.current_hunt()
         if method == "POST" and path == "/api/hunts/save":
             return app.save_hunt()
+        if method == "GET" and path == "/api/blocked":
+            return app.blocked_artists()
+        if method == "POST" and path == "/api/blocked":
+            return app.set_blocked(body)
         if method == "POST" and path == "/api/finds/keep":
             return app.keep_finds(body)
         if match := PLAYLIST_PATH.fullmatch(path):

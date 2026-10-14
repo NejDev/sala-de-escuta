@@ -5,7 +5,23 @@ from pathlib import Path
 from unittest import mock
 
 from spotify_assistant import config, discovery
+from spotify_assistant.api import SpotifyError
 from spotify_assistant.tempo import Analysis
+
+_tmp = tempfile.TemporaryDirectory()
+
+
+def setUpModule():
+    # A memória de faixas localizadas é global: aponta para um arquivo temporário e zera a cada teste.
+    patcher = mock.patch.object(config, "MATCH_CACHE_FILE", Path(_tmp.name) / "matches.json")
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+    unittest.addModuleCleanup(_tmp.cleanup)
+
+
+class FreshMatches(unittest.TestCase):
+    def setUp(self):
+        discovery.matches = discovery.MatchCache()
 
 
 def dz_track(track_id, bpm, energy=0.8, title=None, artist="Artista", rank=1000, preview=True):
@@ -141,6 +157,32 @@ class ReligiousFilterTest(unittest.TestCase):
         self.assertFalse({"qawwali", "gnawa", "carnatic"} & set(discovery.WORLD_GENRES))
 
 
+class BlockedArtistsTest(FreshMatches):
+    def test_blocked_track_matches_any_credited_artist(self):
+        blocked = discovery.blocked_set(["Stryper", "  "])
+        self.assertEqual(blocked, {"stryper"})
+        self.assertTrue(discovery.blocked_track({"artist": {"name": "STRYPER"}}, blocked))
+        self.assertTrue(discovery.blocked_track({"artists": [{"name": "Outro"}, {"name": "Stryper"}]}, blocked))
+        self.assertFalse(discovery.blocked_track({"artist": {"name": "Strypes"}}, blocked))
+        self.assertFalse(discovery.blocked_track({"artist": {"name": "Stryper"}}, set()))
+
+    def test_sense_skips_blocked_artists(self):
+        deezer = FakeDeezer(
+            playlists={"treino": [{"id": "p", "nb_tracks": 20}]},
+            tracks={"p": [dz_track(1, 130, artist="Stryper"), dz_track(2, 132), dz_track(3, 140)]},
+        )
+        spec = {"name": "Treino", "bpm": [125, 150], "energy": [0.6, 1.0], "sources": ["treino"]}
+        hunt = discovery.Hunt("sense", "Treino")
+        discovery.sense(hunt, spec, FakeSpotify(), deezer, random.Random(1), MemoryCache(), fake_measure,
+                        blocked={"stryper"})
+        self.assertEqual(sorted(f.uri for f in hunt.finds), ["spotify:track:2", "spotify:track:3"])
+
+    def test_rabbit_hole_never_walks_into_a_blocked_artist(self):
+        options = [{"id": 1, "name": "Stryper", "nb_fan": 900}, {"id": 2, "name": "Petra", "nb_fan": 950}]
+        picks = {discovery.next_hop(options, set(), random.Random(s), {"stryper"})["id"] for s in range(20)}
+        self.assertEqual(picks, {2})
+
+
 class FeelingTextTest(unittest.TestCase):
     def test_dictionary_recognizes_word_forms(self):
         for text in ("ÓDIO", "tô com muita raiva", "odeio segunda", "furioso"):
@@ -170,7 +212,7 @@ class FeelingTextTest(unittest.TestCase):
         self.assertIsNone(discovery.consensus(analyses[:3]))  # poucas prévias
 
 
-class SenseTest(unittest.TestCase):
+class SenseTest(FreshMatches):
     def deezer(self):
         return FakeDeezer(
             playlists={
@@ -222,7 +264,7 @@ class SenseTest(unittest.TestCase):
         self.assertEqual(deezer.preview.call_count, 5)  # 6 candidatas, 1 já medida
 
 
-class RabbitTest(unittest.TestCase):
+class RabbitTest(FreshMatches):
     def test_walks_away_and_keeps_the_path(self):
         deezer = FakeDeezer(
             artists={"Chet Baker": {"id": 1, "name": "Chet Baker", "nb_fan": 500000}},
@@ -254,6 +296,26 @@ class RabbitTest(unittest.TestCase):
         discovery.rabbit_hole(hunt, FakeSpotify(), FakeDeezer(), random.Random(), ["Ninguém"], walks=2)
         self.assertEqual(hunt.finds, [])
         self.assertIn("não levou", hunt.message)
+
+
+class SpotifyLimitsTest(FreshMatches):
+    def test_found_tracks_are_searched_only_once(self):
+        sp = FakeSpotify()
+        sp.search = mock.Mock(wraps=sp.search)
+        track = dz_track(9, 120)
+        first = discovery.to_spotify(sp, track)
+        second = discovery.to_spotify(sp, track)
+        self.assertEqual(first, second)
+        self.assertEqual(first["uri"], "spotify:track:9")
+        self.assertEqual(sp.search.call_count, 1)
+
+    def test_roulette_stops_when_spotify_pauses(self):
+        sp = FakeSpotify()
+        sp.search = mock.Mock(side_effect=SpotifyError(429, "pausado", retry_after=3600, family="search"))
+        hunt = discovery.Hunt("roulette", "Roleta")
+        with self.assertRaises(SpotifyError):
+            discovery.roulette(hunt, sp, FakeDeezer(), random.Random(1))
+        self.assertEqual(sp.search.call_count, 1)  # não fica insistindo
 
 
 class TempoCacheTest(unittest.TestCase):

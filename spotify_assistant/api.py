@@ -7,25 +7,84 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any, Callable, Iterator
 
+from . import config
+
 API_BASE = "https://api.spotify.com/v1"
 MAX_ATTEMPTS = 5
 MAX_RETRY_WAIT_S = 120
 SEARCH_LIMIT = 10
 ITEMS_PER_REQUEST = 100
+# Freio global: no máximo ~4 pedidos por segundo para a Spotify, somando tudo (player, buscas...).
+MIN_INTERVAL_S = 0.25
 
 log = logging.getLogger(__name__)
 
 
 class SpotifyError(RuntimeError):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, retry_after: int | None = None, family: str = ""):
         super().__init__(f"HTTP {status}: {message}")
         self.status = status
+        self.retry_after = retry_after  # segundos até a Spotify aceitar de novo (429)
+        self.family = family  # tipo de pedido pausado: "search", "me/player"...
+
+
+def endpoint_family(url_or_path: str) -> str:
+    """'/search?q=x' -> 'search'; '/me/player/next' -> 'me/player'; '/albums/1/tracks' -> 'albums'."""
+    path = urllib.parse.urlsplit(url_or_path).path
+    parts = [part for part in path.split("/") if part and part != "v1"]
+    if not parts:
+        return ""
+    return "/".join(parts[:2]) if parts[0] == "me" and len(parts) > 1 else parts[0]
+
+
+class _Gate:
+    """Espaça os pedidos e lembra as pausas que a Spotify impôs (sobrevive a reinícios)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._next_slot = 0.0
+        self._paused: dict[str, float] | None = None  # família -> horário (epoch) em que volta
+
+    def _load(self) -> dict[str, float]:
+        if self._paused is None:
+            try:
+                self._paused = json.loads(config.SPOTIFY_PAUSES_FILE.read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                self._paused = {}
+        return self._paused
+
+    def remaining(self, family: str) -> int:
+        with self._lock:
+            until = self._load().get(family, 0)
+        return max(0, int(until - time.time()))
+
+    def pause(self, family: str, seconds: int) -> None:
+        with self._lock:
+            paused = self._load()
+            paused[family] = time.time() + seconds
+            paused = {key: value for key, value in paused.items() if value > time.time()}
+            self._paused = paused
+            config.DATA_DIR.mkdir(exist_ok=True)
+            config.SPOTIFY_PAUSES_FILE.write_text(json.dumps(paused), encoding="utf-8")
+        log.warning("Spotify pausou '%s' por %ss", family, seconds)
+
+    def wait_turn(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            slot = max(now, self._next_slot)
+            self._next_slot = slot + MIN_INTERVAL_S
+        if slot > now:
+            time.sleep(slot - now)
+
+
+gate = _Gate()
 
 
 def http_request(
@@ -68,7 +127,10 @@ def http_request(
             if (err.code == 429 or err.code >= 500) and attempt < MAX_ATTEMPTS:
                 wait = int(err.headers.get("Retry-After") or 2**attempt)
                 if wait > MAX_RETRY_WAIT_S:
-                    raise SpotifyError(err.code, f"limite de requisições; tente de novo em {wait}s") from None
+                    raise SpotifyError(
+                        err.code, f"limite de requisições; tente de novo em {wait}s",
+                        retry_after=wait, family=endpoint_family(url),
+                    ) from None
                 log.warning("Spotify respondeu %s; nova tentativa em %ss", err.code, wait)
                 time.sleep(wait)
                 continue
@@ -98,8 +160,19 @@ class Spotify:
 
     def _call(self, method: str, path: str, *, params: dict | None = None, body: Any = None) -> Any:
         url = path if path.startswith("https://") else API_BASE + path
+        family = endpoint_family(url)
+        # Pausado pela Spotify: nem tenta, para não esticar o castigo.
+        remaining = gate.remaining(family)
+        if remaining:
+            raise SpotifyError(429, "pausado pela Spotify", retry_after=remaining, family=family)
+        gate.wait_turn()
         headers = {"Authorization": f"Bearer {self._access_token()}"}
-        return http_request(method, url, headers=headers, params=params, json_body=body)
+        try:
+            return http_request(method, url, headers=headers, params=params, json_body=body)
+        except SpotifyError as err:
+            if err.status == 429 and err.retry_after:
+                gate.pause(family, err.retry_after)
+            raise
 
     def me(self) -> dict:
         return self._call("GET", "/me")

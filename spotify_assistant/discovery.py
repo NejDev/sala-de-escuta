@@ -21,7 +21,7 @@ import threading
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from typing import Callable, Iterator
+from typing import Callable, Collection, Iterator
 
 from . import config, curation, tempo
 from .api import Spotify, SpotifyError
@@ -159,7 +159,8 @@ class Find:
     reason: str = ""
     bpm: float | None = None
     energy: float | None = None
-    tag: str = ""  # rótulo curto (gênero ou ano) que vai na fatia da roleta
+    tag: str = ""  # rótulo curto (gênero ou ano) que aparece na pilha da roleta
+    artists: list[str] = field(default_factory=list)  # para "não mostrar mais este artista"
 
 
 @dataclass
@@ -258,11 +259,14 @@ def fits(analysis: tempo.Analysis | None, spec: dict) -> int | None:
     return fit_bpm(analysis.bpm, *spec["bpm"])
 
 
-def next_hop(options: list[dict], visited: set, rng: random.Random) -> dict | None:
+def next_hop(
+    options: list[dict], visited: set, rng: random.Random, blocked: Collection[str] = frozenset(),
+) -> dict | None:
     """Entre os relacionados, sorteia no terço menos conhecido (com um mínimo de fãs)."""
     fresh = [
         artist for artist in options
-        if artist["id"] not in visited and artist.get("nb_fan", 0) >= MIN_FANS and not is_religious(artist.get("name", ""))
+        if artist["id"] not in visited and artist.get("nb_fan", 0) >= MIN_FANS
+        and not is_religious(artist.get("name", "")) and curation.normalize(artist.get("name", "")) not in blocked
     ]
     if not fresh:
         return None
@@ -303,10 +307,23 @@ def religious_collection(name: str, tracks: list[dict], owner: str = "") -> bool
     return hits >= max(2, len(tracks) // 10)
 
 
-def usable(track: dict) -> bool:
+def blocked_set(names: list[str]) -> set[str]:
+    """Nomes de artistas bloqueados, normalizados para comparar sem acento/maiúscula."""
+    return {curation.normalize(name) for name in names if name.strip()}
+
+
+def blocked_track(track: dict, blocked: Collection[str]) -> bool:
+    """Faixa (do Deezer ou do Spotify) com algum artista que a pessoa pediu para não ver mais."""
+    if not blocked:
+        return False
+    names = [track.get("artist", {}).get("name", "")] + [a.get("name", "") for a in track.get("artists", [])]
+    return any(curation.normalize(name) in blocked for name in names if name)
+
+
+def usable(track: dict, blocked: Collection[str] = frozenset()) -> bool:
     return (
         bool(track.get("preview")) and track.get("readable", True)
-        and not is_junk(track) and not religious_track(track)
+        and not is_junk(track) and not religious_track(track) and not blocked_track(track, blocked)
     )
 
 
@@ -389,15 +406,68 @@ def lesser_known(tracks: list[dict]) -> list[dict]:
 # ---------- Ponte Deezer -> Spotify
 
 
+class MatchCache:
+    """Faixas já localizadas no Spotify (por ISRC ou título+artista): cada uma é buscada uma vez só."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._data: dict[str, dict | None] | None = None
+        self._dirty = False
+
+    def _load(self) -> dict[str, dict | None]:
+        if self._data is None:
+            try:
+                self._data = json.loads(config.MATCH_CACHE_FILE.read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                self._data = {}
+        return self._data
+
+    def get(self, key: str) -> tuple[bool, dict | None]:
+        with self._lock:
+            data = self._load()
+            return key in data, data.get(key)
+
+    def put(self, key: str, track: dict | None) -> None:
+        slim = None
+        if track:  # só o que o painel usa, para o arquivo não crescer à toa
+            slim = {
+                "uri": track["uri"],
+                "name": track["name"],
+                "duration_ms": track.get("duration_ms") or 0,
+                "artists": [{"name": artist["name"]} for artist in track.get("artists", [])],
+                "album": {"images": (track.get("album") or {}).get("images") or []},
+            }
+        with self._lock:
+            self._load()[key] = slim
+            self._dirty = True
+
+    def save(self) -> None:
+        with self._lock:
+            if not self._dirty or self._data is None:
+                return
+            config.DATA_DIR.mkdir(exist_ok=True)
+            config.MATCH_CACHE_FILE.write_text(json.dumps(self._data), encoding="utf-8")
+            self._dirty = False
+
+
+matches = MatchCache()
+
+
 def to_spotify(sp: Spotify, track: dict) -> dict | None:
-    isrc = track.get("isrc")
-    if isrc:
-        found = sp.search(f"isrc:{isrc}", "track")
-        if found:
-            return found[0]
     artist = track["artist"]["name"]
     title = track.get("title_short") or track["title"]
-    return curation.pick_track(sp.search(f"{title} {artist}", "track"), artist, title)
+    key = track.get("isrc") or curation.normalize(f"{artist} {title}")
+    known, cached = matches.get(key)
+    if known:
+        return cached
+    found = None
+    if track.get("isrc"):
+        results = sp.search(f"isrc:{track['isrc']}", "track")
+        found = results[0] if results else None
+    if found is None:
+        found = curation.pick_track(sp.search(f"{title} {artist}", "track"), artist, title)
+    matches.put(key, found)
+    return found
 
 
 def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: float | None = None,
@@ -412,13 +482,16 @@ def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: f
         bpm=bpm,
         energy=energy,
         tag=tag,
+        artists=[artist["name"] for artist in track.get("artists", [])],
     )
 
 
 # ---------- Sensações
 
 
-def gather_candidates(dz: Deezer, queries: list[str], rng: random.Random) -> list[dict]:
+def gather_candidates(
+    dz: Deezer, queries: list[str], rng: random.Random, blocked: Collection[str] = frozenset(),
+) -> list[dict]:
     """Faixas com prévia de playlists montadas para o momento, alternando entre as fontes."""
     groups, seen = [], set()
     for query in queries:
@@ -429,7 +502,7 @@ def gather_candidates(dz: Deezer, queries: list[str], rng: random.Random) -> lis
                 continue
             tracks = []
             for track in listed:
-                if usable(track) and track["id"] not in seen:
+                if usable(track, blocked) and track["id"] not in seen:
                     seen.add(track["id"])
                     tracks.append(track)
             rng.shuffle(tracks)
@@ -476,14 +549,15 @@ def sense(
     rng: random.Random,
     cache: TempoCache,
     measure: Callable[[bytes], tempo.Analysis | None] = measure_in_process,
+    blocked: Collection[str] = frozenset(),
 ) -> None:
     hunt.message = "Procurando playlists feitas para esse momento…"
-    candidates = gather_candidates(dz, spec["sources"], rng)
+    candidates = gather_candidates(dz, spec["sources"], rng, blocked)
     if not candidates:
         hunt.message = f"Não achei playlists sobre “{spec['name']}”. Tente outra palavra."
         return
     if spec.get("bpm") is None:
-        _sense_by_consensus(hunt, spec, sp, dz, candidates[:CONSENSUS_LISTEN], cache, measure)
+        _sense_by_consensus(hunt, spec, sp, dz, candidates[:CONSENSUS_LISTEN], cache, measure, blocked)
         return
     candidates = candidates[:SENSE_MAX_LISTEN]
     hunt.total = len(candidates)
@@ -494,7 +568,7 @@ def sense(
         hunt.progress += 1
         bpm = fits(analysis, spec)
         if bpm is not None:
-            _add_find(hunt, sp, track, analysis, bpm, seen)
+            _add_find(hunt, sp, track, analysis, bpm, seen, blocked)
         hunt.message = f"Ouvindo prévias: {hunt.progress} de {hunt.total}. {len(hunt.finds)} no ritmo certo."
         if len(hunt.finds) >= SENSE_TARGET:
             break
@@ -504,10 +578,17 @@ def sense(
         hunt.message = "Nenhuma prévia ficou no ritmo desta vez. Gere de novo para ouvir outras."
 
 
-def _add_find(hunt: Hunt, sp: Spotify, track: dict, analysis: tempo.Analysis, bpm: float, seen: set[str]) -> None:
+def _add_find(
+    hunt: Hunt, sp: Spotify, track: dict, analysis: tempo.Analysis, bpm: float, seen: set[str],
+    blocked: Collection[str] = frozenset(),
+) -> None:
+    if blocked_track(track, blocked):  # bloqueado no meio da busca
+        return
     match = to_spotify(sp, track)
-    key = match and curation.normalize(f"{match['name']} {match['artists'][0]['name']}")
-    if match and key not in seen:
+    if not match or blocked_track(match, blocked):
+        return
+    key = curation.normalize(f"{match['name']} {match['artists'][0]['name']}")
+    if key not in seen:
         seen.add(key)
         hunt.finds.append(find_from(match, bpm=bpm, energy=analysis.energy))
 
@@ -520,6 +601,7 @@ def _sense_by_consensus(
     candidates: list[dict],
     cache: TempoCache,
     measure: Callable[[bytes], tempo.Analysis | None],
+    blocked: Collection[str] = frozenset(),
 ) -> None:
     """Palavra fora do dicionário: ouve tudo primeiro, descobre o ritmo em comum e fica com quem segue ele."""
     hunt.total = len(candidates)
@@ -545,7 +627,7 @@ def _sense_by_consensus(
     for _, track, analysis in ranked:
         if hunt.cancelled:
             return
-        _add_find(hunt, sp, track, analysis, round(analysis.bpm), seen)
+        _add_find(hunt, sp, track, analysis, round(analysis.bpm), seen, blocked)
         if len(hunt.finds) >= SENSE_TARGET:
             break
     hunt.message = (
@@ -557,7 +639,7 @@ def _sense_by_consensus(
 # ---------- Roleta
 
 
-def obscure_album_pick(sp: Spotify, rng: random.Random) -> Find | None:
+def obscure_album_pick(sp: Spotify, rng: random.Random, blocked: Collection[str] = frozenset()) -> Find | None:
     year = rng.randint(1955, date.today().year)
     albums = [
         album for album in sp.search(f"tag:hipster year:{year}", "album", offset=rng.randrange(0, 90))
@@ -570,7 +652,7 @@ def obscure_album_pick(sp: Spotify, rng: random.Random) -> Find | None:
     album_artists = " ".join(artist["name"] for artist in album.get("artists", []))
     if not tracks or religious_collection(album.get("name", ""), tracks, album_artists):
         return None
-    secular = [track for track in tracks if not religious_track(track)]
+    secular = [track for track in tracks if not religious_track(track) and not blocked_track(track, blocked)]
     if not secular:
         return None
     return find_from(
@@ -581,7 +663,9 @@ def obscure_album_pick(sp: Spotify, rng: random.Random) -> Find | None:
     )
 
 
-def world_genre_pick(sp: Spotify, dz: Deezer, rng: random.Random) -> Find | None:
+def world_genre_pick(
+    sp: Spotify, dz: Deezer, rng: random.Random, blocked: Collection[str] = frozenset(),
+) -> Find | None:
     """Faixa pouco popular de uma playlist com o nome do gênero (buscar faixas casaria só o título)."""
     genre = rng.choice(WORLD_GENRES)
     playlists = [p for p in dz.search_playlists(genre, limit=6) if p.get("nb_tracks", 0) >= 10]
@@ -591,27 +675,33 @@ def world_genre_pick(sp: Spotify, dz: Deezer, rng: random.Random) -> Find | None
     listed = dz.playlist_tracks(playlist["id"])
     if religious_collection(playlist.get("title", ""), listed, playlist.get("user", {}).get("name", "")):
         return None
-    tracks = [track for track in listed if usable(track)]
+    tracks = [track for track in listed if usable(track, blocked)]
     if not tracks:
         return None
     match = to_spotify(sp, rng.choice(lesser_known(tracks)))
-    if not match:
+    if not match or blocked_track(match, blocked):
         return None
     return find_from(match, reason=f"Sorteada de uma playlist de {genre}.", tag=genre.capitalize())
 
 
-def roulette(hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int = ROULETTE_COUNT) -> None:
+def roulette(
+    hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int = ROULETTE_COUNT,
+    blocked: Collection[str] = frozenset(),
+) -> None:
     hunt.total = count
     hunt.message = "Girando a roleta…"
     attempts = 0
     while len(hunt.finds) < count and attempts < count * 4 and not hunt.cancelled:
         attempts += 1
         try:
-            find = obscure_album_pick(sp, rng) if attempts % 2 else world_genre_pick(sp, dz, rng)
+            find = obscure_album_pick(sp, rng, blocked) if attempts % 2 else world_genre_pick(sp, dz, rng, blocked)
         except (SpotifyError, DeezerError) as err:
+            if isinstance(err, SpotifyError) and err.status == 429:
+                raise  # pausa da Spotify: insistir só aumenta o castigo
             log.warning("Roleta: %s", err)
             continue
-        if find and all(find.uri != known.uri for known in hunt.finds):
+        blocked_now = find is not None and any(curation.normalize(name) in blocked for name in find.artists)
+        if find and not blocked_now and all(find.uri != known.uri for known in hunt.finds):
             hunt.finds.append(find)
             hunt.progress = len(hunt.finds)
             hunt.message = f"Sorteadas {hunt.progress} de {count}."
@@ -621,13 +711,15 @@ def roulette(hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int
 # ---------- Toca do coelho
 
 
-def walk(dz: Deezer, seed: str, hops: int, rng: random.Random) -> list[dict]:
+def walk(
+    dz: Deezer, seed: str, hops: int, rng: random.Random, blocked: Collection[str] = frozenset(),
+) -> list[dict]:
     start = dz.search_artist(seed)
     if not start:
         return []
     path, visited = [start], {start["id"]}
     for _ in range(hops):
-        step = next_hop(dz.related(path[-1]["id"]), visited, rng)
+        step = next_hop(dz.related(path[-1]["id"]), visited, rng, blocked)
         if step is None:
             break
         path.append(step)
@@ -635,7 +727,10 @@ def walk(dz: Deezer, seed: str, hops: int, rng: random.Random) -> list[dict]:
     return path if len(path) > 1 else []
 
 
-def artist_picks(sp: Spotify, dz: Deezer, artist: dict, wanted: int, reason: str, taken: set[str]) -> list[Find]:
+def artist_picks(
+    sp: Spotify, dz: Deezer, artist: dict, wanted: int, reason: str, taken: set[str],
+    blocked: Collection[str] = frozenset(),
+) -> list[Find]:
     """As faixas mais ouvidas do artista que existem no Spotify (sem repetir a mesma música)."""
     picks: list[Find] = []
     for top in dz.top_tracks(artist["id"]):
@@ -645,7 +740,7 @@ def artist_picks(sp: Spotify, dz: Deezer, artist: dict, wanted: int, reason: str
         if religious_track(top):
             continue
         match = to_spotify(sp, dz.track(top["id"]))  # o "top" não traz ISRC
-        if match and match["uri"] not in taken and not religious_track(match):
+        if match and match["uri"] not in taken and not religious_track(match) and not blocked_track(match, blocked):
             taken.update({title, match["uri"]})
             picks.append(find_from(match, reason=reason))
         if len(picks) == wanted:
@@ -660,6 +755,7 @@ def rabbit_hole(
     rng: random.Random,
     seeds: list[str],
     walks: int = RABBIT_WALKS,
+    blocked: Collection[str] = frozenset(),
 ) -> None:
     """Cada caminho vira uma viagem: uma faixa de cada artista no meio e duas do último."""
     hunt.total = walks
@@ -669,7 +765,7 @@ def rabbit_hole(
         seed = rng.choice(seeds)
         hunt.message = f"Descendo a toca a partir de {seed}…"
         try:
-            path = walk(dz, seed, RABBIT_HOPS, rng)
+            path = walk(dz, seed, RABBIT_HOPS, rng, blocked)
             finds: list[Find] = []
             taken: set[str] = set()
             steps = path[1:]
@@ -679,8 +775,10 @@ def rabbit_hole(
                     f"Fim da toca: {number} pulos a partir de {seed}." if last
                     else f"Pulo {number} de {len(steps)} a partir de {seed}."
                 )
-                finds.extend(artist_picks(sp, dz, artist, RABBIT_TRACKS if last else 1, reason, taken))
+                finds.extend(artist_picks(sp, dz, artist, RABBIT_TRACKS if last else 1, reason, taken, blocked))
         except (SpotifyError, DeezerError) as err:
+            if isinstance(err, SpotifyError) and err.status == 429:
+                raise  # pausa da Spotify: insistir só aumenta o castigo
             log.warning("Toca do coelho: %s", err)
             continue
         if finds:

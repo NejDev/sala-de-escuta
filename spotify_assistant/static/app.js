@@ -40,6 +40,8 @@ const state = {
   kept: new Set(),
   openDetails: new Set(),
   landed: new Set(),
+  blocked: [],
+  showBlocked: false,
   addingOpen: false,
   player: null,
   playerSyncedAt: 0,
@@ -419,6 +421,17 @@ async function openView(key) {
   state.huntSignature = "";
   renderIntro();
   renderHunt();
+  loadBlocked();
+}
+
+async function loadBlocked() {
+  try {
+    state.blocked = (await api("/api/blocked")).artists;
+  } catch {
+    return;  // a lista é só um extra; sem ela o resto funciona
+  }
+  state.huntSignature = "";
+  renderHunt();
 }
 
 /** A busca em andamento, se ela pertence à tela aberta. */
@@ -432,6 +445,18 @@ function renderIntro() {
   sleeve.className = "sleeve is-plain";
   setMood(huntHere()?.color || ROOM_LIGHT);
   sleeve.replaceChildren(...(state.view === "sensacoes" ? senseIntro() : discoverIntro()));
+}
+
+/** Aviso quando a Spotify pausou as buscas: Sensações e Descobrir dependem delas. */
+function pauseNotice() {
+  const seconds = state.overview?.search_paused_s;
+  if (!seconds) return null;
+  const back = new Date(Date.now() + seconds * 1000);
+  const days = Math.round((new Date(back).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+  const day = days === 0 ? "hoje" : days === 1 ? "amanhã" : `em ${back.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
+  const time = back.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return h("p", { class: "meta is-warning" },
+    `A Spotify pausou as buscas deste app por excesso de pedidos. Sensações e Descobrir voltam por volta de ${time} ${day}.`);
 }
 
 function senseIntro() {
@@ -461,7 +486,8 @@ function senseIntro() {
         "Escreva o que está sentindo ou escolha um momento. A sala acha músicas para isso, ouve a prévia "
         + "de cada uma e fica só com as que têm o ritmo certo."),
       !ready && h("p", { class: "meta is-warning" },
-        "Para medir o BPM, instale o decodificador com pip install miniaudio e reabra o painel.")),
+        "Para medir o BPM, instale o decodificador com pip install miniaudio e reabra o painel."),
+      pauseNotice()),
     h("form", { class: "feeling", onsubmit: submit },
       h("label", { class: "feeling-label", for: "feeling-input" }, "O que você está sentindo?"),
       h("div", { class: "feeling-row" },
@@ -502,7 +528,8 @@ function discoverIntro() {
   return [
     h("div", { class: "sleeve-text" },
       h("h1", { class: "title" }, "Descobrir"),
-      h("p", { class: "description" }, "Duas formas de chegar em músicas que você nunca ouviu.")),
+      h("p", { class: "description" }, "Duas formas de chegar em músicas que você nunca ouviu."),
+      pauseNotice()),
     h("div", { class: "paths" },
       h("section", { class: "path path-roulette", style: "--tone: #F2C14E" },
         h("h2", { class: "path-name" }, "Roleta"),
@@ -664,6 +691,7 @@ function renderHunt() {
   }
   const signature = JSON.stringify([
     hunt.status, hunt.progress, hunt.finds.length, hunt.message, state.kept.size, state.openDetails.size,
+    state.blocked.length, state.showBlocked,
   ]);
   if (!panel.hidden && signature === state.huntSignature) return;
   state.huntSignature = signature;
@@ -692,7 +720,18 @@ function renderHunt() {
         }, "Guardar todas"),
       h("button", { class: "text-button", type: "button", onclick: () => startHunt(state.lastHunt || { kind: hunt.kind }) },
         again),
+      state.blocked.length > 0 && h("button", {
+        class: "text-button",
+        type: "button",
+        "aria-expanded": String(state.showBlocked),
+        "aria-controls": "blocked-list",
+        onclick: () => { state.showBlocked = !state.showBlocked; renderHunt(); },
+      }, `Artistas bloqueados (${state.blocked.length})`),
     ),
+    state.showBlocked && state.blocked.length > 0 && h("ul", { class: "blocked-list", id: "blocked-list" },
+      state.blocked.map((artist) => h("li", null,
+        h("span", null, artist),
+        h("button", { class: "text-button", type: "button", onclick: () => setBlocked(artist, false) }, "Desbloquear")))),
   ];
   panel.replaceChildren(...header.filter(Boolean));
 
@@ -722,6 +761,7 @@ function findDetails(find) {
 function findRow(find, finds, index, isNew) {
   const kept = state.kept.has(find.uri);
   const details = findDetails(find);
+  const artist = (find.artists || [])[0];
   const open = state.openDetails.has(find.uri);
   const classes = ["track", "find", open && "is-open", isNew && "is-new"].filter(Boolean).join(" ");
   return h("li", { class: classes, "data-uri": find.uri },
@@ -730,19 +770,18 @@ function findRow(find, finds, index, isNew) {
       find.image ? h("img", { class: "track-art", src: find.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
       h("span", { class: "track-text" },
         h("span", { class: "track-title" }, find.title),
-        h("span", { class: "track-sub" }, find.subtitle),
-        details && h("span", { class: "find-details" }, details)),
+        h("span", { class: "track-sub" }, find.subtitle)),
       find.bpm ? h("span", { class: "bpm" }, h("b", null, String(find.bpm)), " BPM") : h("span"),
       h("span", { class: "track-time" }, clock(find.duration_ms)),
     ),
-    details ? h("button", {
+    h("button", {
       class: "info-button",
       type: "button",
       "aria-expanded": String(open),
       "aria-label": `Detalhes de ${find.title}`,
       title: "Por que essa música?",
       onclick: () => toggleDetails(find.uri),
-    }, infoIcon()) : h("span"),
+    }, infoIcon()),
     h("button", {
       class: "keep-button",
       type: "button",
@@ -751,7 +790,27 @@ function findRow(find, finds, index, isNew) {
       "aria-label": `Guardar ${find.title} nos Achados da Sala`,
       onclick: (event) => keep([find.uri], event.currentTarget),
     }, kept ? "Guardada" : "Guardar"),
+    open && h("div", { class: "find-details" },
+      details && h("span", null, details),
+      artist && h("button", { class: "text-button", type: "button", onclick: () => setBlocked(artist, true) },
+        `Não mostrar mais ${artist}`)),
   );
+}
+
+async function setBlocked(artist, blocked) {
+  try {
+    const { message, artists } = await api("/api/blocked", { artist, blocked });
+    state.blocked = artists;
+    if (!artists.length) state.showBlocked = false;
+    toast(message);
+    // O servidor já tirou o artista do resultado; busca a versão atualizada.
+    const hunt = await api("/api/hunts/current");
+    if (hunt) state.hunt = hunt;
+  } catch (error) {
+    toast(error.message, true);
+  }
+  state.huntSignature = "";
+  renderHunt();
 }
 
 function toggleDetails(uri) {
@@ -1077,7 +1136,7 @@ async function init() {
   }
   // pollHunt retoma uma busca que estava rodando quando a página foi recarregada.
   await Promise.all([go(state.initialKey), refreshPlayer(), pollHunt()]);
-  setInterval(() => { if (!document.hidden) refreshPlayer(); }, 3000);
+  setInterval(() => { if (!document.hidden) refreshPlayer(); }, 5000);
   setInterval(tick, 500);
 }
 
