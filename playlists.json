@@ -1,0 +1,144 @@
+{
+  "market": "BR",
+  "playlists": [
+    {
+      "name": "Tech Radar BR",
+      "description": "Podcasts de tecnologia em PT-BR: IA, agentes, programação, arquitetura e mercado.",
+      "color": "#5CC8C0",
+      "public": false,
+      "refresh": "weekly",
+      "podcasts": {
+        "max_age_days": 10,
+        "max_per_show": 2,
+        "max_total": 25,
+        "shows": [
+          "Hipsters Ponto Tech",
+          "IA Sob Controle",
+          "Data Hackers",
+          "Podcast Canaltech",
+          "Tecnocast",
+          "Hoje no TecMundo Podcast",
+          "Diocast",
+          "Segurança Legal",
+          "Pizza de Dados",
+          "IA Todo Dia",
+          "Bom dia Tech"
+        ]
+      }
+    },
+    {
+      "name": "Midnight in Monaco",
+      "description": "Jazz de bar sofisticado: piano, sax e contrabaixo para a noite.",
+      "color": "#D4A84B",
+      "public": false,
+      "tracks": [
+        "Miles Davis - So What",
+        "Bill Evans - Peace Piece",
+        "Chet Baker - Almost Blue",
+        "Duke Ellington - In a Sentimental Mood",
+        "Stan Getz - Corcovado",
+        "Thelonious Monk - 'Round Midnight",
+        "Bill Evans - Waltz for Debby",
+        "John Coltrane - Naima",
+        "Cannonball Adderley - Autumn Leaves",
+        "Chet Baker - My Funny Valentine",
+        "Ahmad Jamal - Poinciana",
+        "Miles Davis - Blue in Green",
+        "Wes Montgomery - Bumpin' on Sunset",
+        "Hank Mobley - Remember",
+        "John Coltrane - Say It (Over and Over Again)",
+        "Dave Brubeck - Take Five",
+        "Stan Getz - Desafinado",
+        "Kenny Burrell - Chitlins con Carne",
+        "Coleman Hawkins - Body and Soul",
+        "Bill Evans - My Foolish Heart",
+        "Herbie Hancock - Maiden Voyage",
+        "Dexter Gordon - Cheese Cake",
+        "Lee Morgan - Ceora",
+        "Chet Baker - I Fall in Love Too Easily",
+        "Horace Silver - Song for My Father",
+        "Joe Henderson - Blue Bossa",
+        "Oscar Peterson - Night Train",
+        "Miles Davis - It Never Entered My Mind",
+        "Art Blakey - Moanin'",
+        "Sonny Rollins - St. Thomas",
+        "Ben Webster - Soulville",
+        "Duke Ellington - Mood Indigo"
+      ]
+    },
+    {
+      "name": "Deep Focus — Lo-Fi",
+      "description": "Beats tranquilos, piano e jazz-hop para sessões longas de código.",
+      "color": "#E3909E",
+      "public": false,
+      "shuffle": true,
+      "artists": {
+        "per_artist": 3,
+        "names": [
+          "Nujabes",
+          "Idealism",
+          "Kupla",
+          "Philanthrope",
+          "Tomppabeats",
+          "Jinsang",
+          "Psalm Trees",
+          "potsu",
+          "Sleepy Fish",
+          "Kudasaibeats",
+          "Knowmadic",
+          "j'san",
+          "Purrple Cat",
+          "Blue Wednesday",
+          "Hoogway",
+          "Elijah Who",
+          "eevee",
+          "Saib."
+        ]
+      }
+    },
+    {
+      "name": "The Classical Room",
+      "description": "Do contemplativo ao grandioso: Satie, Debussy, Chopin, Bach, Beethoven e Rachmaninoff.",
+      "color": "#E6D5AA",
+      "public": false,
+      "tracks": [
+        "Erik Satie - Gymnopédie No. 1",
+        "Erik Satie - Gnossienne No. 1",
+        "Claude Debussy - Suite bergamasque, L. 75: III. Clair de lune",
+        "Frédéric Chopin - Prelude in E Minor, Op. 28 No. 4",
+        "Johann Sebastian Bach - Goldberg Variations, BWV 988: Aria",
+        "Claude Debussy - Rêverie, L. 68",
+        "Frédéric Chopin - Nocturne in E-Flat Major, Op. 9 No. 2",
+        "Ludwig van Beethoven - Piano Sonata No. 14 \"Moonlight\": I. Adagio sostenuto",
+        "Johann Sebastian Bach - Cello Suite No. 1 in G Major, BWV 1007: I. Prélude",
+        "Frédéric Chopin - Nocturne in C-Sharp Minor, Op. Posth.",
+        "Claude Debussy - Arabesque No. 1",
+        "Ludwig van Beethoven - Piano Sonata No. 8 \"Pathétique\": II. Adagio cantabile",
+        "Johann Sebastian Bach - Orchestral Suite No. 3 in D Major, BWV 1068: II. Air",
+        "Sergei Rachmaninoff - Vocalise, Op. 34 No. 14",
+        "Ludwig van Beethoven - Bagatelle No. 25 in A Minor, WoO 59 \"Für Elise\"",
+        "Sergei Rachmaninoff - Rhapsody on a Theme of Paganini, Op. 43: Andante cantabile",
+        "Ludwig van Beethoven - Symphony No. 7 in A Major, Op. 92: II. Allegretto",
+        "Frédéric Chopin - Ballade No. 1 in G Minor, Op. 23",
+        "Sergei Rachmaninoff - Piano Concerto No. 2 in C Minor, Op. 18: I. Moderato",
+        "Johann Sebastian Bach - Toccata and Fugue in D Minor, BWV 565",
+        "Frédéric Chopin - Polonaise in A-Flat Major, Op. 53",
+        "Ludwig van Beethoven - Symphony No. 5 in C Minor, Op. 67: I. Allegro con brio"
+      ]
+    },
+    {
+      "name": "The Study Collection",
+      "description": "Jazz, lo-fi e clássico alternados para estudar e trabalhar sem trocar de playlist.",
+      "color": "#9DB4E6",
+      "public": false,
+      "mix": {
+        "from": [
+          "Midnight in Monaco",
+          "Deep Focus — Lo-Fi",
+          "The Classical Room"
+        ],
+        "per_source": 12
+      }
+    }
+  ]
+}

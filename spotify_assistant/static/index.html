@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sala de escuta</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='4' width='5' height='24' fill='%235CC8C0'/%3E%3Crect x='9' y='4' width='5' height='24' fill='%23D4A84B'/%3E%3Crect x='15' y='4' width='5' height='24' fill='%23E3909E'/%3E%3Crect x='21' y='4' width='5' height='24' fill='%23E6D5AA'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&display=swap">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="room" id="room">
+    <nav class="shelf" id="shelf" aria-label="Suas playlists"></nav>
+
+    <main class="stage" id="stage">
+      <section class="sleeve" id="sleeve" aria-live="polite"></section>
+      <section class="adder" id="adder" hidden>
+        <label class="adder-label" for="adder-input" id="adder-label"></label>
+        <input class="adder-input" id="adder-input" type="search" autocomplete="off" spellcheck="false">
+        <ul class="results" id="results"></ul>
+      </section>
+      <ol class="tracks" id="tracks"></ol>
+    </main>
+  </div>
+
+  <section class="console" id="console" hidden aria-live="polite">
+    <header class="console-head">
+      <h2 class="console-title" id="console-title"></h2>
+      <button class="text-button" id="console-close" type="button">Fechar</button>
+    </header>
+    <div class="console-lines" id="console-lines"></div>
+  </section>
+
+  <footer class="player" id="player" data-state="idle">
+    <div class="now">
+      <img class="now-art" id="now-art" alt="" hidden>
+      <div class="now-text">
+        <p class="now-title" id="now-title">Nada tocando</p>
+        <p class="now-sub" id="now-sub">Toque uma playlist daqui ou abra o Spotify.</p>
+      </div>
+    </div>
+
+    <div class="transport">
+      <div class="controls">
+        <button class="icon-button" id="btn-shuffle" type="button" aria-pressed="false" aria-label="Ordem aleatória" title="Ordem aleatória">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3.5c2 0 3.2 1 4.3 2.6l2.4 4.8C14.3 16 15.5 17 17.5 17H21M17.5 14 21 17l-3.5 3M3 17h3.5c1.4 0 2.4-.5 3.2-1.4M14.3 8.4C15.1 7.5 16.1 7 17.5 7H21M17.5 4 21 7l-3.5 3"/></svg>
+        </button>
+        <button class="icon-button" id="btn-prev" type="button" aria-label="Anterior" title="Anterior (←)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M18 5v14L8 12zM6 5h2v14H6z"/></svg>
+        </button>
+        <button class="round-button" id="btn-play" type="button" aria-label="Tocar" title="Tocar ou pausar (espaço)">
+          <svg class="icon-play" viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M8 5v14l11-7z"/></svg>
+          <svg class="icon-pause" viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+        </button>
+        <button class="icon-button" id="btn-next" type="button" aria-label="Próxima" title="Próxima (→)">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M6 5v14l10-7zM16 5h2v14h-2z"/></svg>
+        </button>
+      </div>
+      <div class="timeline">
+        <span class="time" id="time-pos">0:00</span>
+        <input class="range" id="seek" type="range" min="0" max="1" value="0" step="1000" aria-label="Posição na faixa">
+        <span class="time" id="time-dur">0:00</span>
+      </div>
+    </div>
+
+    <div class="output">
+      <svg class="volume-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+      <input class="range" id="volume" type="range" min="0" max="100" value="50" aria-label="Volume">
+      <p class="device" id="device"></p>
+    </div>
+
+    <div class="player-auth">
+      <p>Para tocar, pausar e pular faixas por aqui, autorize o controle do player.</p>
+      <a class="play-button" href="/login">Autorizar no Spotify</a>
+    </div>
+  </footer>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <section class="gate" id="gate" hidden>
+    <div class="gate-shelf" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+    <h1 class="gate-title">Sala de escuta</h1>
+    <p class="gate-text" id="gate-text">Conecte sua conta do Spotify para ver, tocar e atualizar suas playlists.</p>
+    <a class="play-button" href="/login">Conectar ao Spotify</a>
+  </section>
+
+  <script src="/app.js"></script>
+</body>
+</html>
