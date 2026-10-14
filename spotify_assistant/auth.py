@@ -1,6 +1,7 @@
 """Login OAuth (Authorization Code + PKCE) e renovação automática do token.
 
 Com PKCE o Client Secret não é necessário: só o Client ID fica no .env.
+Cada pessoa da sala tem o próprio arquivo de token (data/users/<id>/token.json).
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import time
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass
+from pathlib import Path
 
 from .api import SpotifyError, http_request
 from .config import TOKEN_FILE, Settings
@@ -26,7 +28,7 @@ SCOPES = (
     "user-read-playback-state user-modify-playback-state user-read-currently-playing"
 )
 LOGIN_TIMEOUT_S = 300
-RELOGIN_HINT = "Rode: python -m spotify_assistant login"
+RELOGIN_HINT = "Entre de novo com o Spotify."
 
 log = logging.getLogger(__name__)
 
@@ -36,48 +38,53 @@ class AuthRequest:
     url: str
     verifier: str
     state: str
+    redirect_uri: str
+    created: float = 0.0
 
 
-def start_authorization(settings: Settings) -> AuthRequest:
+def start_authorization(settings: Settings, redirect_uri: str | None = None) -> AuthRequest:
+    redirect_uri = redirect_uri or settings.redirect_uri
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state = secrets.token_urlsafe(16)
     query = urllib.parse.urlencode({
         "client_id": settings.client_id,
         "response_type": "code",
-        "redirect_uri": settings.redirect_uri,
+        "redirect_uri": redirect_uri,
         "code_challenge_method": "S256",
         "code_challenge": challenge,
         "scope": SCOPES,
         "state": state,
+        "show_dialog": "true",  # deixa trocar de conta (útil quando amigos usam o mesmo PC)
     })
-    return AuthRequest(f"{AUTHORIZE_URL}?{query}", verifier, state)
+    return AuthRequest(f"{AUTHORIZE_URL}?{query}", verifier, state, redirect_uri, time.time())
 
 
-def finish_authorization(settings: Settings, request: AuthRequest, params: dict[str, str]) -> None:
+def exchange_code(settings: Settings, request: AuthRequest, params: dict[str, str]) -> dict:
+    """Troca o código da volta do login por um token (ainda não salvo)."""
     if params.get("state") != request.state:
         raise SystemExit("Resposta de login inválida (state não confere). Tente de novo.")
     if "error" in params:
         raise SystemExit(f"Login recusado pelo Spotify: {params['error']}")
-    token = http_request("POST", TOKEN_URL, form={
+    return http_request("POST", TOKEN_URL, form={
         "grant_type": "authorization_code",
         "code": params["code"],
-        "redirect_uri": settings.redirect_uri,
+        "redirect_uri": request.redirect_uri,
         "client_id": settings.client_id,
         "code_verifier": request.verifier,
     })
-    _save(token)
 
 
-def login(settings: Settings) -> None:
+def login(settings: Settings) -> dict:
+    """Login pelo terminal (abre o navegador e espera a volta em 127.0.0.1)."""
     request = start_authorization(settings)
-    finish_authorization(settings, request, _wait_for_callback(settings.redirect_uri, request.url))
+    return exchange_code(settings, request, _wait_for_callback(settings.redirect_uri, request.url))
 
 
-def missing_scopes() -> set[str]:
+def missing_scopes(token_file: Path | None = None) -> set[str]:
     """Permissões que o token salvo ainda não tem (ex.: controle do player)."""
     try:
-        granted = json.loads(TOKEN_FILE.read_text(encoding="utf-8")).get("scope", "")
+        granted = json.loads((token_file or TOKEN_FILE).read_text(encoding="utf-8")).get("scope", "")
     except FileNotFoundError:
         granted = ""
     return set(SCOPES.split()) - set(granted.split())
@@ -117,9 +124,10 @@ def _wait_for_callback(redirect_uri: str, authorize_url: str) -> dict[str, str]:
 class TokenManager:
     """Entrega um access token válido, renovando com o refresh token quando expira."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, token_file: Path | None = None):
         self._settings = settings
-        self._token = _load()
+        self._file = token_file or TOKEN_FILE
+        self._token = load_token(self._file)
         # O painel faz requisições em paralelo; o refresh token gira a cada uso,
         # então só uma thread pode renovar por vez.
         self._lock = threading.Lock()
@@ -139,27 +147,27 @@ class TokenManager:
             })
         except SpotifyError as err:
             if err.status in (400, 401):
-                raise SystemExit(f"A sessão do Spotify expirou ({err}). {RELOGIN_HINT}") from None
+                raise SystemExit(f"A sessão do Spotify expirou. {RELOGIN_HINT}") from None
             raise
         # Com PKCE o Spotify costuma girar o refresh token; guarda sempre o mais novo.
         fresh.setdefault("refresh_token", self._token["refresh_token"])
-        self._token = _save(fresh)
+        self._token = save_token(fresh, self._file)
 
 
-def _save(token: dict) -> dict:
+def save_token(token: dict, path: Path) -> dict:
     record = {
         "access_token": token["access_token"],
         "refresh_token": token["refresh_token"],
         "expires_at": time.time() + token["expires_in"],
         "scope": token.get("scope", ""),
     }
-    TOKEN_FILE.parent.mkdir(exist_ok=True)
-    TOKEN_FILE.write_text(json.dumps(record, indent=2), encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, indent=2), encoding="utf-8")
     return record
 
 
-def _load() -> dict:
+def load_token(path: Path) -> dict:
     try:
-        return json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise SystemExit(f"Você ainda não fez login. {RELOGIN_HINT}") from None
+        raise SystemExit(f"Você ainda não entrou. {RELOGIN_HINT}") from None

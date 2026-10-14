@@ -18,7 +18,7 @@
   /* Margem lateral que centraliza a coluna de conteúdo em telas largas. */
   --inset: max(var(--gutter), calc((100% - var(--content)) / 2));
   /* A barra de topo é mais larga que o conteúdo: o menu inteiro precisa caber numa linha. */
-  --nav-inset: max(var(--gutter), calc((100% - 1440px) / 2));
+  --nav-inset: max(var(--gutter), calc((100% - 1600px) / 2));
   color-scheme: dark;
 }
 
@@ -96,6 +96,18 @@ body.is-gated .console { display: none; }
 }
 
 .nav-group { display: flex; flex: none; align-items: center; gap: 2px; }
+
+.account {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  color: var(--smoke);
+  font-size: .875rem;
+  white-space: nowrap;
+}
+.account-name { color: var(--linen); font-weight: 600; }
 .nav-group + .nav-group { padding-left: 18px; border-left: 1px solid var(--line); }
 .nav-label { margin-right: 10px; color: var(--smoke); font-size: .8125rem; }
 

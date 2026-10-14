@@ -1,10 +1,13 @@
-"""Painel visual local: python -m spotify_assistant ui
+"""Painel da Sala de escuta: python -m spotify_assistant ui
 
-Servidor só com a biblioteca padrão, em 127.0.0.1 e na mesma porta do redirect
-do OAuth, então o login acontece dentro do próprio painel.
+Servidor só com a biblioteca padrão. Roda no PC do dono em 127.0.0.1; os amigos
+entram pelo endereço público do túnel (SALA_PUBLIC_URL no .env). Cada pessoa entra
+com o próprio Spotify e tem player, buscas, playlists e bloqueados separados.
 """
 from __future__ import annotations
 
+import html
+import http.cookies
 import http.server
 import json
 import logging
@@ -20,9 +23,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import curation, discovery, tempo
+from . import accounts, config, curation, discovery, tempo
 from .api import Spotify, SpotifyError, gate
-from .auth import AuthRequest, TokenManager, finish_authorization, missing_scopes, start_authorization
+from .auth import AuthRequest, TokenManager, exchange_code, missing_scopes, start_authorization
 from .config import (
     Settings, load_blocked, load_playlists, load_sensations, load_state, save_blocked, save_playlists, save_state,
 )
@@ -47,6 +50,8 @@ FINDS_PLAYLIST = {
 TASK_NAME = "Spotify Assistant - Tech Radar BR"  # mesmo nome do scripts/agendar-semanal.ps1
 SCHEDULE_TTL_S = 60
 MAX_BODY_BYTES = 64_000
+COOKIE_NAME = "sala"
+PENDING_LOGIN_TTL_S = 15 * 60
 
 log = logging.getLogger(__name__)
 
@@ -72,30 +77,53 @@ class Job:
 
 
 class JobLogHandler(logging.Handler):
+    """Leva para o painel só o log da thread da atualização (cada pessoa vê o seu)."""
+
     def __init__(self, job: Job):
         super().__init__()
         self.job = job
+        self.thread = threading.get_ident()
 
     def emit(self, record: logging.LogRecord) -> None:
+        if record.thread != self.thread:
+            return
         for line in record.getMessage().splitlines():
             if line.strip():
                 self.job.lines.append(line.rstrip())
+
+
+@dataclass
+class Profile:
+    """Tudo o que é de uma pessoa enquanto o painel está aberto."""
+
+    id: str
+    paths: config.UserPaths
+    tokens: TokenManager
+    blocked: set[str]
+    hunt: Hunt | None = None
+    job: Job | None = None
+    seeds: list[str] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def is_owner(self) -> bool:
+        return config.owner_id() == self.id
 
 
 def playlist_kind(spec: dict) -> str:
     return "podcasts" if "podcasts" in spec else "mix" if "mix" in spec else "music"
 
 
-def find_spec(config: dict, name: str) -> dict:
-    for spec in config["playlists"]:
+def find_spec(config_data: dict, name: str) -> dict:
+    for spec in config_data["playlists"]:
         if spec["name"] == name:
             return spec
     raise UserError(f"{name} não está no playlists.json.", 404)
 
 
-def add_to_config(config: dict, playlist_name: str, entry: str) -> dict:
+def add_to_config(config_data: dict, playlist_name: str, entry: str) -> dict:
     """Acrescenta a faixa ("Artista - Título") ou o programa à seleção e devolve o spec."""
-    spec = find_spec(config, playlist_name)
+    spec = find_spec(config_data, playlist_name)
     kind = playlist_kind(spec)
     if kind == "mix":
         raise UserError(f"{playlist_name} é montada com faixas das outras playlists. Adicione em uma delas.")
@@ -131,49 +159,58 @@ def spotify_message(err: SpotifyError) -> str:
 class App:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self._tokens: TokenManager | None = None
-        self._pending_auth: AuthRequest | None = None
-        self._job: Job | None = None
-        self._job_lock = threading.Lock()
-        self._schedule: tuple[float, dict | None] = (float("-inf"), None)
-        self._hunt: Hunt | None = None
-        self._hunt_lock = threading.Lock()
-        self._seeds: list[str] = []
+        self.sessions = accounts.Sessions()
         self.deezer = Deezer()
-        # Conjunto compartilhado com as buscas em andamento: bloquear vale na hora, até no meio de uma busca.
-        self.blocked: set[str] = discovery.blocked_set(load_blocked())
+        self._profiles: dict[str, Profile] = {}
+        self._profiles_lock = threading.Lock()
+        self._pending: dict[str, AuthRequest] = {}
+        self._schedule: tuple[float, dict | None] = (float("-inf"), None)
 
-    # Sessão
+    # Pessoas e login
 
-    def spotify(self) -> Spotify:
-        if self._tokens is None:
-            try:
-                self._tokens = TokenManager(self.settings)
-            except SystemExit as exc:
-                raise UserError(str(exc.code), 401, login=True) from None
-        return Spotify(self._tokens, market=load_playlists().get("market", "BR"))
+    def profile(self, user_id: str) -> Profile:
+        with self._profiles_lock:
+            profile = self._profiles.get(user_id)
+            if profile is None:
+                paths = config.user_paths(user_id)
+                try:
+                    tokens = TokenManager(self.settings, paths.token)
+                except SystemExit as exc:
+                    raise UserError(str(exc.code), 401, login=True) from None
+                # O conjunto de bloqueados é compartilhado com as buscas da pessoa: bloquear vale na hora.
+                profile = Profile(user_id, paths, tokens, discovery.blocked_set(load_blocked(paths.blocked)))
+                self._profiles[user_id] = profile
+            return profile
 
-    def reset_session(self) -> None:
-        self._tokens = None
+    def forget(self, user_id: str) -> None:
+        with self._profiles_lock:
+            self._profiles.pop(user_id, None)
 
-    def login_url(self) -> str:
-        self._pending_auth = start_authorization(self.settings)
-        return self._pending_auth.url
+    def spotify(self, user: Profile) -> Spotify:
+        return Spotify(user.tokens, market=load_playlists().get("market", "BR"))
 
-    def finish_login(self, params: dict[str, str]) -> None:
-        if self._pending_auth is None:
+    def login_url(self, redirect_uri: str) -> str:
+        now = time.time()
+        self._pending = {state: req for state, req in self._pending.items() if now - req.created < PENDING_LOGIN_TTL_S}
+        request = start_authorization(self.settings, redirect_uri)
+        self._pending[request.state] = request
+        return request.url
+
+    def finish_login(self, params: dict[str, str]) -> accounts.Person:
+        request = self._pending.pop(params.get("state", ""), None)
+        if request is None:
             raise UserError("O pedido de login expirou. Tente de novo.")
-        finish_authorization(self.settings, self._pending_auth, params)
-        self._pending_auth = None
-        self._tokens = None
+        token = exchange_code(self.settings, request, params)
+        person = accounts.register(token, load_playlists().get("market", "BR"))
+        self.forget(person.id)  # carrega o token novo na próxima requisição
+        return person
 
     # Leitura
 
-    def overview(self) -> dict:
-        sp = self.spotify()
-        me = sp.me()
+    def overview(self, user: Profile) -> dict:
+        sp = self.spotify(user)
         owned = {playlist["id"]: playlist for playlist in sp.my_playlists()}
-        ids = load_state().get("playlists", {})
+        ids = load_state(user.paths.state).get("playlists", {})
         playlists = []
         for spec in load_playlists()["playlists"]:
             remote = owned.get(ids.get(spec["name"]))
@@ -196,32 +233,32 @@ class App:
                 )
             playlists.append(summary)
         return {
-            "user": me.get("display_name") or me["id"],
+            "me": {"id": user.id, "name": accounts.display_name(user.id), "is_owner": user.is_owner},
             "playlists": playlists,
-            "player_ready": not missing_scopes(),
+            "player_ready": not missing_scopes(user.paths.token),
             "search_paused_s": gate.remaining("search"),
             "schedule": self.schedule(),
         }
 
-    def playlist(self, name: str) -> dict:
+    def playlist(self, user: Profile, name: str) -> dict:
         find_spec(load_playlists(), name)
-        playlist_id = load_state().get("playlists", {}).get(name)
+        playlist_id = load_state(user.paths.state).get("playlists", {}).get(name)
         items: list[dict] = []
         if playlist_id:
             try:
-                items = self.spotify().playlist_items(playlist_id)
+                items = self.spotify(user).playlist_items(playlist_id)
             except SpotifyError as err:
                 if err.status != 404:
                     raise
         return {"name": name, "items": [item_row(item) for item in items]}
 
-    def search(self, query: str, kind: str) -> dict:
+    def search(self, user: Profile, query: str, kind: str) -> dict:
         if kind not in ("track", "show"):
             raise UserError("Tipo de busca inválido.")
         if not query.strip():
             return {"results": []}
         results = []
-        for item in self.spotify().search(query, kind):
+        for item in self.spotify(user).search(query, kind):
             if kind == "track":
                 row = item_row(item)
                 row["entry"] = f"{item['artists'][0]['name']} - {item['name']}"
@@ -247,10 +284,10 @@ class App:
 
     # Player
 
-    def player(self) -> dict:
-        if missing_scopes():
+    def player(self, user: Profile) -> dict:
+        if missing_scopes(user.paths.token):
             return {"needs_scope": True}
-        data = self.spotify().playback()
+        data = self.spotify(user).playback()
         if not data or not data.get("item"):
             return {"item": None}
         device = data.get("device") or {}
@@ -263,10 +300,10 @@ class App:
             "device": {"name": device.get("name"), "volume": device.get("volume_percent")},
         }
 
-    def player_action(self, body: dict) -> dict:
-        if missing_scopes():
+    def player_action(self, user: Profile, body: dict) -> dict:
+        if missing_scopes(user.paths.token):
             raise UserError("Autorize o controle do player primeiro.", 403)
-        sp = self.spotify()
+        sp = self.spotify(user)
         action, value = body.get("action"), body.get("value")
         if action == "play":
             uris = [uri for uri in body.get("uris") or [] if isinstance(uri, str) and uri.startswith("spotify:")]
@@ -304,9 +341,9 @@ class App:
     def sensations(self) -> dict:
         return {"sensations": load_sensations(), "tempo_ready": tempo.available()}
 
-    def start_hunt(self, body: dict) -> dict:
+    def start_hunt(self, user: Profile, body: dict) -> dict:
         kind = body.get("kind")
-        sp = self.spotify()
+        sp = self.spotify(user)
         rng = random.Random()
         if kind == "sense":
             text = " ".join((body.get("text") or "").split())
@@ -325,41 +362,49 @@ class App:
 
             def task() -> None:
                 try:
-                    discovery.sense(hunt, spec, sp, self.deezer, rng, cache, blocked=self.blocked)
+                    discovery.sense(hunt, spec, sp, self.deezer, rng, cache, blocked=user.blocked)
                 finally:
                     cache.save()
         elif kind == "roulette":
             hunt = Hunt("roulette", "Roleta")
 
             def task() -> None:
-                discovery.roulette(hunt, sp, self.deezer, rng, blocked=self.blocked)
+                discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked)
         elif kind == "rabbit":
             seed = (body.get("seed") or "").strip()
             hunt = Hunt("rabbit", "Toca do coelho")
 
             def task() -> None:
-                seeds = [seed] if seed else self._seed_artists(sp)
-                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=self.blocked)
+                seeds = [seed] if seed else self._seed_artists(user, sp)
+                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=user.blocked)
         else:
             raise UserError("Tipo de descoberta inválido.")
 
-        with self._hunt_lock:
-            if self._hunt:
-                self._hunt.cancelled = True  # a busca anterior para no próximo passo
-            self._hunt = hunt
+        with user.lock:
+            if user.hunt:
+                user.hunt.cancelled = True  # a busca anterior para no próximo passo
+            user.hunt = hunt
         threading.Thread(target=self._run_hunt, args=(hunt, task), daemon=True).start()
         return hunt.snapshot()
 
-    def current_hunt(self) -> dict | None:
-        return self._hunt.snapshot() if self._hunt else None
+    @staticmethod
+    def current_hunt(user: Profile) -> dict | None:
+        return user.hunt.snapshot() if user.hunt else None
 
-    def _run_hunt(self, hunt: Hunt, task) -> None:
+    @staticmethod
+    def _run_hunt(hunt: Hunt, task) -> None:
         try:
             task()
             hunt.status = "cancelled" if hunt.cancelled else "done"
         except (SpotifyError, DeezerError) as err:
             hunt.status = "error"
-            hunt.message = spotify_message(err) if isinstance(err, SpotifyError) else f"A busca de músicas novas falhou ({err}). Tente de novo."
+            hunt.message = (
+                spotify_message(err) if isinstance(err, SpotifyError)
+                else f"A busca de músicas novas falhou ({err}). Tente de novo."
+            )
+        except UserError as err:
+            hunt.status = "error"
+            hunt.message = str(err)
         except SystemExit as exc:
             hunt.status = "error"
             hunt.message = str(exc.code)
@@ -370,10 +415,11 @@ class App:
         finally:
             discovery.matches.save()
 
-    def _seed_artists(self, sp: Spotify) -> list[str]:
-        """Artistas das suas playlists de música: ponto de partida da toca do coelho."""
-        if not self._seeds:
-            ids = load_state().get("playlists", {})
+    @staticmethod
+    def _seed_artists(user: Profile, sp: Spotify) -> list[str]:
+        """Artistas das playlists de música da pessoa: ponto de partida da toca do coelho."""
+        if not user.seeds:
+            ids = load_state(user.paths.state).get("playlists", {})
             names: dict[str, None] = {}
             for spec in load_playlists()["playlists"]:
                 if playlist_kind(spec) == "music" and ids.get(spec["name"]):
@@ -381,13 +427,13 @@ class App:
                         for artist in item.get("artists", [])[:1]:
                             if artist["name"] != "Various Artists":
                                 names[artist["name"]] = None
-            self._seeds = list(names)
-        if not self._seeds:
-            raise UserError("Crie suas playlists primeiro ou digite um artista para começar.")
-        return self._seeds
+            user.seeds = list(names)
+        if not user.seeds:
+            raise UserError("Digite um artista para começar, ou crie suas playlists na estante.")
+        return user.seeds
 
-    def save_hunt(self) -> dict:
-        hunt = self._hunt
+    def save_hunt(self, user: Profile) -> dict:
+        hunt = user.hunt
         if not hunt or hunt.kind != "sense" or not hunt.finds:
             raise UserError("Gere uma sensação antes de salvar.")
         spec = hunt.spec or {}
@@ -400,37 +446,39 @@ class App:
             "description": f"{spec.get('description', '')} {rhythm}".strip(),
             "public": False,
         }
-        sp = self.spotify()
-        state = load_state()
+        sp = self.spotify(user)
+        state = load_state(user.paths.state)
         playlist_id = ensure_playlist(sp, playlist, state, owned_playlists(sp))
         sp.replace_items(playlist_id, [find.uri for find in hunt.finds])
         return {"message": f"Salva como {playlist['name']}.", "uri": f"spotify:playlist:{playlist_id}"}
 
-    def blocked_artists(self) -> dict:
-        return {"artists": load_blocked()}
+    @staticmethod
+    def blocked_artists(user: Profile) -> dict:
+        return {"artists": load_blocked(user.paths.blocked)}
 
-    def set_blocked(self, body: dict) -> dict:
+    def set_blocked(self, user: Profile, body: dict) -> dict:
         artist = " ".join(str(body.get("artist") or "").split())
         if not artist:
             raise UserError("Diga qual artista.")
-        names = load_blocked()
+        names = load_blocked(user.paths.blocked)
         key = curation.normalize(artist)
         if body.get("blocked", True):
             if key not in discovery.blocked_set(names):
                 names.append(artist)
-            self.blocked.add(key)
-            self._drop_artist_from_hunt(key)
-            message = f"{artist} não aparece mais nas descobertas."
+            user.blocked.add(key)
+            self._drop_artist_from_hunt(user, key)
+            message = f"{artist} não aparece mais nas suas descobertas."
         else:
             names = [name for name in names if curation.normalize(name) != key]
-            self.blocked.discard(key)
+            user.blocked.discard(key)
             message = f"{artist} pode aparecer de novo."
-        save_blocked(names)
-        return {"message": message, "artists": load_blocked()}
+        save_blocked(names, user.paths.blocked)
+        return {"message": message, "artists": load_blocked(user.paths.blocked)}
 
-    def _drop_artist_from_hunt(self, key: str) -> None:
+    @staticmethod
+    def _drop_artist_from_hunt(user: Profile, key: str) -> None:
         """Tira o artista recém-bloqueado do resultado que está na tela."""
-        hunt = self._hunt
+        hunt = user.hunt
         if not hunt:
             return
 
@@ -442,12 +490,12 @@ class App:
             chain["finds"] = [find for find in chain["finds"] if keep(find)]
         hunt.chains = [chain for chain in hunt.chains if chain["finds"]]
 
-    def keep_finds(self, body: dict) -> dict:
+    def keep_finds(self, user: Profile, body: dict) -> dict:
         uris = [uri for uri in body.get("uris") or [] if isinstance(uri, str) and uri.startswith("spotify:track:")]
         if not uris:
             raise UserError("Nada para guardar.")
-        sp = self.spotify()
-        state = load_state()
+        sp = self.spotify(user)
+        state = load_state(user.paths.state)
         playlist_id = ensure_playlist(sp, FINDS_PLAYLIST, state, owned_playlists(sp))
         existing = {item["uri"] for item in sp.playlist_items(playlist_id)}
         fresh = [uri for uri in dict.fromkeys(uris) if uri not in existing]
@@ -464,46 +512,57 @@ class App:
 
     # Edição
 
-    def add_item(self, name: str, body: dict) -> dict:
+    def add_item(self, user: Profile, name: str, body: dict) -> dict:
         entry, uri = body.get("entry", "").strip(), body.get("uri", "")
         if not entry or not uri.startswith("spotify:"):
             raise UserError("Escolha um item da busca.")
-        config = load_playlists()
-        spec = add_to_config(config, name, entry)
-        state = load_state()
+        config_data = load_playlists()
+        spec = find_spec(config_data, name)
+        state = load_state(user.paths.state)
+        playlist_id = state.get("playlists", {}).get(name)
+        if not user.is_owner:
+            # Amigos mexem só na própria cópia da playlist; a seleção base é do dono.
+            if playlist_kind(spec) != "music":
+                raise UserError("Só o dono da sala muda os programas e as misturas.", 403)
+            if not playlist_id:
+                raise UserError(f"Crie {name} no seu Spotify primeiro.")
+            self.spotify(user).add_items(playlist_id, [uri])
+            return {"message": f"Adicionada à sua {name}."}
+        add_to_config(config_data, name, entry)
         if playlist_kind(spec) == "podcasts":
             state.setdefault("shows", {})[entry] = uri.rsplit(":", 1)[-1]
             message = f"{entry} entra na {name} a partir da próxima atualização."
         else:
-            playlist_id = state.get("playlists", {}).get(name)
             if playlist_id:
-                self.spotify().add_items(playlist_id, [uri])
+                self.spotify(user).add_items(playlist_id, [uri])
             message = f"Adicionada a {name}."
-        save_playlists(config)
+        save_playlists(config_data)
         save_state(state)
         return {"message": message}
 
-    def start_job(self, body: dict) -> dict:
+    def start_job(self, user: Profile, body: dict) -> dict:
         name = body.get("playlist", "")
         find_spec(load_playlists(), name)
         dry_run = bool(body.get("dry_run"))
-        sp = self.spotify()
-        with self._job_lock:
-            if self._job and self._job.status == "running":
-                raise UserError("Já tem uma atualização em andamento.", 409)
-            self._job = job = Job(f"{'Prévia de' if dry_run else 'Atualizando'} {name}", dry_run)
-        threading.Thread(target=self._run_job, args=(job, sp, name), daemon=True).start()
+        sp = self.spotify(user)
+        with user.lock:
+            if user.job and user.job.status == "running":
+                raise UserError("Já tem uma atualização sua em andamento.", 409)
+            user.job = job = Job(f"{'Prévia de' if dry_run else 'Atualizando'} {name}", dry_run)
+        threading.Thread(target=self._run_job, args=(job, sp, user, name), daemon=True).start()
         return job.snapshot()
 
-    def current_job(self) -> dict | None:
-        return self._job.snapshot() if self._job else None
+    @staticmethod
+    def current_job(user: Profile) -> dict | None:
+        return user.job.snapshot() if user.job else None
 
-    def _run_job(self, job: Job, sp: Spotify, name: str) -> None:
+    @staticmethod
+    def _run_job(job: Job, sp: Spotify, user: Profile, name: str) -> None:
         handler = JobLogHandler(job)
         logger = logging.getLogger("spotify_assistant")
         logger.addHandler(handler)
         try:
-            run(sp, load_playlists(), load_state(), only=[name], dry_run=job.dry_run)
+            run(sp, load_playlists(), load_state(user.paths.state), only=[name], dry_run=job.dry_run)
             job.status = "done"
         except SystemExit as exc:
             job.lines.append(str(exc.code))
@@ -556,21 +615,63 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args) -> None:
         pass
 
+    # Quem está pedindo
+
+    def _cookie(self) -> str | None:
+        jar = http.cookies.SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie", ""))
+        except http.cookies.CookieError:
+            return None
+        morsel = jar.get(COOKIE_NAME)
+        return morsel.value if morsel else None
+
+    def _user(self) -> Profile:
+        user_id = self.server.app.sessions.user(self._cookie())
+        if not user_id:
+            raise UserError("Entre com o seu Spotify para continuar.", 401, login=True)
+        return self.server.app.profile(user_id)
+
+    def _host(self) -> str:
+        """Endereço que o navegador usou. Túneis às vezes reescrevem o Host e mandam o original aqui."""
+        forwarded = self.headers.get("X-Forwarded-Host", "").split(",")[0].strip()
+        return forwarded or self.headers.get("Host", "")
+
+    def _is_public(self) -> bool:
+        return bool(self.server.public_host) and self._host() == self.server.public_host
+
+    def _is_https(self) -> bool:
+        return self.headers.get("X-Forwarded-Proto") == "https" or self._is_public()
+
+    def _redirect_uri(self) -> str:
+        settings = self.server.app.settings
+        return f"{settings.public_url}/callback" if self._is_public() else settings.redirect_uri
+
+    def _session_cookie(self, value: str, max_age: int) -> str:
+        cookie = f"{COOKIE_NAME}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax"
+        return cookie + "; Secure" if self._is_https() else cookie
+
+    # Despacho
+
     def _handle(self, method: str) -> None:
-        # Bloqueia DNS rebinding e pedidos de outros sites para a API local.
-        if self.headers.get("Host") not in self.server.allowed_hosts:
+        # Bloqueia DNS rebinding e pedidos de outros sites.
+        if self._host() not in self.server.allowed_hosts:
             self._send_json({"error": "Host não permitido."}, 403)
             return
         url = urllib.parse.urlsplit(self.path)
         if method == "GET" and not url.path.startswith("/api/"):
             self._serve_page(url)
             return
+        # JSON obrigatório: outro site não consegue mandar isso sem a permissão (CORS) que nunca damos.
         if method == "POST" and self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
             self._send_json({"error": "Envie JSON."}, 415)
             return
         try:
             body = self._read_json() if method == "POST" else {}
             query = dict(urllib.parse.parse_qsl(url.query))
+            if method == "POST" and url.path == "/api/logout":
+                self._logout()
+                return
             self._send_json(self._route(method, url.path, query, body))
         except UserError as err:
             self._send_json({"error": str(err), "login": err.login}, err.status)
@@ -578,8 +679,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": spotify_message(err)}, 502)
         except DeezerError as err:
             self._send_json({"error": f"A busca de músicas novas falhou ({err}). Tente de novo."}, 502)
-        except SystemExit as exc:  # sessão expirou durante a renovação do token
-            self.server.app.reset_session()
+        except SystemExit as exc:  # o Spotify da pessoa não aceita mais o token: entrar de novo
+            user_id = self.server.app.sessions.user(self._cookie())
+            if user_id:
+                self.server.app.forget(user_id)
+            self.server.app.sessions.end(self._cookie())
             self._send_json({"error": str(exc.code), "login": True}, 401)
         except Exception:
             log.exception("Erro no painel")
@@ -587,61 +691,81 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _route(self, method: str, path: str, query: dict[str, str], body: dict) -> Any:
         app = self.server.app
-        if method == "GET" and path == "/api/overview":
-            return app.overview()
-        if method == "GET" and path == "/api/player":
-            return app.player()
-        if method == "POST" and path == "/api/player":
-            return app.player_action(body)
-        if method == "GET" and path == "/api/search":
-            return app.search(query.get("q", ""), query.get("kind", "track"))
-        if method == "POST" and path == "/api/jobs":
-            return app.start_job(body)
-        if method == "GET" and path == "/api/jobs/current":
-            return app.current_job()
         if method == "GET" and path == "/api/sensations":
             return app.sensations()
+        user = self._user()
+        if method == "GET" and path == "/api/overview":
+            return app.overview(user)
+        if method == "GET" and path == "/api/player":
+            return app.player(user)
+        if method == "POST" and path == "/api/player":
+            return app.player_action(user, body)
+        if method == "GET" and path == "/api/search":
+            return app.search(user, query.get("q", ""), query.get("kind", "track"))
+        if method == "POST" and path == "/api/jobs":
+            return app.start_job(user, body)
+        if method == "GET" and path == "/api/jobs/current":
+            return app.current_job(user)
         if method == "POST" and path == "/api/hunts":
-            return app.start_hunt(body)
+            return app.start_hunt(user, body)
         if method == "GET" and path == "/api/hunts/current":
-            return app.current_hunt()
+            return app.current_hunt(user)
         if method == "POST" and path == "/api/hunts/save":
-            return app.save_hunt()
+            return app.save_hunt(user)
         if method == "GET" and path == "/api/blocked":
-            return app.blocked_artists()
+            return app.blocked_artists(user)
         if method == "POST" and path == "/api/blocked":
-            return app.set_blocked(body)
+            return app.set_blocked(user, body)
         if method == "POST" and path == "/api/finds/keep":
-            return app.keep_finds(body)
+            return app.keep_finds(user, body)
         if match := PLAYLIST_PATH.fullmatch(path):
             name = urllib.parse.unquote(match["name"])
             if method == "GET" and not match["items"]:
-                return app.playlist(name)
+                return app.playlist(user, name)
             if method == "POST" and match["items"]:
-                return app.add_item(name, body)
+                return app.add_item(user, name, body)
         raise UserError("Endereço não encontrado.", 404)
+
+    def _logout(self) -> None:
+        self.server.app.sessions.end(self._cookie())
+        self._send_json({"ok": True}, headers={"Set-Cookie": self._session_cookie("", 0)})
 
     def _serve_page(self, url: urllib.parse.SplitResult) -> None:
         app = self.server.app
         if url.path == "/login":
-            self._redirect(app.login_url())
+            self._redirect(app.login_url(self._redirect_uri()))
             return
         if url.path == "/callback":
-            try:
-                app.finish_login(dict(urllib.parse.parse_qsl(url.query)))
-            except SystemExit as exc:
-                self._send_text(f"{exc.code} Volte para http://{self.headers['Host']}/", 400)
-                return
-            except (UserError, SpotifyError) as err:
-                self._send_text(f"Não foi possível conectar: {err} Volte para http://{self.headers['Host']}/", 400)
-                return
-            self._redirect("/")
+            self._finish_login(dict(urllib.parse.parse_qsl(url.query)))
             return
         file = (STATIC_DIR / ("index.html" if url.path == "/" else url.path.lstrip("/"))).resolve()
         if file.parent != STATIC_DIR or file.suffix not in CONTENT_TYPES or not file.is_file():
             self._send_text("Não encontrado.", 404)
             return
         self._send(200, CONTENT_TYPES[file.suffix], file.read_bytes())
+
+    def _finish_login(self, params: dict[str, str]) -> None:
+        app = self.server.app
+        try:
+            person = app.finish_login(params)
+        except accounts.NotInvited:
+            owner = config.owner_id()
+            who = accounts.display_name(owner) if owner else "o dono da sala"
+            self._send_message_page(
+                "Sua conta ainda não foi liberada",
+                f"A Spotify só deixa entrar quem foi convidado. Peça para {who} adicionar o e-mail da sua conta "
+                "do Spotify em User Management, no Spotify for Developers. Depois é só entrar de novo.",
+                403,
+            )
+            return
+        except SystemExit as exc:
+            self._send_message_page("Não deu para entrar", str(exc.code), 400)
+            return
+        except (UserError, SpotifyError) as err:
+            self._send_message_page("Não deu para entrar", str(err), 400)
+            return
+        token = app.sessions.create(person.id)
+        self._redirect("/", headers={"Set-Cookie": self._session_cookie(token, accounts.SESSION_DAYS * 86400)})
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -652,23 +776,39 @@ class Handler(http.server.BaseHTTPRequestHandler):
             raise UserError("JSON inválido.")
         return data
 
-    def _redirect(self, location: str) -> None:
+    def _redirect(self, location: str, headers: dict[str, str] | None = None) -> None:
         self.send_response(302)
         self.send_header("Location", location)
         self.send_header("Content-Length", "0")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
 
-    def _send_json(self, payload: Any, status: int = 200) -> None:
-        self._send(status, "application/json; charset=utf-8", json.dumps(payload, ensure_ascii=False).encode())
+    def _send_message_page(self, title: str, message: str, status: int) -> None:
+        page = (
+            '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f"<title>{html.escape(title)}</title><link rel=\"stylesheet\" href=\"/app.css\"></head>"
+            f'<body><section class="gate"><h1 class="gate-title">{html.escape(title)}</h1>'
+            f'<p class="gate-text">{html.escape(message)}</p>'
+            '<a class="play-button" href="/">Voltar para a sala</a></section></body></html>'
+        )
+        self._send(status, CONTENT_TYPES[".html"], page.encode())
+
+    def _send_json(self, payload: Any, status: int = 200, headers: dict[str, str] | None = None) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode()
+        self._send(status, "application/json; charset=utf-8", body, headers)
 
     def _send_text(self, text: str, status: int) -> None:
         self._send(status, "text/plain; charset=utf-8", text.encode())
 
-    def _send(self, status: int, content_type: str, body: bytes) -> None:
+    def _send(self, status: int, content_type: str, body: bytes, headers: dict[str, str] | None = None) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -682,10 +822,12 @@ class DashboardServer(http.server.ThreadingHTTPServer):
         super().__init__(address, Handler)
         self.app = app
         port = self.server_address[1]
-        self.allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        self.public_host = urllib.parse.urlsplit(app.settings.public_url).netloc
+        self.allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"} | ({self.public_host} - {""})
 
 
 def serve(settings: Settings, open_browser: bool = True) -> None:
+    accounts.migrate_legacy(settings)
     target = urllib.parse.urlsplit(settings.redirect_uri)
     host, port = target.hostname or "127.0.0.1", target.port or 8888
     url = f"http://{host}:{port}/"
@@ -699,6 +841,8 @@ def serve(settings: Settings, open_browser: bool = True) -> None:
         return
     threading.Thread(target=app.schedule, daemon=True).start()  # o PowerShell leva ~1s; já deixa pronto
     log.info("Painel aberto em %s  (Ctrl+C ou feche esta janela para encerrar)", url)
+    if settings.public_url:
+        log.info("Endereço para os amigos: %s", settings.public_url)
     if open_browser:
         webbrowser.open(url)
     with server:

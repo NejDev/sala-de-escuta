@@ -144,7 +144,7 @@ function showGate(message) {
   document.body.classList.add("is-gated");
   $("#gate").hidden = false;
   if (message && message.includes("expirou")) {
-    $("#gate-text").textContent = "Sua sessão do Spotify expirou. Conecte de novo para continuar.";
+    $("#gate-text").textContent = "Sua sessão do Spotify expirou. Entre de novo para continuar.";
   }
 }
 
@@ -162,7 +162,28 @@ function colorOf(playlist) {
 async function loadOverview() {
   state.overview = await api("/api/overview");
   renderShelf();
+  renderAccount();
   if (state.view === "playlist" && current()) renderSleeve();
+}
+
+/** Quem está na sala agora, e o botão de sair (cada amigo entra com o próprio Spotify). */
+function renderAccount() {
+  const me = state.overview?.me;
+  if (!me) return;
+  $("#account").replaceChildren(
+    h("span", { class: "account-name", title: me.is_owner ? "Dono da sala" : null }, me.name),
+    h("button", { class: "text-button", type: "button", onclick: logout }, "Sair"),
+  );
+}
+
+async function logout() {
+  try {
+    await api("/api/logout", {});
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  location.reload();
 }
 
 /** Abre uma playlist pelo nome ou uma das telas de VIEWS pela chave. */
@@ -270,14 +291,18 @@ function renderSleeve() {
     ? h("img", { class: "cover", src: playlist.image, alt: `Capa de ${playlist.name}` })
     : h("div", { class: "cover cover-empty", "aria-hidden": "true" }, playlist.name.charAt(0));
 
+  const isOwner = Boolean(state.overview.me?.is_owner);
+  const refresh = !playlist.uri ? "Criar no meu Spotify"
+    : playlist.kind === "podcasts" ? "Atualizar agora" : "Refazer seleção";
+  // Os programas da Tech Radar são escolhidos pelo dono; amigos adicionam faixas só na própria cópia.
+  const canAdd = playlist.uri && (playlist.kind === "music" || (playlist.kind === "podcasts" && isOwner));
   const actions = h("div", { class: "actions" },
     h("button", { class: "play-button", type: "button", disabled: !playlist.uri, onclick: () => play(playlist.uri) },
       playIcon(), "Tocar"),
     playlist.uri && h("a", { class: "ghost-button", href: playlist.uri }, "Abrir no app"),
-    h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) },
-      playlist.kind === "podcasts" ? "Atualizar agora" : "Refazer seleção"),
+    h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refresh),
     h("button", { class: "text-button", type: "button", onclick: () => startJob(true) }, "Ver prévia"),
-    playlist.kind !== "mix" && h("button", {
+    canAdd && h("button", {
       class: "text-button",
       type: "button",
       "aria-expanded": String(state.addingOpen),
@@ -303,9 +328,10 @@ function renderTracks() {
   }
   const items = state.detail.items;
   if (!items.length) {
-    list.replaceChildren(h("li", { class: "tracks-empty" }, playlist.kind === "podcasts"
-      ? "Nenhum episódio novo nos últimos dias. Use “Atualizar agora” para procurar de novo."
-      : "Esta playlist está vazia. Use “Refazer seleção” para montá-la."));
+    let message = "Esta playlist está vazia. Use “Refazer seleção” para montá-la.";
+    if (!playlist.uri) message = "Esta playlist ainda não existe no seu Spotify. Use “Criar no meu Spotify” para montar a sua.";
+    else if (playlist.kind === "podcasts") message = "Nenhum episódio novo nos últimos dias. Use “Atualizar agora” para procurar de novo.";
+    list.replaceChildren(h("li", { class: "tracks-empty" }, message));
     return;
   }
   list.replaceChildren(...items.map((item, index) => {
@@ -937,6 +963,16 @@ async function refreshPlayer() {
   renderPlayer();
 }
 
+/** Consulta o player sem desperdício: 5 s tocando, 15 s parado, nada com a aba escondida. */
+function schedulePlayerPoll() {
+  clearTimeout(state.pollTimer);
+  const delay = state.player?.is_playing ? 5000 : 15000;
+  state.pollTimer = setTimeout(async () => {
+    if (!document.hidden) await refreshPlayer();
+    schedulePlayerPoll();
+  }, delay);
+}
+
 function refreshPlayerSoon(delay = 400) {
   clearTimeout(state.refreshTimer);
   state.refreshTimer = setTimeout(refreshPlayer, delay);
@@ -1136,7 +1172,7 @@ async function init() {
   }
   // pollHunt retoma uma busca que estava rodando quando a página foi recarregada.
   await Promise.all([go(state.initialKey), refreshPlayer(), pollHunt()]);
-  setInterval(() => { if (!document.hidden) refreshPlayer(); }, 5000);
+  schedulePlayerPoll();
   setInterval(tick, 500);
 }
 
