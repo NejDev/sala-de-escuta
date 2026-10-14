@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import auth, config, dashboard
+from spotify_assistant import auth, config, dashboard, i18n
 from spotify_assistant.config import Settings
 
 CONFIG = {
@@ -33,23 +33,39 @@ TRACK = {
 class FakeSpotify:
     def __init__(self):
         self.added = []
+        self.created = []
+        self.replaced = []
 
     def me(self):
         return {"id": "paulo", "display_name": "Nej"}
 
     def my_playlists(self):
-        yield {"id": "pl-jazz", "uri": "spotify:playlist:pl-jazz", "images": [{"url": "mosaic", "width": None}],
-               "items": {"total": 1}, "owner": {"id": "paulo"}}
+        yield {"id": "pl-jazz", "name": "Jazz", "uri": "spotify:playlist:pl-jazz",
+               "images": [{"url": "mosaic", "width": None}], "items": {"total": 1}, "owner": {"id": "paulo"}}
         yield {"id": "anamix", "name": "Mix da Ana", "uri": "spotify:playlist:anamix", "images": [],
                "items": {"total": 3}, "owner": {"id": "ana"}, "description": "S&#x27;ó as boas"}
         yield {"id": "seguida", "name": "Top Brasil", "uri": "spotify:playlist:seguida", "images": [],
                "items": {"total": 50}, "owner": {"id": "spotify"}}
+        for number, (name, _) in enumerate(self.created, start=1):
+            yield {"id": f"new{number}", "name": name, "uri": f"spotify:playlist:new{number}", "images": [],
+                   "items": {"total": 0}, "owner": {"id": "paulo"}}
 
     def playlist_items(self, playlist_id):
         return [TRACK]
 
     def add_items(self, playlist_id, uris):
         self.added.append((playlist_id, uris))
+
+    def set_repeat(self, mode):
+        self.repeat = mode
+
+    def create_playlist(self, name, description, public):
+        self.created.append((name, description))
+        number = len(self.created)
+        return {"id": f"new{number}", "uri": f"spotify:playlist:new{number}"}
+
+    def replace_items(self, playlist_id, uris):
+        self.replaced.append((playlist_id, uris))
 
     def search(self, query, kind):
         return [TRACK]
@@ -75,6 +91,17 @@ class HelpersTest(unittest.TestCase):
 
 
 class PauseMessageTest(unittest.TestCase):
+    def setUp(self):
+        i18n.use("pt")
+        self.addCleanup(i18n.use, i18n.DEFAULT)
+
+    def test_in_english_too(self):
+        from spotify_assistant.api import SpotifyError
+
+        i18n.use("en")
+        message = dashboard.spotify_message(SpotifyError(429, "x", retry_after=3600, family="search"))
+        self.assertRegex(message, r"paused this app's searches.* around \d{1,2}:\d\d [AP]M (today|tomorrow)\.")
+
     def test_says_what_is_paused_and_when_it_comes_back(self):
         from spotify_assistant.api import SpotifyError
 
@@ -105,7 +132,7 @@ class AddToConfigTest(unittest.TestCase):
 
 
 class ServerTest(unittest.TestCase):
-    """Servidor de verdade com duas pessoas: o dono (paulo) e um amigo (ana)."""
+    """A real server with two people: the owner (paulo) and a friend (ana)."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -118,13 +145,13 @@ class ServerTest(unittest.TestCase):
             folder.mkdir(parents=True)
             (folder / "token.json").write_text(json.dumps(token), encoding="utf-8")
             (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
-            (folder / "perfil.json").write_text(json.dumps({"name": user_id.title()}), encoding="utf-8")
+            (folder / "profile.json").write_text(json.dumps({"name": user_id.title()}), encoding="utf-8")
         (data / "owner.txt").write_text("paulo", encoding="utf-8")
         patches = [
             mock.patch.object(config, "PLAYLISTS_FILE", data / "playlists.json"),
             mock.patch.object(config, "DATA_DIR", data),
             mock.patch.object(dashboard, "read_schedule", return_value=None),
-            # Independe de pausas reais da Spotify registradas nesta máquina.
+            # Unaffected by real Spotify pauses recorded on this machine.
             mock.patch.object(dashboard.gate, "remaining", return_value=0),
         ]
         for patcher in patches:
@@ -146,7 +173,8 @@ class ServerTest(unittest.TestCase):
         data = json.dumps(body).encode() if body is not None else None
         headers = dict(headers or {})
         if as_user:
-            headers.setdefault("Cookie", f"sala={self.cookies[as_user]}")
+            # The panel's text is checked in Portuguese; test_language_choice covers English.
+            headers.setdefault("Cookie", f"sala={self.cookies[as_user]}; lang=pt")
         request = urllib.request.Request(self.base + path, data=data, headers=headers)
         if body is not None and "Content-Type" not in headers:
             request.add_header("Content-Type", "application/json")
@@ -180,14 +208,14 @@ class ServerTest(unittest.TestCase):
         jazz = data["playlists"][1]
         self.assertEqual((jazz["uri"], jazz["image"], jazz["total"], jazz["color"]),
                          ("spotify:playlist:pl-jazz", "mosaic", 1, "#D4A84B"))
-        self.assertEqual(data["playlists"][0]["uri"], None)  # ainda não criada
+        self.assertEqual(data["playlists"][0]["uri"], None)  # not created yet
         self.assertEqual(data["playlists"][2]["sources"], ["Jazz"])
         friend = json.loads(self.request("/api/overview", as_user="ana")[1])
         self.assertEqual(friend["me"], {"id": "ana", "name": "Ana", "is_owner": False})
 
     def test_friend_sees_only_own_playlists(self):
         friend = json.loads(self.request("/api/overview", as_user="ana")[1])
-        # Nada da estante do dono (Tech, Jazz, Mix), nem playlists só seguidas: só as que ela criou.
+        # Nothing from the owner's shelf (Tech, Jazz, Mix), and no merely followed playlists: only the ones she created.
         self.assertEqual([p["name"] for p in friend["playlists"]], ["Mix da Ana"])
         mix = friend["playlists"][0]
         self.assertEqual((mix["key"], mix["kind"], mix["total"], mix["description"]),
@@ -215,7 +243,7 @@ class ServerTest(unittest.TestCase):
         status, body = self.request("/api/playlists/id%3Aanamix/items", {"uri": "spotify:track:2", "entry": "X - Y"}, as_user="ana")
         self.assertEqual(status, 200, body)
         self.assertEqual(self.fake.added, [("anamix", ["spotify:track:2"])])
-        # A estante curada do dono não existe para ela: nem ver, nem editar, nem montar.
+        # The owner's curated shelf doesn't exist for her: she can't view, edit, or build it.
         self.assertEqual(self.request("/api/playlists/Jazz", as_user="ana")[0], 404)
         self.assertEqual(self.request("/api/playlists/Jazz/items", {"uri": "spotify:track:2", "entry": "X - Y"}, as_user="ana")[0], 404)
         self.assertEqual(self.request("/api/jobs", {"playlist": "Jazz"}, as_user="ana")[0], 404)
@@ -265,9 +293,9 @@ class ServerTest(unittest.TestCase):
         status, body = self.request("/api/blocked", {"artist": "Stryper", "blocked": True}, as_user="ana")
         self.assertEqual(status, 200, body)
         self.assertEqual(json.loads(body)["artists"], ["Stryper"])
-        self.assertEqual([f.uri for f in ana.hunt.finds], ["spotify:track:2"])  # some na hora
+        self.assertEqual([f.uri for f in ana.hunt.finds], ["spotify:track:2"])  # gone right away
         self.assertIn("stryper", ana.blocked)
-        self.assertEqual(json.loads(self.request("/api/blocked")[1])["artists"], [])  # o dono não foi afetado
+        self.assertEqual(json.loads(self.request("/api/blocked")[1])["artists"], [])  # the owner is unaffected
 
         status, body = self.request("/api/blocked", {"artist": "stryper", "blocked": False}, as_user="ana")
         self.assertEqual(json.loads(body)["artists"], [])
@@ -277,7 +305,7 @@ class ServerTest(unittest.TestCase):
         status, _ = self.request("/api/logout", {}, as_user="ana")
         self.assertEqual(status, 200)
         self.assertEqual(self.request("/api/overview", as_user="ana")[0], 401)
-        self.assertEqual(self.request("/api/overview")[0], 200)  # o dono continua dentro
+        self.assertEqual(self.request("/api/overview")[0], 200)  # the owner stays logged in
 
     def test_uninvited_account_gets_an_explanation(self):
         app = self.server.app
@@ -294,8 +322,8 @@ class ServerTest(unittest.TestCase):
         def start(body):
             return self.request("/api/hunts", body)[0]
 
-        # Não dispara a busca de verdade (trocar threading.Thread derrubaria o próprio servidor de teste).
-        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda hunt, task: None)):
+        # Doesn't run the real search (patching threading.Thread would take down the test server itself).
+        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
             self.assertEqual(start({"kind": "news", "genre": ""}), 400)
             self.assertEqual(start({"kind": "news", "genre": "k-pop", "days": 3}), 400)
             self.assertEqual(start({"kind": "roulette", "min_fans": 5000, "max_fans": 1000}), 400)
@@ -314,6 +342,95 @@ class ServerTest(unittest.TestCase):
 
     def test_unknown_route(self):
         self.assertEqual(self.request("/api/nada")[0], 404)
+
+    def post(self, path, body, as_user="paulo"):
+        status, raw = self.request(path, body, as_user=as_user)
+        return status, json.loads(raw)
+
+    def test_repeat_takes_only_spotify_modes(self):
+        self.assertEqual(self.request("/api/player", {"action": "repeat", "value": "track"})[0], 200)
+        self.assertEqual(self.fake.repeat, "track")
+        self.assertEqual(self.request("/api/player", {"action": "repeat", "value": "always"})[0], 400)
+
+    def test_my_playlists_are_only_the_ones_you_own(self):
+        status, raw = self.request("/api/my-playlists", as_user="ana")
+        data = json.loads(raw)
+        self.assertEqual(status, 200)
+        self.assertEqual([p["id"] for p in data["playlists"]], ["anamix"])
+        self.assertEqual(data["finds"], "Achados da Sala")
+
+    def test_create_playlist_from_a_selection(self):
+        uris = ["spotify:track:1", "spotify:track:2", "spotify:track:1", "spotify:episode:9"]
+        status, data = self.post("/api/playlists/new", {"name": "  Minha   seleção ", "uris": uris})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.fake.created[0][0], "Minha seleção")
+        self.assertEqual(self.fake.replaced, [("new1", ["spotify:track:1", "spotify:track:2"])])
+        self.assertEqual(data["message"], "Playlist Minha seleção criada com 2 músicas.")
+
+    def test_same_name_asks_before_replacing(self):
+        body = {"name": "Mix da Ana", "uris": ["spotify:track:5"]}
+        status, data = self.post("/api/playlists/new", body, as_user="ana")
+        self.assertEqual((status, data.get("exists")), (409, True))
+        self.assertEqual(self.fake.replaced, [])
+        status, data = self.post("/api/playlists/new", {**body, "replace": True}, as_user="ana")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.fake.replaced, [("anamix", ["spotify:track:5"])])
+        self.assertEqual(self.fake.created, [])
+
+    def test_curated_names_stay_with_the_curation(self):
+        status, _ = self.post("/api/playlists/new", {"name": "Jazz", "uris": ["spotify:track:5"]})
+        self.assertEqual(status, 409)
+        self.assertEqual(self.fake.created, [])
+
+    def test_bad_selections_are_refused(self):
+        self.assertEqual(self.post("/api/playlists/new", {"name": "x", "uris": ["javascript:alert(1)"]})[0], 400)
+        self.assertEqual(self.post("/api/playlists/new", {"name": " ", "uris": ["spotify:track:1"]})[0], 400)
+        self.assertEqual(self.post("/api/playlists/add", {"playlist": "pl-jazz", "uris": []})[0], 400)
+
+    def test_add_skips_songs_already_there(self):
+        status, data = self.post("/api/playlists/add", {"playlist": "pl-jazz", "uris": ["spotify:track:1", "spotify:track:2"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(self.fake.added, [("pl-jazz", ["spotify:track:2"])])
+        self.assertEqual(data["message"], "1 música adicionada a Jazz. 1 já estava lá.")
+
+    def test_only_your_own_playlists_take_songs(self):
+        body = {"playlist": "anamix", "uris": ["spotify:track:2"]}
+        self.assertEqual(self.post("/api/playlists/add", body)[0], 403)
+        self.assertEqual(self.post("/api/playlists/add", {**body, "playlist": "seguida"}, as_user="ana")[0], 403)
+        self.assertEqual(self.post("/api/playlists/add", {**body, "playlist": "../x"})[0], 403)
+        self.assertEqual(self.fake.added, [])
+
+    def test_finds_playlist_is_created_once(self):
+        body = {"playlist": "finds", "uris": ["spotify:track:2"]}
+        self.assertEqual(self.post("/api/playlists/add", body)[0], 200)
+        self.assertEqual(self.post("/api/playlists/add", body)[0], 200)
+        self.assertEqual([name for name, _ in self.fake.created], ["Achados da Sala"])
+        state = json.loads((self.data / "users" / "paulo" / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["playlists"]["_finds"], "new1")
+
+    def test_sensations_come_in_the_chosen_language(self):
+        status, raw = self.request("/api/sensations", headers={"Cookie": "lang=en"}, as_user=None)
+        names = {s["id"]: s["name"] for s in json.loads(raw)["sensations"]}
+        self.assertEqual(names["deep-focus"], "Deep focus")
+        status, raw = self.request("/api/sensations")
+        names = {s["id"]: s["name"] for s in json.loads(raw)["sensations"]}
+        self.assertEqual(names["deep-focus"], "Foco profundo")
+
+
+    def test_language_choice(self):
+        """The lang cookie wins; without it, the browser's Accept-Language; otherwise English."""
+
+        session = f"sala={self.cookies['paulo']}"
+
+        def error(headers):
+            return json.loads(self.request("/api/nada", headers=headers, as_user=None)[1])["error"]
+
+        self.assertEqual(error({"Cookie": f"{session}; lang=pt"}), "Endereço não encontrado.")
+        self.assertEqual(error({"Cookie": f"{session}; lang=en", "Accept-Language": "pt-BR"}), "Address not found.")
+        self.assertEqual(error({"Cookie": session, "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8"}),
+                         "Endereço não encontrado.")
+        self.assertEqual(error({"Cookie": session, "Accept-Language": "fr-FR"}), "Address not found.")
+        self.assertEqual(error({"Accept-Language": "pt-BR"}), "Entre com o seu Spotify para continuar.")
 
 
 class AccountsTest(unittest.TestCase):
@@ -343,7 +460,7 @@ class AccountsTest(unittest.TestCase):
         owner = self.data / "users" / "paulo"
         self.assertEqual(config.owner_id(), "paulo")
         self.assertEqual(json.loads((owner / "state.json").read_text(encoding="utf-8")), {"playlists": {"Jazz": "pl"}})
-        self.assertTrue((owner / "token.json").exists() and (owner / "bloqueados.json").exists())
+        self.assertTrue((owner / "token.json").exists() and (owner / "blocked.json").exists())
         self.assertFalse((self.data / "token.json").exists())
         self.assertEqual(accounts.display_name("paulo"), "Nej")
 

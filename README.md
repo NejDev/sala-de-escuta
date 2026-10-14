@@ -1,165 +1,206 @@
-# Spotify Assistant
+Read in: English | [Português](README.pt-BR.md)
 
-Cria e mantém 5 playlists na sua conta:
+# Sala de escuta
 
-| Playlist | Conteúdo | Atualização |
+A listening room for Spotify: a web panel that runs on your PC, finds music you've never heard
+and plays it straight on your Spotify. You and up to four friends each sign in with your own account,
+in Portuguese or English.
+
+- **Sensations**: write what you're feeling (or pick a moment) and get songs at the right tempo.
+- **Discover**: a roulette of barely-played records from all over the world, and a rabbit hole that
+  hops from an artist you like toward lesser-known ones.
+- **New releases**: what just came out in a genre, only from artists of the size you choose.
+- **Keep what you like**: turn any selection into a playlist, or add a song to one of yours.
+- **Curated shelf** (owner): 5 playlists kept up to date, including a weekly podcast playlist.
+
+Python 3.12. Everything uses only the standard library, except measuring BPM in Sensations,
+which needs an MP3 decoder (`pip install -r requirements.txt`).
+
+## Run your own room
+
+Spotify only lets small apps work in **Development Mode**: up to 5 people (counting the owner),
+each one added by hand, and the account that owns the app must be Premium. More users require
+"extended quota", which Spotify only grants to registered organizations with at least 250k monthly
+users ([quota modes](https://developer.spotify.com/documentation/web-api/concepts/quota-modes)).
+So the way to share this project is for each person to run their own room:
+
+1. Create an app at [Spotify for Developers](https://developer.spotify.com/dashboard) (Web API).
+   Add `http://127.0.0.1:8888/callback` to its Redirect URIs.
+2. Copy `.env.example` to `.env` and fill in `SPOTIFY_CLIENT_ID`. No Client Secret: sign-in uses PKCE.
+3. `pip install -r requirements.txt`, then double-click `open-panel.cmd`
+   (or run `python -m spotify_assistant ui`).
+4. Sign in. The first person to sign in becomes the room's owner.
+
+## The panel
+
+The panel opens at http://127.0.0.1:8888 and stays up while the black window is open.
+The first visit shows a short tour with the mascot; **How it works** at the top opens it again.
+**PT / EN** switches the language for that person (the server's messages follow it).
+
+- **Shelf**: at the top, in two sections, "Playlists" and "Explore". Each playlist is a colored
+  spine, and the selected one becomes the panel's light.
+- **Player**: play, pause, skip, shuffle, repeat (off, all, this track), volume and progress.
+  Click a track to play from it. Works with Spotify open on your PC or phone (requires Premium).
+  The first time, click **Authorize on Spotify** in the bottom bar.
+- **Shortcuts**: space plays/pauses, ← → change tracks, 1–9 switch screens.
+
+### Sensations
+
+**Write what you're feeling** ("anger", "missing home", "ódio", "saudade de casa") or pick a
+ready-made moment. Free text doesn't use any paid AI:
+
+1. The phrase becomes the first search: lots of people name playlists after feelings.
+2. A local dictionary (`FEELINGS`, in `spotify_assistant/discovery.py`, Portuguese and English)
+   recognizes the feeling, sets the rhythm (anger: 125–185 BPM and high energy) and widens the search.
+3. If the phrase isn't in the dictionary ("Sunday morning"), the room listens to the previews,
+   finds the BPM and energy they have in common and keeps the songs that follow that pattern.
+
+For the ready-made moments (heavy workout, running, deep focus, party, rainy day...) the room looks
+for playlists people built for that moment, **listens to each track's 30 s preview and measures BPM
+and energy**, and keeps only what fits that sensation's range. **Artist fans** (at least / at most)
+narrow it to artists of the size you want.
+
+Why measure? Spotify stopped giving BPM to new apps, and the public catalogs' BPM is almost always
+zero. The meter (`spotify_assistant/tempo.py`) got 12 of 17 songs with a known BPM right, plus 2 at
+double/half tempo; treat the number as approximate.
+
+The moments live in `sensations.json` (name and description in both languages, BPM range, energy
+range from 0 to 1, color and the searches used as sources). Measurements are cached in
+`data/tempo-cache.json` so the same preview isn't heard twice.
+
+### Discover
+
+- **Roulette**: the mascot digs through a crate of records while drawing barely-played albums from
+  a random year and less popular tracks from playlists of genres from all over the world (zamrock,
+  enka, huayno, ethio jazz...). The genre list is `WORLD_GENRES`, in `spotify_assistant/discovery.py`.
+- **Rabbit hole**: starts from an artist (typed in or drawn from your playlists) and hops 4 times to
+  related artists, always among the lesser-known ones. Shows the whole path and the number of fans.
+
+Both take an optional genre (roulette) and the artist's size in fans (minimum and maximum). No free
+API says how many times a song was played; the artist's fan count is the measure available.
+
+### New releases
+
+Pick a genre (e.g. K-pop), the artist size and the period (7, 14, 30 or 90 days). The room gathers
+artists of that genre from playlists, filters them by fans, looks at each one's releases and shows the
+main track of each release, newest first. "Clean" versions of the same release are merged, and on
+soundtracks the artist's own track is used.
+
+### Keeping what you like
+
+Above every result:
+
+- **Create playlist**: everything that showed up becomes a playlist with the name you choose
+  (it comes filled in, e.g. "Sensation: Deep focus"). If you already have one with that name, the
+  room asks before replacing its songs.
+- **Add to a playlist**: sends everything to `Finds from the Sala` (created the first time) or to
+  any playlist of yours. Songs already there aren't repeated.
+
+Each song has its own **Add**, with the same choices. Playlists the room rebuilds by itself
+(the weekly podcasts and the mix) don't show up there, since anything added would be lost.
+
+Each song's ⓘ shows why it showed up (measured BPM and energy, the genre or year drawn, the hops in
+the rabbit hole, the release date) and has **Don't show again**: the artist disappears right away and
+never comes back in any discovery. The list is per person; to undo, use **Blocked artists** above the results.
+
+**Nothing religious**: discoveries discard tracks, albums and playlists with religious signs of any
+denomination (`RELIGIOUS_WORDS` in `spotify_assistant/discovery.py`).
+
+### Curated shelf (owner)
+
+| Playlist | Contents | Updates |
 |---|---|---|
-| Tech Radar BR | episódios recentes de podcasts tech PT-BR | semanal (automática) |
-| Midnight in Monaco | jazz refinado | `setup` |
-| Deep Focus — Lo-Fi | lo-fi para programar (embaralhada) | `setup` |
-| The Classical Room | clássica, do contemplativo ao grandioso | `setup` |
-| The Study Collection | jazz + lo-fi + clássica alternados | `setup` |
+| Tech Radar BR | recent episodes of Brazilian tech podcasts | weekly (automatic) |
+| Midnight in Monaco | refined jazz | `setup` |
+| Deep Focus — Lo-Fi | lo-fi for coding (shuffled) | `setup` |
+| The Classical Room | classical, from contemplative to grand | `setup` |
+| The Study Collection | jazz + lo-fi + classical, alternating | `setup` |
 
-Python 3.12. As playlists e o painel usam só a biblioteca padrão; medir BPM nas **Sensações**
-precisa de um decodificador de MP3:
+- **Update now / Redo selection** runs the curation with the log showing live; **See preview**
+  shows the result without changing anything.
+- **Add track / Follow another show** searches the catalog. The track goes into the playlist right
+  away and into `playlists.json`, so it survives the next `setup`. Songs added from a discovery to a
+  curated playlist are written to `playlists.json` too.
+- Spine colors are the `color` field of each playlist in `playlists.json`.
+
+### Cost
+
+Zero. The Spotify Web API and Deezer's public API are free (they only have request limits, which the
+panel respects), BPM is measured on your PC and free text is read locally.
+
+## A room for friends
+
+Each person signs in with their own Spotify and has their own player, discoveries, Finds, blocked
+artists and copies of the playlists ("Create in my Spotify"). Friends don't see each other's
+playlists or searches. The panel runs on the owner's PC and is made public with
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel), at a fixed address `https://<pc>.<network>.ts.net`.
+
+1. Set `SALA_PUBLIC_URL` in `.env` to the Funnel address (`tailscale funnel status` shows it).
+2. In the Spotify for Developers app → Settings, add `<SALA_PUBLIC_URL>/callback` to Redirect URIs.
+3. Under User Management, add each friend's name and Spotify account e-mail (5 people in total,
+   counting the owner).
+4. Send them the address. The player only works for people with Premium; discovering and saving work for everyone.
+
+The site is only up while the PC is on and the panel is open. To have the panel start on its own,
+hidden, every time you sign in to Windows:
 
 ```powershell
-pip install -r requirements.txt
+powershell -ExecutionPolicy Bypass -File .\scripts\start-with-windows.ps1           # turn on
+powershell -ExecutionPolicy Bypass -File .\scripts\start-with-windows.ps1 -Remove   # undo
 ```
 
-## Painel visual
+With it on, `open-panel.cmd` just opens the room in the browser. `weekly` updates the Tech Radar of
+everyone who created it.
 
-Dê dois cliques em `abrir-painel.cmd` (ou rode `python -m spotify_assistant ui`). O painel abre em
-http://127.0.0.1:8888 e fica no ar enquanto a janela preta estiver aberta.
-
-- **Estante**: no topo, em duas seções ("Suas playlists" e "Explorar"); cada playlist é uma lombada
-  colorida e a escolhida vira a cor do painel.
-- **Player**: tocar, pausar, pular, aleatório, volume e barra de progresso. Clique numa faixa para
-  tocar a partir dela. Funciona com o Spotify aberto no PC ou no celular (exige Premium).
-- **Atualizar agora / Refazer seleção**: roda a curadoria com o log aparecendo ao vivo.
-  **Ver prévia** mostra o resultado sem mexer em nada.
-- **Adicionar faixa / Acompanhar outro programa**: busca no catálogo. A faixa entra na playlist
-  na hora e também no `playlists.json`, para não sumir no próximo `setup`.
-- **Atalhos**: espaço toca/pausa, ← → trocam de faixa, 1–7 trocam de lombada.
-
-Na primeira vez, clique em **Autorizar no Spotify** na barra de baixo para liberar o controle do player.
-
-As cores das lombadas ficam no campo `color` de cada playlist no `playlists.json`.
-
-### Sensações
-
-**Escreva o que está sentindo** ("ódio", "saudade de casa", "chorando no banho") ou escolha um momento
-pronto. O texto livre não usa nenhuma IA paga:
-
-1. A frase vira a primeira busca: muita gente batiza playlists com sentimentos.
-2. Um dicionário local (`FEELINGS`, em `spotify_assistant/discovery.py`) reconhece o sentimento,
-   define o ritmo (ódio: 125–185 BPM e energia alta) e amplia a busca ("rage music", "metal pesado").
-3. Se a frase não estiver no dicionário ("domingo de manhã"), a sala ouve as prévias, descobre o
-   BPM e a energia que elas têm em comum e fica com as músicas que seguem esse padrão.
-
-Nos momentos prontos (treino pesado, corrida, foco profundo, festa, dia de chuva...) a sala busca
-playlists que pessoas montaram para esse momento no Deezer, **ouve a prévia de 30 s de cada faixa e
-mede BPM e energia**, e fica só com o que cabe na faixa daquela sensação. As músicas aparecem
-conforme são aprovadas; dá para tocar tudo direto no Spotify ou salvar como playlist
-`Sensação: <nome>` (sempre a mesma, atualizada a cada vez que você salvar).
-
-Por que medir? A Spotify parou de entregar BPM para apps novos e o BPM do Deezer quase sempre vem
-zerado. O medidor (`spotify_assistant/tempo.py`) acertou 12 de 17 músicas com BPM conhecido e
-outras 2 no dobro/metade do tempo; trate o número como aproximado.
-
-As sensações ficam em `sensacoes.json`: faixa de BPM, faixa de energia (0 a 1), cor e as buscas
-usadas como fonte. Medições ficam em `data/tempo-cache.json` para não ouvir a mesma prévia duas vezes.
-
-### Descobrir
-
-- **Roleta**: um bonequinho garimpa um caixote de discos enquanto sorteia álbuns pouco ouvidos de um ano qualquer e faixas menos populares de playlists
-  de gêneros do mundo todo (zamrock, enka, huayno, ethio jazz...). A lista de gêneros fica em
-  `WORLD_GENRES`, no `spotify_assistant/discovery.py`.
-- **Toca do coelho**: parte de um artista (digitado ou sorteado das suas playlists) e pula 4 vezes
-  para artistas relacionados, sempre entre os menos conhecidos. Mostra o caminho e o número de fãs.
-
-**Nada religioso**: a descoberta descarta faixas, álbuns e playlists com sinais religiosos de qualquer
-denominação (lista `RELIGIOUS_WORDS` em `spotify_assistant/discovery.py`). Uma playlist inteira é
-descartada quando várias faixas dela têm esses sinais.
-
-**Filtros**: na Roleta dá para escolher um gênero (opcional) e, na Roleta e na Toca do coelho, o
-tamanho do artista em fãs (mínimo e máximo). Nenhuma API gratuita informa quantas vezes uma música
-foi tocada; o número de fãs do artista é a medida disponível.
-
-### Novidades
-
-Escolha um gênero (ex.: K-pop), o tamanho do artista e o período (7, 14, 30 ou 90 dias). A sala junta
-artistas do gênero a partir de playlists, filtra pelo número de fãs, olha os lançamentos de cada um e
-mostra a faixa principal de cada lançamento, do mais novo para o mais antigo. Versões "clean" do mesmo
-lançamento são juntadas, e em trilhas sonoras entra a faixa do próprio artista.
-
-**Não mostrar mais**: no ⓘ de cada música há um botão para bloquear o artista. Ele some na hora e
-nunca mais aparece em Sensações ou Descobrir. A lista fica em `bloqueados.json`; para desfazer, use
-"Artistas bloqueados" acima dos resultados.
-
-**Guardar** manda a faixa para a playlist `Achados da Sala`, criada na primeira vez. O ⓘ de cada
-música mostra por que ela apareceu (BPM e energia medidos, gênero ou ano sorteado, de onde a toca partiu).
-
-### Custo
-
-Zero. A Spotify Web API e a API pública do Deezer são gratuitas (só têm limite de requisições, que o
-painel respeita), o BPM é medido no seu PC e o texto livre é interpretado localmente.
-
-## Sala para amigos
-
-Cada pessoa entra com o próprio Spotify e tem player, buscas, Achados, bloqueados e a própria cópia
-das playlists (botão "Criar no meu Spotify"). O painel roda no PC do dono e fica público pelo
-[Tailscale Funnel](https://tailscale.com/kb/1223/funnel), num endereço fixo `https://<pc>.<rede>.ts.net`.
-
-1. `SALA_PUBLIC_URL` no `.env` com o endereço do Funnel (`tailscale funnel status` mostra).
-2. No app do Spotify for Developers → Settings: adicione `<SALA_PUBLIC_URL>/callback` em Redirect URIs.
-3. Em User Management, adicione nome e e-mail da conta Spotify de cada amigo (limite de 5 pessoas,
-   contando o dono, no Development Mode).
-4. Mande o endereço para eles. O player só funciona para quem tem Premium; descobrir e salvar, para todos.
-
-O site só fica no ar com o PC ligado e o painel aberto. Para o painel abrir sozinho, escondido,
-toda vez que você entra no Windows:
+## Command line
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\iniciar-com-windows.ps1            # liga
-powershell -ExecutionPolicy Bypass -File .\scripts\iniciar-com-windows.ps1 -Remover   # desfaz
-```
-
-Com ele ligado, `abrir-painel.cmd` só abre a sala no navegador. A seleção base das playlists (`playlists.json`)
-é do dono; amigos adicionam faixas só nas próprias cópias. `weekly` atualiza a Tech Radar de todos que a criaram.
-
-## Linha de comando
-
-```powershell
-python -m spotify_assistant login            # abre o navegador para autorizar (uma vez só)
-python -m spotify_assistant check            # mostra a conta conectada
-python -m spotify_assistant setup --dry-run  # mostra o que seria criado, sem mexer em nada
-python -m spotify_assistant setup            # cria/recria as 5 playlists
+python -m spotify_assistant login            # signs in the owner (only once)
+python -m spotify_assistant check            # shows the owner and who's in the room
+python -m spotify_assistant setup --dry-run  # shows what would be created, without changing anything
+python -m spotify_assistant setup            # creates/recreates the 5 playlists
 python -m spotify_assistant setup --only "Midnight in Monaco"
-python -m spotify_assistant weekly           # atualiza só a Tech Radar BR
+python -m spotify_assistant weekly           # updates only Tech Radar BR
 ```
 
-Agendar a atualização semanal (segunda às 09:00; se o PC estiver desligado, roda quando ligar):
+`SALA_LANG` in `.env` (`en` or `pt`) sets the language of the command line and of the weekly task.
+
+Schedule the weekly update (Monday at 09:00; if the PC is off, it runs once it's turned on):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\agendar-semanal.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\agendar-semanal.ps1 -Dia Friday -Hora 18:30
+powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1 -Day Friday -Time 18:30
 ```
 
-## Personalizar
+## Customize
 
-Tudo está em `playlists.json`:
+Everything is in `playlists.json`:
 
-- `tracks`: `"Artista - Título"`. A busca ignora versões karaokê, lo-fi, de ninar, etc.
-- `artists`: pega as `per_artist` faixas mais relevantes de cada artista.
-- `podcasts.shows`: nome dos programas; `max_age_days` define o que conta como "recente".
-- `mix`: sorteia `per_source` faixas de cada playlist listada e alterna entre elas.
+- `tracks`: `"Artist - Title"`. The search skips karaoke, lo-fi, lullaby versions, etc.
+- `artists`: takes the `per_artist` most relevant tracks from each artist.
+- `podcasts.shows`: show names; `max_age_days` defines what counts as "recent".
+- `mix`: draws `per_source` tracks from each listed playlist and alternates between them.
 
-O que não for encontrado aparece como `não encontrado:` na saída. Basta ajustar o nome no JSON.
+Anything that isn't found shows up as `not found:` in the output. Just adjust the name in the JSON.
 
-## Arquivos locais
+Interface texts are in `spotify_assistant/static/i18n.js` (browser) and `spotify_assistant/i18n.py`
+(server); `tests/test_i18n.py` checks that both languages have the same keys.
 
-- `.env`: só o Client ID. O login usa PKCE, então **o Client Secret não é usado**.
-- `data/token.json`: seu token de acesso. Não compartilhe.
-- `data/state.json`: IDs das playlists/podcasts, para não duplicar.
-- `data/assistant.log`: histórico das execuções (inclusive as agendadas).
+## Local files (in `data/`, never committed)
 
-## Problemas comuns
+- `users/<id>/token.json`: each person's access token. Don't share it.
+- `users/<id>/state.json`, `blocked.json`, `profile.json`: playlist IDs, blocked artists and display name.
+- `owner.txt`, `sessions.json`: who owns the room and the browser sessions.
+- `tempo-cache.json`, `spotify-matches.json`, `spotify-pauses.json`: measured BPMs, tracks already
+  located on Spotify and Spotify's request pauses.
+- `assistant.log`: run history (including scheduled runs).
 
-- **403**: no Development Mode (regras de fev/2026), a conta dona do app precisa ser Premium e
-  seu e-mail precisa estar em *User Management* no app do Spotify for Developers.
-- **"sessão expirou"**: rode `python -m spotify_assistant login` de novo.
-- **"A Spotify pausou as buscas"**: o app fez pedidos demais e a Spotify suspendeu a busca por algumas
-  horas (player e playlists continuam funcionando). O painel respeita a pausa sozinho, mostra a hora
-  em que volta e guarda as músicas já localizadas para não buscar de novo. Evite deixar várias abas
-  do painel abertas: cada uma consulta o player.
+## Common problems
+
+- **403 / "Your account isn't allowed in yet"**: in Development Mode the account that owns the app
+  must be Premium and each person's e-mail must be under *User Management*.
+- **"Your Spotify session expired"**: sign in again (or `python -m spotify_assistant login` for the owner).
+- **"Spotify paused this app's searches"**: the app made too many requests and Spotify suspended
+  search for a few hours (the player and playlists keep working). The panel respects the pause, shows
+  when it comes back and keeps the songs it already found so it doesn't search them again. Avoid
+  leaving several panel tabs open: each one polls the player.

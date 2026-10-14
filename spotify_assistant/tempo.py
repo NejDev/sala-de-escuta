@@ -1,11 +1,11 @@
-"""Mede BPM e energia ouvindo a prévia de 30 s de uma faixa.
+"""Measures BPM and energy by listening to a track's 30 s preview.
 
-A Spotify não entrega mais BPM para apps novos, e o BPM do Deezer quase sempre
-vem zerado ou errado, então medimos nós mesmos. Sem numpy: envelope de ataques
-em duas bandas (graves e agudos) + autocorrelação, com preferência perceptual
-em torno de 120 BPM para reduzir erros de "metade/dobro".
+Spotify no longer provides BPM to new apps, and Deezer's BPM is almost always
+zero or wrong, so we measure it ourselves. No numpy: onset envelope
+in two bands (lows and highs) + autocorrelation, with a perceptual preference
+around 120 BPM to reduce "half/double" errors.
 
-Decodificar MP3 exige o pacote opcional `miniaudio` (pip install miniaudio).
+Decoding MP3 requires the optional `miniaudio` package (pip install miniaudio).
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ PREFERENCE_OCTAVES = 1.0
 @dataclass(frozen=True)
 class Analysis:
     bpm: float
-    confidence: float  # 0..1: quão marcado é o pulso
-    energy: float  # 0..1: volume + densidade de ataques
+    confidence: float  # 0..1: how pronounced the beat is
+    energy: float  # 0..1: loudness + onset density
 
 
 def available() -> bool:
@@ -50,12 +50,12 @@ def decode_mp3(data: bytes) -> Sequence[int]:
 
 
 def measure(mp3: bytes) -> Analysis | None:
-    """Decodifica e analisa. Função de módulo para rodar num ProcessPoolExecutor."""
+    """Decodes and analyzes. Module-level function so it can run in a ProcessPoolExecutor."""
     return analyze(decode_mp3(mp3))
 
 
 def analyze(samples: Sequence[int]) -> Analysis | None:
-    """None quando o áudio é curto ou silencioso demais para medir."""
+    """None when the audio is too short or too quiet to measure."""
     low_energy, high_energy, full_energy = _band_energies(samples)
     if len(full_energy) < FPS * 8 or max(full_energy) < 1e-7:
         return None
@@ -75,8 +75,8 @@ def _band_energies(samples: Sequence[int]) -> tuple[list[float], list[float], li
     count = 0
     for sample in samples:
         x = sample / 32768.0
-        low_state += alpha * (x - low_state)  # passa-baixa de 1 polo: bumbo e baixo
-        high = x - previous  # 1ª diferença realça agudos: caixa e chimbal
+        low_state += alpha * (x - low_state)  # 1-pole low-pass: kick drum and bass
+        high = x - previous  # 1st difference emphasizes highs: snare and hi-hat
         previous = x
         low_acc += low_state * low_state
         high_acc += high * high
@@ -92,7 +92,7 @@ def _band_energies(samples: Sequence[int]) -> tuple[list[float], list[float], li
 
 
 def _onsets(energy: list[float]) -> list[float]:
-    """Aumentos de energia (em log), normalizados para a banda não dominar a outra."""
+    """Energy rises (in log scale), normalized so one band doesn't dominate the other."""
     logs = [math.log10(e + 1e-9) for e in energy]
     rises = [0.0] + [max(0.0, b - a) for a, b in zip(logs, logs[1:])]
     peak = max(rises) or 1.0
@@ -113,14 +113,14 @@ def _tempo(envelope: list[float]) -> tuple[float, float]:
     ac = {lag: _autocorrelation(centered, lag) for lag in range(1, max_lag * 2 + 2)}
 
     def score(lag: int) -> float:
-        # Pulso de verdade também se repete no dobro do período.
+        # A real beat also repeats at twice the period.
         return ac[lag] + 0.5 * ac.get(2 * lag, 0.0)
 
     def preference(bpm: float) -> float:
         return math.exp(-0.5 * (math.log2(bpm / PREFERRED_BPM) / PREFERENCE_OCTAVES) ** 2)
 
     best = max(range(min_lag, max_lag + 1), key=lambda lag: score(lag) * preference(60 * FPS / lag))
-    # Interpolação parabólica para um período fracionário.
+    # Parabolic interpolation for a fractional period.
     left, mid, right = ac[best - 1], ac[best], ac[best + 1]
     denominator = left - 2 * mid + right
     offset = 0.5 * (left - right) / denominator if denominator else 0.0

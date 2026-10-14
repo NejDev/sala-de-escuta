@@ -1,5 +1,5 @@
-/* Sala de escuta: estante de discos. As lombadas são a navegação; a cor da
-   lombada escolhida vira a luz da sala (--mood). Todo o resto fica quieto. */
+/* Sala de escuta: a record shelf. The spines are the navigation; the color of the
+   chosen spine becomes the room's light (--mood). Everything else stays quiet. */
 
 :root {
   --night: #0E1525;
@@ -15,9 +15,9 @@
   --player-h: 92px;
   --gutter: clamp(16px, 3vw, 40px);
   --content: 1320px;
-  /* Margem lateral que centraliza a coluna de conteúdo em telas largas. */
+  /* Side margin that centers the content column on wide screens. */
   --inset: max(var(--gutter), calc((100% - var(--content)) / 2));
-  /* A barra de topo é mais larga que o conteúdo: o menu inteiro precisa caber numa linha. */
+  /* The top bar is wider than the content: the whole menu has to fit on one line. */
   --nav-inset: max(var(--gutter), calc((100% - 1600px) / 2));
   color-scheme: dark;
 }
@@ -53,11 +53,11 @@ svg {
 }
 svg .solid { fill: currentColor; stroke: none; }
 
-/* ---------- Estrutura */
+/* ---------- Structure */
 
 .room {
   display: grid;
-  /* Coluna presa à largura da tela: a barra de navegação rola por dentro em vez de alargar a página. */
+  /* Column tied to the screen width: the navigation bar scrolls inside instead of widening the page. */
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   height: calc(100dvh - var(--player-h));
@@ -67,7 +67,7 @@ body.is-gated .room,
 body.is-gated .player,
 body.is-gated .console { display: none; }
 
-/* ---------- Barra de topo: marca + navegação em seções */
+/* ---------- Top bar: brand + navigation in sections */
 
 .topbar {
   display: flex;
@@ -78,15 +78,34 @@ body.is-gated .console { display: none; }
 }
 
 .brand {
+  display: flex;
   flex: none;
+  align-items: center;
+  gap: 10px;
   margin: 0;
   font-size: 1.5rem;
   font-stretch: 62%;
   font-weight: 900;
   line-height: 1;
 }
+.brand-mark { width: 34px; height: 34px; border-radius: 50%; }
 
-/* Em telas médias o grupo "Explorar" desce para a linha de baixo em vez de sumir. */
+/* Language: two letters, the chosen one lit. */
+.lang-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; }
+.lang-option {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--smoke);
+  font-size: .75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.lang-option:hover { color: var(--linen); }
+.lang-option[aria-pressed="true"] { background: var(--linen); color: var(--ink); }
+
+/* On medium screens the "Explore" group drops to the next line instead of disappearing. */
 .shelf {
   display: flex;
   flex-wrap: wrap;
@@ -130,7 +149,7 @@ body.is-gated .console { display: none; }
   transition: background .2s, color .2s;
 }
 .nav-item:hover { background: var(--velvet); color: var(--linen); }
-/* A escolhida acende na própria cor: a sala inteira muda de luz junto. */
+/* The chosen one lights up in its own color: the whole room changes light with it. */
 .nav-item[aria-current] { background: var(--spine, var(--linen)); color: var(--ink); }
 
 .nav-mark {
@@ -147,7 +166,7 @@ body.is-gated .console { display: none; }
 .nav-mark i { display: none; width: 3px; height: 45%; background: var(--spine, var(--linen)); }
 .nav-item[aria-current] .nav-mark i { background: var(--ink); }
 
-/* Tocando: o ponto vira equalizador. */
+/* Playing: the dot becomes an equalizer. */
 .nav-item.is-playing .nav-mark,
 .nav-item.is-paused .nav-mark { width: 13px; height: 12px; border-radius: 0; background: none; }
 .nav-item.is-playing .nav-mark i,
@@ -161,7 +180,7 @@ body.is-gated .console { display: none; }
   50% { height: 100%; }
 }
 
-/* ---------- Palco */
+/* ---------- Stage */
 
 .stage {
   overflow-y: auto;
@@ -225,7 +244,7 @@ body.is-gated .console { display: none; }
   margin-top: 26px;
 }
 
-/* ---------- Botões */
+/* ---------- Buttons */
 
 .play-button {
   display: inline-flex;
@@ -244,6 +263,8 @@ body.is-gated .console { display: none; }
 .play-button:hover { transform: scale(1.03); }
 .play-button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 .play-button svg { width: 18px; height: 18px; }
+.play-button.is-small { padding: 9px 18px; font-size: .9375rem; }
+.play-button.is-danger { background: var(--error); }
 
 .ghost-button {
   padding: 11px 20px;
@@ -271,7 +292,7 @@ body.is-gated .console { display: none; }
 }
 .text-button:hover { color: var(--linen); text-decoration-color: currentColor; }
 
-/* ---------- Busca para adicionar */
+/* ---------- Search to add */
 
 .adder { max-width: 680px; margin-top: 36px; }
 
@@ -305,7 +326,7 @@ body.is-gated .console { display: none; }
 
 .results-empty { padding: 8px 10px; color: var(--smoke); font-size: .875rem; }
 
-/* ---------- Faixas */
+/* ---------- Tracks */
 
 .tracks {
   max-width: var(--content);
@@ -362,7 +383,7 @@ body.is-gated .console { display: none; }
 
 .tracks-empty { max-width: 52ch; padding: 24px 12px; color: var(--smoke); }
 
-/* ---------- Sensações e Descobrir */
+/* ---------- Sensations, Discover and New releases */
 
 .sleeve.is-plain {
   grid-template-columns: minmax(0, 1fr);
@@ -380,7 +401,7 @@ body.is-gated .console { display: none; }
   list-style: none;
 }
 
-/* Cada sensação leva uma mini-lombada na própria cor. */
+/* Each sensation gets a little spine in its own color. */
 .mood {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -419,7 +440,26 @@ body.is-gated .console { display: none; }
 }
 .mood-text { grid-area: text; color: var(--smoke); font-size: .875rem; }
 
-/* Filtros de Descobrir e Novidades. */
+/* Screen head: title on the left, the mascot's scene on the right. */
+.view-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 28px;
+  max-width: var(--content);
+}
+.view-art {
+  width: 150px;
+  height: 150px;
+  border-radius: 12px;
+  object-fit: cover;
+  object-position: 50% 30%;
+  box-shadow: 0 24px 48px -24px rgb(0 0 0 / .8);
+}
+.view-art[src*="mascot-news"] { object-position: 85% 40%; }
+.sense-main .view-art { width: 124px; height: 124px; }
+
+/* Discover, New releases and Sensations filters. */
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -444,7 +484,7 @@ body.is-gated .console { display: none; }
 .filter-genre { min-width: 240px; }
 .filter-hint { flex-basis: 100%; margin: 0; color: var(--smoke); font-size: .8125rem; }
 
-/* Campo livre: o sentimento escrito é o elemento principal da tela. */
+/* Free field: the written feeling is the main element on the screen. */
 .feeling { max-width: 760px; }
 .feeling-label { display: block; margin-bottom: 4px; color: var(--smoke); font-size: .875rem; }
 .feeling-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 20px; }
@@ -468,18 +508,18 @@ body.is-gated .console { display: none; }
 
 .sense-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 44px; }
 .sense-main { display: grid; align-content: start; gap: 32px; }
-/* Tela larga: duas colunas, para a direita não ficar vazia. */
+/* Wide screen: two columns, so the right side isn't empty. */
 @media (min-width: 1100px) {
   .sense-layout { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 64px; align-items: start; }
   .sense-moods { padding-top: 14px; }
 }
 
-/* Roleta: roda que gira enquanto sorteia e desacelera até parar. */
+/* Roulette card: text on the left, the crate digger on the right. */
 .path.path-roulette { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto 1fr; gap: 10px 24px; align-items: start; }
 .path-roulette > :not(.digger-wrap) { grid-column: 1; }
 .path-roulette .play-button { justify-self: start; }
 
-/* Garimpeiro: bonequinho com lupa revirando um caixote; a pilha ao lado enche a cada achado. */
+/* Crate digger: the mascot with a magnifying glass going through a crate; the pile beside him grows with each find. */
 .digger-wrap { grid-column: 2; grid-row: 1 / span 3; text-align: center; }
 .digger { display: block; width: 270px; height: auto; fill: none; stroke: none; overflow: visible; }
 .digger-count { min-height: 1.2em; margin: 4px 0 0; color: var(--smoke); font-size: .8125rem; font-variant-numeric: tabular-nums; }
@@ -579,14 +619,14 @@ body.is-gated .console { display: none; }
 }
 .find .track-button { grid-template-columns: 2rem 44px minmax(0, 1fr) auto auto; }
 
-/* Detalhes ("por que essa música?") só quando a pessoa pede. */
+/* Details ("why this song?") only when the person asks. */
 .find-details {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 16px;
   grid-column: 1 / -1;
-  /* alinhado com o título: número + capa + espaços da linha */
+  /* aligned with the title: number + cover + the row's gaps */
   padding: 0 12px 10px calc(12px + 2rem + 16px + 44px + 16px);
   color: var(--smoke);
   font-size: .8125rem;
@@ -620,14 +660,14 @@ body.is-gated .console { display: none; }
 .info-button[aria-expanded="true"] { color: var(--linen); background: var(--velvet); }
 .info-button svg { width: 18px; height: 18px; }
 
-/* Música que acabou de cair da roleta. */
+/* A song that just fell out of the roulette. */
 .find.is-new { animation: land .45s cubic-bezier(.2, .9, .3, 1.25); }
 @keyframes land { from { opacity: 0; transform: translateY(-14px) scale(.98); } }
 
 .bpm { color: var(--smoke); font-size: .75rem; white-space: nowrap; }
 .bpm b { color: var(--linen); font-size: .9375rem; font-variant-numeric: tabular-nums; }
 
-.keep-button {
+.add-button {
   padding: 6px 14px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -637,8 +677,8 @@ body.is-gated .console { display: none; }
   font-weight: 600;
   cursor: pointer;
 }
-.keep-button:hover { border-color: var(--smoke); color: var(--linen); }
-.keep-button:disabled { border-color: transparent; color: var(--mood); cursor: default; }
+.add-button:hover { border-color: var(--smoke); color: var(--linen); }
+.add-button.is-added { border-color: color-mix(in srgb, var(--mood) 45%, transparent); color: var(--mood); }
 
 .chain { padding: 26px 12px 6px; }
 .chain-path {
@@ -684,7 +724,12 @@ body.is-gated .console { display: none; }
 .now-sub { color: var(--smoke); font-size: .875rem; }
 
 .transport { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.controls { display: flex; align-items: center; gap: 18px; }
+/* Play sits in the middle column and the two sides always get the same width,
+   so it stays centered over the timeline: shuffle + previous | play | next + repeat. */
+.controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 18px; }
+.controls-side { display: flex; align-items: center; gap: 18px; }
+.controls-side.is-left { justify-self: end; }
+.controls-side.is-right { justify-self: start; }
 
 .icon-button {
   display: grid;
@@ -700,6 +745,23 @@ body.is-gated .console { display: none; }
 }
 .icon-button:hover { color: var(--linen); }
 .icon-button[aria-pressed="true"] { color: var(--mood); }
+/* Repeating one track: a small 1 on the icon, as in Spotify. */
+#btn-repeat { position: relative; }
+#btn-repeat[data-mode="track"]::after {
+  content: "1";
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--mood);
+  color: var(--ink);
+  font-size: .5625rem;
+  font-weight: 800;
+}
 
 .round-button {
   display: grid;
@@ -766,7 +828,7 @@ body.is-gated .console { display: none; }
 }
 .player-auth p { margin: 0; color: var(--smoke); }
 
-/* ---------- Barras de progresso e volume */
+/* ---------- Progress and volume bars */
 
 .range {
   --fill: 0%;
@@ -800,7 +862,7 @@ body.is-gated .console { display: none; }
 .range::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--mood); }
 .range::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--linen); }
 
-/* ---------- Painel de atualização */
+/* ---------- Update console */
 
 .console {
   position: fixed;
@@ -858,7 +920,144 @@ body.is-gated .console { display: none; }
 .line.is-item { padding-left: 1.25rem; color: var(--smoke); }
 .line.is-warning { padding-left: 1.25rem; color: var(--warn); }
 
-/* ---------- Avisos */
+/* ---------- Where the songs go: a small panel next to the button (a bottom sheet on phones) */
+
+.picker {
+  position: fixed;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  max-height: min(460px, 70vh);
+  padding: 14px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--velvet-raised);
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / .85);
+  animation: rise .16s cubic-bezier(.2, .7, .2, 1);
+}
+.picker.is-busy { cursor: progress; }
+.picker.is-busy .picker-list { opacity: .6; }
+
+.picker-head { position: relative; padding: 0 52px 10px 16px; }
+.picker-title { margin: 0; font-size: 1.375rem; font-stretch: 62%; font-weight: 800; line-height: 1.1; }
+.picker-sub { margin: 2px 0 0; overflow: hidden; color: var(--smoke); font-size: .8125rem; white-space: nowrap; text-overflow: ellipsis; }
+.picker-close {
+  position: absolute;
+  top: -4px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--smoke);
+  cursor: pointer;
+}
+.picker-close:hover { background: var(--velvet); color: var(--linen); }
+.picker-close svg,
+.tour-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+
+.picker-list { flex: 1; min-height: 0; margin: 0; padding: 0 6px; overflow-y: auto; list-style: none; scrollbar-color: var(--line) transparent; }
+.picker-option {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--linen);
+  text-align: left;
+  cursor: pointer;
+}
+.picker-option:hover,
+.picker-option:focus-visible { background: var(--velvet); outline: none; }
+.picker-option:disabled { cursor: progress; }
+.picker-art { width: 38px; height: 38px; border-radius: 4px; object-fit: cover; }
+.picker-art.is-round { border-radius: 50%; }
+.picker-art.is-empty { display: grid; place-items: center; background: var(--line); font-stretch: 62%; font-weight: 900; }
+.picker-option-text { display: grid; min-width: 0; }
+.picker-option-name,
+.picker-option-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.picker-option-name { font-weight: 600; }
+.picker-option-sub { color: var(--smoke); font-size: .8125rem; }
+.picker-note { padding: 10px 12px; color: var(--smoke); font-size: .875rem; }
+.picker-note.is-error { color: var(--error); }
+
+.picker-new {
+  margin: 6px 12px 0;
+  padding: 12px 4px 4px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  color: var(--linen);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.picker-new:hover { color: var(--mood); }
+
+.picker-form { display: grid; gap: 10px; padding: 2px 16px 6px; }
+.picker-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--night);
+}
+.picker-input:focus-visible { outline: none; border-color: var(--mood); }
+.picker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 4px; }
+.picker-conflict { margin: 0; }
+
+/* ---------- How it works: one step at a time, with the mascot's scene beside it */
+
+.tour {
+  width: min(800px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 16px;
+  background: var(--velvet);
+  color: var(--linen);
+  box-shadow: 0 40px 80px -30px rgb(0 0 0 / .9);
+}
+.tour[open] { display: grid; grid-template-columns: 300px minmax(0, 1fr); }
+.tour::backdrop { background: rgb(6 9 16 / .74); }
+.tour-art { width: 100%; height: 100%; min-height: 380px; object-fit: cover; animation: tour-in .35s ease; }
+@keyframes tour-in { from { opacity: 0; } }
+.tour-body { display: flex; flex-direction: column; gap: 12px; padding: 40px 40px 30px; }
+.tour-step { margin: 0; color: var(--smoke); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.tour-title { margin: 0; font-size: 3rem; font-stretch: 62%; font-weight: 850; line-height: .95; text-wrap: balance; }
+.tour-text { max-width: 44ch; margin: 0; color: color-mix(in srgb, var(--linen) 88%, transparent); font-size: 1.0625rem; line-height: 1.55; }
+.tour-dots { display: flex; gap: 6px; margin: auto 0 0; padding: 18px 0 0; list-style: none; }
+.tour-dots li { width: 22px; height: 4px; border-radius: 2px; background: var(--line); }
+.tour-dots li.is-current { background: var(--linen); }
+.tour-actions { display: flex; align-items: center; justify-content: flex-end; gap: 18px; }
+.tour-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(14 21 37 / .55);
+  color: var(--linen);
+  cursor: pointer;
+}
+.tour-close:hover { background: var(--night); }
+
+/* ---------- Notices */
 
 .toasts {
   position: fixed;
@@ -886,7 +1085,7 @@ body.is-gated .console { display: none; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 
-/* ---------- Tela de conexão */
+/* ---------- Sign-in screen */
 
 .gate {
   position: fixed;
@@ -900,13 +1099,15 @@ body.is-gated .console { display: none; }
   background: var(--night);
 }
 
-.gate-shelf { display: flex; gap: 6px; height: 150px; margin-bottom: 40px; }
-.gate-shelf i { width: 28px; border-radius: 2px; box-shadow: inset 4px 0 0 rgb(255 255 255 / .16); }
-.gate-shelf i:nth-child(1) { background: #5CC8C0; }
-.gate-shelf i:nth-child(2) { background: #D4A84B; width: 40px; }
-.gate-shelf i:nth-child(3) { background: #E3909E; }
-.gate-shelf i:nth-child(4) { background: #E6D5AA; }
-.gate-shelf i:nth-child(5) { background: #9DB4E6; }
+/* Sign-in screen: text on the left, the mascot on the couch on the right. */
+.gate.has-art {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 520px);
+  align-items: center;
+  gap: 6vw;
+}
+.gate-art { width: 100%; height: auto; border-radius: 18px; box-shadow: 0 40px 80px -30px rgb(0 0 0 / .9); }
+.gate-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px; }
 
 .gate-title {
   margin: 0 0 18px;
@@ -923,20 +1124,22 @@ body.is-gated .console { display: none; }
   font-size: 1.125rem;
 }
 
-/* ---------- Telas estreitas */
+/* ---------- Narrow screens */
 
 @media (max-width: 760px) {
   :root { --player-h: 132px; }
 
-  /* A página inteira rola (o topo sai de cena ao descer); só o player fica fixo. */
+  /* The whole page scrolls (the top bar leaves as you go down); only the player stays fixed. */
   .room { height: auto; }
   .stage { overflow: visible; padding-top: 24px; padding-bottom: calc(var(--player-h) + 40px); }
 
-  /* Menu em duas linhas: playlists arrastam para o lado, Explorar fica sempre à vista. */
+  /* Menu on two lines: playlists swipe sideways, Explore is always in view. */
   .topbar { flex-wrap: wrap; row-gap: 8px; padding-top: 8px; padding-bottom: 10px; }
-  .brand { display: none; }
-  .account { order: -1; width: 100%; justify-content: flex-end; font-size: .8125rem; }
-  /* min-width: 0 deixa cada linha rolar por dentro em vez de alargar a página (e esconder o player). */
+  /* First line: the mascot on the left, the account on the right. */
+  .brand { order: -2; }
+  .brand-mark { width: 30px; height: 30px; }
+  .account { order: -1; flex: 1; justify-content: flex-end; gap: 10px; font-size: .8125rem; }
+  /* min-width: 0 lets each line scroll inside instead of widening the page (and hiding the player). */
   .topbar { min-width: 0; }
   .shelf { flex-direction: column; align-items: stretch; gap: 6px; width: 100%; min-width: 0; }
   .nav-group { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
@@ -951,6 +1154,28 @@ body.is-gated .console { display: none; }
   .find .track-time { display: none; }
   .find-details { padding-left: 8px; }
   .hunt-title { font-size: 2.25rem; }
+  .view-head { gap: 16px; }
+  .view-art,
+  .sense-main .view-art { width: 84px; height: 84px; border-radius: 10px; }
+  .add-button { padding: 6px 10px; }
+
+  .picker.is-sheet {
+    inset: auto 0 0 0;
+    z-index: 30;
+    width: auto;
+    max-height: 78dvh;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+  }
+
+  .tour[open] { grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
+  .tour-art { height: 190px; min-height: 0; }
+  .tour-body { padding: 22px 22px 20px; }
+  .tour-title { font-size: 2.25rem; }
+  .tour-text { font-size: 1rem; }
+
+  .gate.has-art { grid-template-columns: minmax(0, 1fr); align-content: center; gap: 28px; padding: 6vh 7vw; }
+  .gate-art { order: -1; width: min(280px, 70vw); }
   .feeling-input { font-size: 2.25rem; }
   .path.path-roulette { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
   .digger-wrap { grid-column: 1; grid-row: auto; justify-self: center; }
@@ -964,15 +1189,16 @@ body.is-gated .console { display: none; }
   }
   .now { grid-area: now; }
   .transport { display: contents; }
-  .controls { grid-area: controls; gap: 6px; }
+  .controls { display: flex; grid-area: controls; gap: 6px; }
+  .controls-side { display: contents; }
   .timeline { grid-area: timeline; width: 100%; }
   .output { display: none; }
   .player[data-state="auth"] .player-auth { flex-direction: column; gap: 10px; text-align: center; }
 }
 
-/* Abaixo disso o menu inteiro não cabe ao lado da marca numa linha só. */
+/* Below this the whole menu doesn't fit beside the name on one line: only the mascot stays. */
 @media (max-width: 1399px) {
-  .brand { display: none; }
+  .brand-name { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

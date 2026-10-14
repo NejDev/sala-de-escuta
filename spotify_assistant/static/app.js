@@ -1,41 +1,100 @@
 "use strict";
 
+// Sala de escuta panel. Every text comes from i18n.js (STRINGS) through t(); each person picks the language.
+
 const FALLBACK_COLORS = ["#5CC8C0", "#D4A84B", "#E3909E", "#E6D5AA", "#9DB4E6"];
 const PLAY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M8 5v14l11-7z"/></svg>';
-const listFormat = new Intl.ListFormat("pt-BR", { type: "conjunction" });
+const CLOSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 
 const $ = (selector) => document.querySelector(selector);
 
-// localStorage lança exceção quando o navegador bloqueia armazenamento; lembrar a playlist é só conveniência.
+// localStorage throws when the browser blocks storage; remembering things is only a convenience.
 const memory = {
   get(key) {
     try { return localStorage.getItem(key); } catch { return null; }
   },
   set(key, value) {
-    try { localStorage.setItem(key, value); } catch { /* sem armazenamento: segue sem lembrar */ }
+    try { localStorage.setItem(key, value); } catch { /* no storage: carry on without remembering */ }
   },
 };
 
-// Telas que não são playlists: a chave vira o # da URL.
-const VIEWS = {
-  sensacoes: "Sensações",
-  descobrir: "Descobrir",
-  novidades: "Novidades",
-};
-const HUNT_KINDS = { sensacoes: ["sense"], descobrir: ["roulette", "rabbit"], novidades: ["news"] };
+// ---------- Language
 
-// Filtros de Descobrir e Novidades. O tamanho do artista é medido em fãs: nenhuma API gratuita
-// diz quantas vezes uma música foi tocada.
-const SIZE_MIN = [["", "Qualquer"], ["100", "100"], ["1000", "1 mil"], ["10000", "10 mil"], ["100000", "100 mil"], ["1000000", "1 milhão"]];
-const SIZE_MAX = [["", "Sem teto"], ["1000", "1 mil"], ["10000", "10 mil"], ["100000", "100 mil"], ["1000000", "1 milhão"], ["10000000", "10 milhões"]];
-const PERIODS = [["7", "Na última semana"], ["14", "Nas últimas 2 semanas"], ["30", "No último mês"], ["90", "Nos últimos 3 meses"]];
+const LANGS = ["pt", "en"];
+const LANG = pickLanguage();
+const LOCALE = LANG === "pt" ? "pt-BR" : "en";
+const listFormat = new Intl.ListFormat(LOCALE, { type: "conjunction" });
+const compactNumber = new Intl.NumberFormat(LOCALE, { notation: "compact" });
+
+function pickLanguage() {
+  const saved = memory.get("lang");
+  if (LANGS.includes(saved)) return saved;
+  return (navigator.language || "").toLowerCase().startsWith("pt") ? "pt" : "en";
+}
+
+// The server reads the same choice from this cookie, so its messages come in the same language.
+document.cookie = `lang=${LANG}; path=/; max-age=31536000; samesite=lax`;
+document.documentElement.lang = LOCALE;
+
+/** Text in the current language. Arrays are [singular, plural], chosen by vars.count. */
+function t(key, vars = {}) {
+  let text = STRINGS[LANG][key] ?? STRINGS.en[key] ?? key;
+  if (Array.isArray(text)) text = text[vars.count === 1 ? 0 : 1];
+  return text.replace(/\{(\w+)\}/g, (match, name) => (name in vars ? String(vars[name]) : match));
+}
+
+function setLanguage(lang) {
+  if (lang === LANG) return;
+  memory.set("lang", lang);
+  document.cookie = `lang=${lang}; path=/; max-age=31536000; samesite=lax`;
+  location.reload();
+}
+
+/** Fixed texts in index.html: data-i18n (text) and data-i18n-attr ("aria-label:key;title:key"). */
+function translatePage() {
+  for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+  for (const el of document.querySelectorAll("[data-i18n-attr]")) {
+    for (const pair of el.dataset.i18nAttr.split(";")) {
+      const [attr, key] = pair.split(":");
+      el.setAttribute(attr, t(key));
+    }
+  }
+  for (const box of document.querySelectorAll("[data-lang-switch]")) {
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", t("lang.label"));
+    box.replaceChildren(...langOptions());
+  }
+}
+
+function langOptions() {
+  return [["pt", "PT", "Português"], ["en", "EN", "English"]].map(([code, short, name]) => h("button", {
+    class: "lang-option",
+    type: "button",
+    lang: code === "pt" ? "pt-BR" : "en",
+    "aria-pressed": String(code === LANG),
+    "aria-label": name,
+    title: name,
+    onclick: () => setLanguage(code),
+  }, short));
+}
+
+// ---------- Screens and filters
+
+// Screens that aren't playlists: the key becomes the URL #.
+const VIEWS = { sensations: "view.sensations", discover: "view.discover", news: "view.news" };
+const VIEW_ALIASES = { sensacoes: "sensations", descobrir: "discover", novidades: "news" };  // old bookmarks
+const HUNT_KINDS = { sensations: ["sense"], discover: ["roulette", "rabbit"], news: ["news"] };
+
+// Artist size is measured in fans: no free API says how many times a song was played.
+const SIZE_MIN = ["", "100", "1000", "10000", "100000", "1000000"];
+const SIZE_MAX = ["", "1000", "10000", "100000", "1000000", "10000000"];
+const PERIODS = ["7", "14", "30", "90"];
 const GENRE_SUGGESTIONS = [
   "K-pop", "J-pop", "Funk", "Trap", "Rap", "Drill", "Phonk", "Sertanejo", "Pagode", "Samba", "MPB", "Forró",
-  "Piseiro", "Rock", "Indie", "Pop", "Emo", "Metal", "Punk", "Eletrônica", "House", "Techno", "Lo-fi", "Jazz",
-  "R&B", "Soul", "Reggaeton", "Afrobeats", "Amapiano", "City pop", "Shoegaze", "Hyperpop", "Bossa nova", "Clássica",
+  "Piseiro", "Rock", "Indie", "Pop", "Emo", "Metal", "Punk", "genre.electronic", "House", "Techno", "Lo-fi", "Jazz",
+  "R&B", "Soul", "Reggaeton", "Afrobeats", "Amapiano", "City pop", "Shoegaze", "Hyperpop", "Bossa nova", "genre.classical",
 ];
 const ROOM_LIGHT = "#EEE7D7";
-const compactNumber = new Intl.NumberFormat("pt-BR", { notation: "compact" });
 
 const state = {
   overview: null,
@@ -50,12 +109,15 @@ const state = {
   lastHunt: null,
   seed: "",
   filters: { rouletteGenre: "", newsGenre: "", min: "", max: "", days: "30", ...savedFilters() },
-  kept: new Set(),
+  added: new Set(),
   openDetails: new Set(),
   landed: new Set(),
   blocked: [],
   showBlocked: false,
   addingOpen: false,
+  myPlaylists: null,
+  picker: null,
+  tourStep: 0,
   player: null,
   playerSyncedAt: 0,
   seeking: false,
@@ -64,7 +126,7 @@ const state = {
   searchSeq: 0,
 };
 
-// ---------- Utilidades
+// ---------- Utilities
 
 function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
@@ -81,10 +143,14 @@ function h(tag, attrs, ...children) {
   return el;
 }
 
-function playIcon() {
+function icon(markup) {
   const template = document.createElement("template");
-  template.innerHTML = PLAY_ICON;
+  template.innerHTML = markup;
   return template.content.firstChild;
+}
+
+function playIcon() {
+  return icon(PLAY_ICON);
 }
 
 async function api(path, body) {
@@ -95,16 +161,16 @@ async function api(path, body) {
   try {
     response = await fetch(path, init);
   } catch {
-    throw new Error("O painel parou de responder. A janela do servidor ainda está aberta?");
+    throw new Error(t("error.offline"));
   }
   const data = await response.json().catch(() => ({}));
-  if (response.status === 401 && data.login) showGate(data.error);
-  if (!response.ok) throw new Error(data.error || `Erro ${response.status}`);
+  if (response.status === 401 && data.login) showGate(data);
+  if (!response.ok) {
+    const error = new Error(data.error || t("error.status", { status: response.status }));
+    error.data = data;
+    throw error;
+  }
   return data;
-}
-
-function plural(count, one, many) {
-  return `${count} ${count === 1 ? one : many}`;
 }
 
 function clock(ms) {
@@ -126,25 +192,21 @@ function relativeDay(iso) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const days = Math.round((today - date) / 86400000);
-  if (days <= 0) return "hoje";
-  if (days === 1) return "ontem";
-  if (days < 7) return `há ${days} dias`;
-  return date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  if (days <= 0) return t("day.today");
+  if (days === 1) return t("day.yesterday");
+  if (days < 7) return t("day.ago", { count: days });
+  return date.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" });
 }
 
 function scheduleLine(schedule) {
   if (!schedule) return null;
-  if (!schedule.scheduled) {
-    return { text: "Sem atualização automática. Rode scripts\\agendar-semanal.ps1 para agendar.", warning: true };
-  }
-  if (!schedule.ok) {
-    return { text: "A última atualização automática falhou. Detalhes em data/assistant.log.", warning: true };
-  }
-  if (!schedule.next) return { text: "Atualização automática agendada." };
-  const next = new Date(schedule.next).toLocaleString("pt-BR", {
+  if (!schedule.scheduled) return { text: t("schedule.none"), warning: true };
+  if (!schedule.ok) return { text: t("schedule.failed"), warning: true };
+  if (!schedule.next) return { text: t("schedule.on") };
+  const next = new Date(schedule.next).toLocaleString(LOCALE, {
     weekday: "long", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
   });
-  return { text: `Atualiza sozinha toda semana. Próxima vez: ${next}.` };
+  return { text: t("schedule.next", { when: next }) };
 }
 
 function toast(message, isError = false) {
@@ -153,12 +215,10 @@ function toast(message, isError = false) {
   setTimeout(() => el.remove(), isError ? 6500 : 4000);
 }
 
-function showGate(message) {
+function showGate(data) {
   document.body.classList.add("is-gated");
   $("#gate").hidden = false;
-  if (message && message.includes("expirou")) {
-    $("#gate-text").textContent = "Sua sessão do Spotify expirou. Entre de novo para continuar.";
-  }
+  if (data?.expired) $("#gate-text").textContent = t("gate.expired");
 }
 
 // ---------- Playlists
@@ -179,13 +239,15 @@ async function loadOverview() {
   if (state.view === "playlist" && current()) renderSleeve();
 }
 
-/** Quem está na sala agora, e o botão de sair (cada amigo entra com o próprio Spotify). */
+/** Who is in the room now, the language, the tour and the sign-out button (each friend uses their own Spotify). */
 function renderAccount() {
   const me = state.overview?.me;
   if (!me) return;
   $("#account").replaceChildren(
-    h("span", { class: "account-name", title: me.is_owner ? "Dono da sala" : null }, me.name),
-    h("button", { class: "text-button", type: "button", onclick: logout }, "Sair"),
+    h("span", { class: "account-name", title: me.is_owner ? t("account.owner") : null }, me.name),
+    h("div", { class: "lang-switch", role: "group", "aria-label": t("lang.label") }, langOptions()),
+    h("button", { class: "text-button", type: "button", onclick: () => openTour(0) }, t("tour.open")),
+    h("button", { class: "text-button", type: "button", onclick: logout }, t("account.logout")),
   );
 }
 
@@ -199,8 +261,9 @@ async function logout() {
   location.reload();
 }
 
-/** Abre uma playlist pelo nome ou uma das telas de VIEWS pela chave. */
+/** Opens a playlist by key or one of the VIEWS screens. */
 function go(key) {
+  key = VIEW_ALIASES[key] || key;
   return key in VIEWS ? openView(key) : select(key);
 }
 
@@ -210,13 +273,14 @@ function shelfKeys() {
 
 async function select(key) {
   const playlists = state.overview.playlists;
-  if (!playlists.length) return openView("sensacoes");  // amigo sem playlists ainda: começa explorando
+  if (!playlists.length) return openView("sensations");  // a friend with no playlists yet starts exploring
   state.view = "playlist";
   state.selected = playlists.some((playlist) => playlist.key === key) ? key : playlists[0].key;
   memory.set("selected", state.selected);
   history.replaceState(null, "", `#${encodeURIComponent(state.selected)}`);
   state.detail = null;
   state.addingOpen = false;
+  closePicker({ restoreFocus: false });
   $("#hunt").hidden = true;
   renderShelf();
   renderSleeve();
@@ -243,14 +307,14 @@ async function loadDetail() {
 
 function renderShelf() {
   const onPlaylist = state.view === "playlist";
-  // Ponto na cor da playlist; vira equalizador quando ela está tocando.
+  // A dot in the playlist's color; it becomes an equalizer while that playlist is playing.
   const item = ({ key, label, color, uri, current, explore, number }) => h("button", {
     class: explore ? "nav-item is-explore" : "nav-item",
     type: "button",
     style: color ? `--spine: ${color}` : null,
     "aria-current": current ? "page" : null,
     "data-uri": uri,
-    title: `${label} (tecla ${number})`,
+    title: t("nav.key", { label, number }),
     onclick: () => go(key),
   },
     h("span", { class: "nav-mark", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
@@ -265,7 +329,7 @@ function renderShelf() {
   }));
   const explore = Object.entries(VIEWS).map(([key, label], index) => item({
     key,
-    label,
+    label: t(label),
     explore: true,
     current: state.view === key,
     number: playlists.length + index + 1,
@@ -273,12 +337,15 @@ function renderShelf() {
   const group = (label, items) => h("div", { class: "nav-group", role: "group", "aria-label": label },
     h("span", { class: "nav-label", "aria-hidden": "true" }, label),
     items);
-  const emptyShelf = !playlists.length && h("span", { class: "nav-empty" }, "Nenhuma ainda");
-  $("#shelf").replaceChildren(group("Playlists", playlists.length ? playlists : [emptyShelf]), group("Explorar", explore));
+  const emptyShelf = !playlists.length && h("span", { class: "nav-empty" }, t("nav.none_yet"));
+  $("#shelf").replaceChildren(
+    group(t("nav.playlists"), playlists.length ? playlists : [emptyShelf]),
+    group(t("nav.explore"), explore),
+  );
   markPlaying();
 }
 
-/** Volta ao topo: no computador quem rola é o palco; no celular, a página inteira. */
+/** Back to the top: on a computer the stage scrolls; on a phone, the whole page. */
 function scrollToTop() {
   $("#stage").scrollTo({ top: 0 });
   window.scrollTo({ top: 0 });
@@ -296,8 +363,8 @@ function renderSleeve() {
   document.title = `Sala de escuta: ${playlist.name}`;
 
   const items = state.detail?.items;
-  const unit = playlist.kind === "podcasts" ? ["episódio", "episódios"] : ["faixa", "faixas"];
-  const meta = [plural(items ? items.length : playlist.total, ...unit)];
+  const count = items ? items.length : playlist.total;
+  const meta = [t(playlist.kind === "podcasts" ? "count.episodes" : "count.tracks", { count })];
   if (items?.length) meta.push(longDuration(items.reduce((sum, item) => sum + item.duration_ms, 0)));
   const lines = [h("p", { class: "meta" }, meta.join(", "))];
   if (playlist.kind === "podcasts") {
@@ -305,33 +372,32 @@ function renderSleeve() {
     if (line) lines.push(h("p", { class: line.warning ? "meta is-warning" : "meta" }, line.text));
   }
   if (playlist.kind === "mix") {
-    lines.push(h("p", { class: "meta" }, `Montada com faixas de ${listFormat.format(playlist.sources)}.`));
+    lines.push(h("p", { class: "meta" }, t("sleeve.mix", { sources: listFormat.format(playlist.sources) })));
   }
 
   const cover = playlist.image
-    ? h("img", { class: "cover", src: playlist.image, alt: `Capa de ${playlist.name}` })
+    ? h("img", { class: "cover", src: playlist.image, alt: t("sleeve.cover", { name: playlist.name }) })
     : h("div", { class: "cover cover-empty", "aria-hidden": "true" }, playlist.name.charAt(0));
 
   const isOwner = Boolean(state.overview.me?.is_owner);
-  const refresh = !playlist.uri ? "Criar no meu Spotify"
-    : playlist.kind === "podcasts" ? "Atualizar agora" : "Refazer seleção";
-  // Os programas da Tech Radar são escolhidos pelo dono; amigos adicionam faixas só na própria cópia.
+  const refresh = refreshLabel(playlist);
+  // The Tech Radar shows are picked by the owner; friends add tracks only to their own copy.
   const canAdd = playlist.uri && (["music", "library"].includes(playlist.kind) || (playlist.kind === "podcasts" && isOwner));
-  // Estante curada do dono tem curadoria automática; playlists da própria conta, não.
+  // The owner's curated shelf is curated automatically; playlists from one's own account aren't.
   const curated = playlist.kind !== "library";
   const actions = h("div", { class: "actions" },
     h("button", { class: "play-button", type: "button", disabled: !playlist.uri, onclick: () => play(playlist.uri) },
-      playIcon(), "Tocar"),
-    playlist.uri && h("a", { class: "ghost-button", href: playlist.uri }, "Abrir no app"),
+      playIcon(), t("action.play")),
+    playlist.uri && h("a", { class: "ghost-button", href: playlist.uri }, t("sleeve.open_app")),
     curated && h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refresh),
-    curated && h("button", { class: "text-button", type: "button", onclick: () => startJob(true) }, "Ver prévia"),
+    curated && h("button", { class: "text-button", type: "button", onclick: () => startJob(true) }, t("sleeve.preview")),
     canAdd && h("button", {
       class: "text-button",
       type: "button",
       "aria-expanded": String(state.addingOpen),
       "aria-controls": "adder",
       onclick: toggleAdder,
-    }, playlist.kind === "podcasts" ? "Acompanhar outro programa" : "Adicionar faixa"),
+    }, t(playlist.kind === "podcasts" ? "sleeve.follow_show" : "sleeve.add_track")),
   );
 
   $("#sleeve").replaceChildren(cover, h("div", { class: "sleeve-text" },
@@ -342,20 +408,25 @@ function renderSleeve() {
   ));
 }
 
+function refreshLabel(playlist) {
+  if (!playlist.uri) return t("sleeve.create");
+  return t(playlist.kind === "podcasts" ? "sleeve.update_now" : "sleeve.redo");
+}
+
 function renderTracks() {
   const list = $("#tracks");
   const playlist = current();
   if (!state.detail) {
-    list.replaceChildren(h("li", { class: "tracks-empty" }, "Carregando…"));
+    list.replaceChildren(h("li", { class: "tracks-empty" }, t("common.loading")));
     return;
   }
   const items = state.detail.items;
   if (!items.length) {
     let message = playlist.kind === "library"
-      ? "Esta playlist está vazia. Use “Adicionar faixa” para começar."
-      : "Esta playlist está vazia. Use “Refazer seleção” para montá-la.";
-    if (!playlist.uri) message = "Esta playlist ainda não existe no seu Spotify. Use “Criar no meu Spotify” para montar a sua.";
-    else if (playlist.kind === "podcasts") message = "Nenhum episódio novo nos últimos dias. Use “Atualizar agora” para procurar de novo.";
+      ? t("tracks.empty_library", { button: t("sleeve.add_track") })
+      : t("tracks.empty_curated", { button: t("sleeve.redo") });
+    if (!playlist.uri) message = t("tracks.not_created", { button: t("sleeve.create") });
+    else if (playlist.kind === "podcasts") message = t("tracks.no_episodes", { button: t("sleeve.update_now") });
     list.replaceChildren(h("li", { class: "tracks-empty" }, message));
     return;
   }
@@ -364,7 +435,12 @@ function renderTracks() {
       ? [item.subtitle, relativeDay(item.release_date)].filter(Boolean).join(", ")
       : item.subtitle;
     return h("li", { class: "track", "data-uri": item.uri },
-      h("button", { class: "track-button", type: "button", title: `Tocar ${item.title}`, onclick: () => play(playlist.uri, item.uri) },
+      h("button", {
+        class: "track-button",
+        type: "button",
+        title: t("action.play_title", { title: item.title }),
+        onclick: () => play(playlist.uri, item.uri),
+      },
         h("span", { class: "track-index" }, String(index + 1)),
         item.image ? h("img", { class: "track-art", src: item.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
         h("span", { class: "track-text" },
@@ -376,7 +452,7 @@ function renderTracks() {
   markPlaying();
 }
 
-// ---------- Adicionar faixas e programas
+// ---------- Adding tracks and shows
 
 function toggleAdder() {
   state.addingOpen = !state.addingOpen;
@@ -391,10 +467,10 @@ function renderAdder() {
   adder.hidden = !state.addingOpen || !playlist || playlist.kind === "mix";
   if (adder.hidden) return;
   const podcasts = playlist.kind === "podcasts";
-  $("#adder-label").textContent = podcasts ? `Buscar programa para ${playlist.name}` : `Buscar faixa para ${playlist.name}`;
+  $("#adder-label").textContent = t(podcasts ? "adder.show_label" : "adder.track_label", { name: playlist.name });
   const input = $("#adder-input");
   input.value = "";
-  input.placeholder = podcasts ? "Ex.: Lambda3, Os Agilistas" : "Ex.: Bill Evans Autumn Leaves";
+  input.placeholder = t(podcasts ? "adder.show_placeholder" : "adder.track_placeholder");
   $("#results").replaceChildren();
 }
 
@@ -411,14 +487,14 @@ async function search(query) {
     if (seq !== state.searchSeq) return;
     $("#results").replaceChildren(...(results.length
       ? results.map((result) => resultRow(result, playlist))
-      : [h("li", { class: "results-empty" }, "Nada encontrado. Tente outro nome.")]));
+      : [h("li", { class: "results-empty" }, t("adder.none"))]));
   } catch (error) {
     toast(error.message, true);
   }
 }
 
 function resultRow(result, playlist) {
-  const verb = playlist.kind === "podcasts" ? "Acompanhar" : "Adicionar";
+  const verb = t(playlist.kind === "podcasts" ? "adder.follow" : "adder.add");
   return h("li", { class: "result" },
     result.image ? h("img", { class: "track-art", src: result.image, alt: "" }) : h("span", { class: "track-art" }),
     h("span", { class: "track-text" },
@@ -440,7 +516,7 @@ async function addItem(playlist, result, button) {
       uri: result.uri,
       entry: result.entry,
     });
-    button.textContent = playlist.kind === "podcasts" ? "Acompanhando" : "Adicionada";
+    button.textContent = t(playlist.kind === "podcasts" ? "adder.following" : "adder.added");
     toast(message);
     await Promise.all([loadOverview(), loadDetail()]);
   } catch (error) {
@@ -449,18 +525,19 @@ async function addItem(playlist, result, button) {
   }
 }
 
-// ---------- Sensações e Descobrir
+// ---------- Sensations, Discover and New releases
 
 async function openView(key) {
   state.view = key;
   state.addingOpen = false;
+  closePicker({ restoreFocus: false });
   memory.set("selected", key);
   history.replaceState(null, "", `#${key}`);
-  document.title = `Sala de escuta: ${VIEWS[key]}`;
+  document.title = `Sala de escuta: ${t(VIEWS[key])}`;
   $("#adder").hidden = true;
   scrollToTop();
   renderShelf();
-  if (key === "sensacoes" && !state.sensations) {
+  if (key === "sensations" && !state.sensations) {
     try {
       state.sensations = await api("/api/sensations");
     } catch (error) {
@@ -479,13 +556,13 @@ async function loadBlocked() {
   try {
     state.blocked = (await api("/api/blocked")).artists;
   } catch {
-    return;  // a lista é só um extra; sem ela o resto funciona
+    return;  // the list is an extra; everything else works without it
   }
   state.huntSignature = "";
   renderHunt();
 }
 
-/** A busca em andamento, se ela pertence à tela aberta. */
+/** The discovery in progress, if it belongs to the open screen. */
 function huntHere() {
   const hunt = state.hunt;
   return hunt && (HUNT_KINDS[state.view] || []).includes(hunt.kind) ? hunt : null;
@@ -495,20 +572,30 @@ function renderIntro() {
   const sleeve = $("#sleeve");
   sleeve.className = "sleeve is-plain";
   setMood(huntHere()?.color || ROOM_LIGHT);
-  const intro = { sensacoes: senseIntro, descobrir: discoverIntro, novidades: newsIntro }[state.view];
+  const intro = { sensations: senseIntro, discover: discoverIntro, news: newsIntro }[state.view];
   sleeve.replaceChildren(...intro());
 }
 
-/** Aviso quando a Spotify pausou as buscas: Sensações e Descobrir dependem delas. */
+/** Notice when Spotify paused searches: Sensations, Discover and New releases depend on them. */
 function pauseNotice() {
   const seconds = state.overview?.search_paused_s;
   if (!seconds) return null;
   const back = new Date(Date.now() + seconds * 1000);
   const days = Math.round((new Date(back).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
-  const day = days === 0 ? "hoje" : days === 1 ? "amanhã" : `em ${back.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}`;
-  const time = back.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-  return h("p", { class: "meta is-warning" },
-    `A Spotify pausou as buscas deste app por excesso de pedidos. Sensações, Descobrir e Novidades voltam por volta de ${time} ${day}.`);
+  const day = days === 0 ? t("day.today") : days === 1 ? t("day.tomorrow")
+    : t("day.on", { date: back.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" }) });
+  const time = back.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+  return h("p", { class: "meta is-warning" }, t("pause.notice", { time, day }));
+}
+
+/** The screen's title with the mascot beside it, like a playlist's cover. */
+function viewHead(art, title, description, ...extra) {
+  return h("div", { class: "view-head" },
+    h("div", { class: "sleeve-text" },
+      h("h1", { class: "title" }, title),
+      h("p", { class: "description" }, description),
+      extra),
+    h("img", { class: "view-art", src: `/mascot-${art}.webp`, alt: "", width: "150", height: "150" }));
 }
 
 function senseIntro() {
@@ -521,33 +608,31 @@ function senseIntro() {
     maxlength: "60",
     autocomplete: "off",
     spellcheck: "false",
-    placeholder: "ódio, saudade, euforia…",
+    placeholder: t("sense.placeholder"),
     disabled: !ready,
   });
   if (active?.kind === "sense" && !sensations.some((s) => s.name === active.label)) feeling.value = active.label;
   const submit = (event) => {
     event.preventDefault();
     const text = feeling.value.trim();
-    if (text) startHunt({ kind: "sense", text });
+    if (text) startHunt({ kind: "sense", text, ...sizeBody() });
   };
-  // Tela larga: à esquerda o título e o campo livre; à direita os momentos prontos.
+  // Wide screen: title, free field and filters on the left; the ready-made moments on the right.
   const main = h("div", { class: "sense-main" },
-    h("div", { class: "sleeve-text" },
-      h("h1", { class: "title" }, "Sensações"),
-      h("p", { class: "description" },
-        "Escreva o que está sentindo ou escolha um momento. A sala acha músicas para isso, ouve a prévia "
-        + "de cada uma e fica só com as que têm o ritmo certo."),
-      !ready && h("p", { class: "meta is-warning" },
-        "Para medir o BPM, instale o decodificador com pip install miniaudio e reabra o painel."),
+    viewHead("sensations", t("view.sensations"), t("sense.description"),
+      !ready && h("p", { class: "meta is-warning" }, t("sense.tempo_missing")),
       pauseNotice()),
     h("form", { class: "feeling", onsubmit: submit },
-      h("label", { class: "feeling-label", for: "feeling-input" }, "O que você está sentindo?"),
+      h("label", { class: "feeling-label", for: "feeling-input" }, t("sense.label")),
       h("div", { class: "feeling-row" },
         feeling,
-        h("button", { class: "play-button", type: "submit", disabled: !ready }, "Montar")),
-      h("p", { class: "feeling-hint" }, "Vale qualquer coisa: uma palavra, uma frase, um momento do dia.")));
+        h("button", { class: "play-button", type: "submit", disabled: !ready }, t("sense.build"))),
+      h("p", { class: "feeling-hint" }, t("sense.hint"))),
+    h("div", { class: "filters" },
+      ...sizeFilters(),
+      h("p", { class: "filter-hint" }, t("sense.size_hint"))));
   const moods = h("div", { class: "sense-moods" },
-    h("p", { class: "moods-label" }, "Ou escolha um momento"),
+    h("p", { class: "moods-label" }, t("sense.moods")),
     h("ul", { class: "moods" }, sensations.map((sensation) => h("li", null,
       h("button", {
         class: "mood",
@@ -555,7 +640,7 @@ function senseIntro() {
         style: `--tone: ${sensation.color}`,
         "aria-pressed": String(active?.label === sensation.name),
         disabled: !ready,
-        onclick: () => startHunt({ kind: "sense", name: sensation.name }),
+        onclick: () => startHunt({ kind: "sense", id: sensation.id, ...sizeBody() }),
       },
         h("span", { class: "mood-name" }, sensation.name),
         h("span", { class: "mood-bpm" }, `${sensation.bpm[0]}–${sensation.bpm[1]} BPM`),
@@ -570,55 +655,50 @@ function discoverIntro() {
     type: "search",
     autocomplete: "off",
     spellcheck: "false",
-    placeholder: "Vazio: sorteia um artista das suas playlists",
+    placeholder: t("discover.seed_placeholder"),
   });
   seed.value = state.seed;
   seed.addEventListener("input", () => { state.seed = seed.value; });
   seed.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") startHunt({ kind: "rabbit", seed: seed.value });
+    if (event.key === "Enter") startHunt({ kind: "rabbit", seed: seed.value, ...sizeBody() });
   });
   return [
-    h("div", { class: "sleeve-text" },
-      h("h1", { class: "title" }, "Descobrir"),
-      h("p", { class: "description" }, "Duas formas de chegar em músicas que você nunca ouviu."),
-      pauseNotice()),
+    viewHead("roulette", t("view.discover"), t("discover.description"), pauseNotice()),
     h("div", { class: "filters" },
-      genreField("roulette-genre", "rouletteGenre", "Gênero da roleta (opcional)", "Qualquer gênero"),
+      genreField("roulette-genre", "rouletteGenre", t("discover.genre_label"), t("discover.genre_any")),
       ...sizeFilters(),
-      h("p", { class: "filter-hint" }, "O tamanho do artista vale para a roleta e para a toca."),
+      h("p", { class: "filter-hint" }, t("discover.size_hint")),
       genreList()),
     h("div", { class: "paths" },
       h("section", { class: "path path-roulette", style: "--tone: #F2C14E" },
-        h("h2", { class: "path-name" }, "Roleta"),
-        h("p", { class: "path-text" },
-          "Sorteia álbuns pouco ouvidos de qualquer ano e faixas de gêneros do mundo todo, do zamrock ao enka."),
+        h("h2", { class: "path-name" }, t("discover.roulette")),
+        h("p", { class: "path-text" }, t("discover.roulette_text")),
         h("button", {
           class: "play-button",
           type: "button",
           onclick: () => startHunt({ kind: "roulette", genre: state.filters.rouletteGenre, ...sizeBody() }),
-        }, "Girar a roleta"),
+        }, t("discover.spin")),
         digger()),
       h("section", { class: "path", style: "--tone: #9DB4E6" },
-        h("h2", { class: "path-name" }, "Toca do coelho"),
-        h("p", { class: "path-text" },
-          "Parte de um artista e pula de relacionado em relacionado, sempre para os menos conhecidos."),
-        h("label", { class: "adder-label", for: "seed-input" }, "Artista de partida"),
+        h("h2", { class: "path-name" }, t("discover.rabbit")),
+        h("p", { class: "path-text" }, t("discover.rabbit_text")),
+        h("label", { class: "adder-label", for: "seed-input" }, t("discover.seed_label")),
         seed,
         h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "rabbit", seed: seed.value, ...sizeBody() }) },
-          "Entrar na toca"))),
+          t("discover.enter")))),
   ];
 }
 
 function savedFilters() {
   try {
-    return JSON.parse(memory.get("filtros") || "{}");
+    return JSON.parse(memory.get("filters") || memory.get("filtros") || "{}");
   } catch {
     return {};
   }
 }
 
 function saveFilters() {
-  memory.set("filtros", JSON.stringify(state.filters));
+  memory.set("filters", JSON.stringify(state.filters));
 }
 
 function sizeBody() {
@@ -650,14 +730,16 @@ function genreField(id, key, label, placeholder, required = false) {
 }
 
 function sizeFilters() {
+  const options = (values, empty) => values.map((value) => [value, value ? compactNumber.format(Number(value)) : t(empty)]);
   return [
-    choice("min-fans", "Fãs do artista: no mínimo", SIZE_MIN, "min"),
-    choice("max-fans", "No máximo", SIZE_MAX, "max"),
+    choice("min-fans", t("filter.min"), options(SIZE_MIN, "size.any"), "min"),
+    choice("max-fans", t("filter.max"), options(SIZE_MAX, "size.no_cap"), "max"),
   ];
 }
 
 function genreList() {
-  return h("datalist", { id: "genre-list" }, GENRE_SUGGESTIONS.map((genre) => h("option", { value: genre })));
+  return h("datalist", { id: "genre-list" },
+    GENRE_SUGGESTIONS.map((genre) => h("option", { value: genre.startsWith("genre.") ? t(genre) : genre })));
 }
 
 function newsIntro() {
@@ -666,27 +748,24 @@ function newsIntro() {
     startHunt({ kind: "news", genre: state.filters.newsGenre, days: state.filters.days, ...sizeBody() });
   };
   return [
-    h("div", { class: "sleeve-text" },
-      h("h1", { class: "title" }, "Novidades"),
-      h("p", { class: "description" },
-        "Os lançamentos mais recentes de um gênero, só de artistas do tamanho que você escolher."),
-      pauseNotice()),
+    viewHead("news", t("view.news"), t("news.description"), pauseNotice()),
     h("form", { class: "filters", onsubmit: submit },
-      genreField("news-genre", "newsGenre", "Gênero", "Ex.: K-pop, funk, indie", true),
+      genreField("news-genre", "newsGenre", t("news.genre"), t("news.genre_placeholder"), true),
       ...sizeFilters(),
-      choice("news-days", "Lançadas", PERIODS, "days"),
-      h("button", { class: "play-button", type: "submit" }, "Buscar novidades"),
+      choice("news-days", t("news.period"), PERIODS.map((days) => [days, t(`period.${days}`)]), "days"),
+      h("button", { class: "play-button", type: "submit" }, t("news.search")),
       genreList()),
   ];
 }
 
-// ---------- Garimpeiro da roleta
-// Bonequinho com lupa revirando um caixote de discos. Cada música achada vai para
-// a pilha ao lado, que começa vazia e vai enchendo; no fim ele levanta um disco.
+// ---------- The roulette's crate digger
+// The mascot with a magnifying glass, going through a crate of records. Each song found goes
+// onto the pile beside him, which starts empty and fills up; at the end he raises a record.
 
 const PILE_SLOTS = 12;
 const PILE_COLORS = ["#5CC8C0", "#D4A84B", "#E3909E", "#E6D5AA", "#9DB4E6", "#F06A4F"];
 const SVG_NS = "http://www.w3.org/2000/svg";
+const MASCOT = { hoodie: "#353C50", hoodieEdge: "#4A5470", pants: "#2A2F3B", hair: "#3B2A22", skin: "#E8B98F", green: "#45D483" };
 
 function svg(tag, attrs, ...children) {
   const el = document.createElementNS(SVG_NS, tag);
@@ -708,36 +787,39 @@ function digger() {
     svg("line", { x1: 80, y1: 109, x2: 156, y2: 109, stroke: "#6E4627", "stroke-width": 2 }),
     svg("line", { x1: 80, y1: 123, x2: 156, y2: 123, stroke: "#6E4627", "stroke-width": 2 }),
     svg("rect", { x: 110, y: 101, width: 16, height: 5, rx: 2.5, fill: "#5B3A20" }));
+  const sleeve = { stroke: MASCOT.hoodie, "stroke-width": 7, "stroke-linecap": "round" };
   const person = svg("g", { class: "person" },
-    // pernas e tênis
-    svg("rect", { x: 41, y: 100, width: 9, height: 34, rx: 4, fill: "#2A3552" }),
-    svg("rect", { x: 53, y: 100, width: 9, height: 34, rx: 4, fill: "#2A3552" }),
+    // cargo pants and sneakers
+    svg("rect", { x: 41, y: 100, width: 9, height: 34, rx: 4, fill: MASCOT.pants }),
+    svg("rect", { x: 53, y: 100, width: 9, height: 34, rx: 4, fill: MASCOT.pants }),
     svg("ellipse", { cx: 47, cy: 135, rx: 7, ry: 3.5, fill: "#EEE7D7" }),
     svg("ellipse", { cx: 59, cy: 135, rx: 7, ry: 3.5, fill: "#EEE7D7" }),
-    // braço de trás, com a lupa varrendo os discos
+    // back arm, sweeping the records with the magnifying glass
     svg("g", { class: "arm-glass" },
-      svg("line", { x1: 66, y1: 76, x2: 98, y2: 66, stroke: "#D9573F", "stroke-width": 7, "stroke-linecap": "round" }),
+      svg("line", { x1: 66, y1: 76, x2: 98, y2: 66, ...sleeve }),
       svg("line", { x1: 98, y1: 66, x2: 104, y2: 62, stroke: "#EEE7D7", "stroke-width": 3, "stroke-linecap": "round" }),
       svg("circle", { cx: 110, cy: 57, r: 8, fill: "rgba(157,180,230,.25)", stroke: "#EEE7D7", "stroke-width": 2.5 })),
-    // tronco inclinado para o caixote, com a cabeça de gorro
+    // hoodie leaning toward the crate; messy hair and green headphones
     svg("g", { class: "torso", transform: "rotate(22 50 102)" },
-      svg("rect", { x: 37, y: 66, width: 27, height: 40, rx: 10, fill: "#F06A4F" }),
+      svg("rect", { x: 37, y: 66, width: 27, height: 40, rx: 10, fill: MASCOT.hoodie, stroke: MASCOT.hoodieEdge, "stroke-width": 1 }),
+      svg("circle", { cx: 51, cy: 84, r: 4, fill: MASCOT.green }),
       svg("g", { class: "head" },
-        svg("circle", { cx: 51, cy: 54, r: 11, fill: "#E8B98F" }),
-        svg("path", { d: "M40 52 a11 11 0 0 1 22 0 z", fill: "#5CC8C0" }),
-        svg("rect", { x: 39, y: 49, width: 24, height: 4, rx: 2, fill: "#4AA9A2" }),
+        svg("circle", { cx: 51, cy: 54, r: 11, fill: MASCOT.skin }),
+        svg("path", { d: "M39.5 54 Q39 41.5 51 41.5 Q63 41.5 62.5 52 Q59 47.5 54.5 49.5 Q51 46 47 49.5 Q43 48.5 39.5 54 Z", fill: MASCOT.hair }),
+        svg("path", { d: "M40 54 A11.5 11.5 0 0 1 62 50", fill: "none", stroke: MASCOT.green, "stroke-width": 2.2 }),
+        svg("circle", { cx: 44.5, cy: 56, r: 4, fill: "#1B1F27", stroke: MASCOT.green, "stroke-width": 1.6 }),
         svg("circle", { cx: 57.5, cy: 56, r: 1.5, fill: "#0E1525" }))),
-    // braço da frente revirando os discos
+    // front arm going through the records
     svg("g", { class: "arm-dig" },
-      svg("line", { x1: 70, y1: 78, x2: 95, y2: 90, stroke: "#F06A4F", "stroke-width": 7, "stroke-linecap": "round" }),
-      svg("circle", { cx: 96, cy: 91, r: 4, fill: "#E8B98F" })),
-    // comemoração: braço para cima com o disco achado
+      svg("line", { x1: 70, y1: 78, x2: 95, y2: 90, ...sleeve }),
+      svg("circle", { cx: 96, cy: 91, r: 4, fill: MASCOT.skin })),
+    // celebration: arm up holding the record he found
     svg("g", { class: "arm-cheer" },
-      svg("line", { x1: 70, y1: 78, x2: 93, y2: 45, stroke: "#F06A4F", "stroke-width": 7, "stroke-linecap": "round" }),
+      svg("line", { x1: 70, y1: 78, x2: 93, y2: 45, ...sleeve }),
       svg("rect", { x: 83, y: 20, width: 22, height: 22, rx: 2, fill: "#F2C14E" }),
       svg("circle", { cx: 94, cy: 31, r: 6, fill: "#0E1525" }),
-      svg("circle", { cx: 93, cy: 45, r: 4, fill: "#E8B98F" }),
-      svg("path", { d: "M111 20 l6 -4 M113 31 l7 0 M78 16 l-6 -4", stroke: "#F2C14E", "stroke-width": 2, "stroke-linecap": "round" })));
+      svg("circle", { cx: 93, cy: 45, r: 4, fill: MASCOT.skin }),
+      svg("path", { d: "M111 20 l6 -4 M113 31 l7 0 M78 16 l-6 -4", stroke: MASCOT.green, "stroke-width": 2, "stroke-linecap": "round" })));
   const pile = svg("g", { class: "pile" },
     ...Array.from({ length: PILE_SLOTS }, (_, i) => svg("rect", {
       class: "pile-slot",
@@ -749,7 +831,7 @@ function digger() {
   return h("div", { class: "digger-wrap" }, root, h("p", { class: "digger-count", id: "digger-count" }));
 }
 
-/** Bonequinho cavando enquanto a roleta sorteia; a pilha enche a cada música achada. */
+/** The mascot digs while the roulette draws; the pile grows with each song found. */
 function updateDigger(hunt) {
   const el = $("#digger");
   if (!el) return;
@@ -768,15 +850,15 @@ function updateDigger(hunt) {
   el.dataset.filled = String(finds.length);
   const count = $("#digger-count");
   if (count) {
-    count.textContent = roulette
-      ? `${finds.length} de ${roulette.total || PILE_SLOTS} ${roulette.status === "running" ? "achadas até agora" : "achadas"}`
-      : "";
+    const vars = { found: finds.length, total: roulette?.total || PILE_SLOTS };
+    count.textContent = roulette ? t(roulette.status === "running" ? "digger.running" : "digger.done", vars) : "";
   }
 }
 
 async function startHunt(body) {
   if (!body) return;
   state.lastHunt = body;
+  closePicker({ restoreFocus: false });
   try {
     state.hunt = await api("/api/hunts", body);
   } catch (error) {
@@ -821,7 +903,7 @@ function renderHunt() {
     return;
   }
   const signature = JSON.stringify([
-    hunt.status, hunt.progress, hunt.finds.length, hunt.message, state.kept.size, state.openDetails.size,
+    hunt.status, hunt.progress, hunt.finds.length, hunt.message, state.added.size, state.openDetails.size,
     state.blocked.length, state.showBlocked,
   ]);
   if (!panel.hidden && signature === state.huntSignature) return;
@@ -829,44 +911,39 @@ function renderHunt() {
   if (hunt.color) setMood(hunt.color);
 
   const running = hunt.status === "running";
-  const uris = hunt.finds.map((find) => find.uri);
-  const again = { sense: "Gerar de novo", roulette: "Girar de novo", rabbit: "Descer de novo", news: "Buscar de novo" }[hunt.kind];
+  const empty = !hunt.finds.length;
   const percent = hunt.total ? Math.max(4, Math.round((hunt.progress / hunt.total) * 100)) : 4;
+  const picker = (mode) => (event) => openPicker(event.currentTarget, hunt.finds, mode);
   panel.hidden = false;
   const header = [
     h("h2", { class: "hunt-title" }, hunt.label),
     h("p", { class: "meta" }, hunt.message),
     running && h("div", { class: "progress", "aria-hidden": "true" }, h("i", { style: `width: ${percent}%` })),
     h("div", { class: "actions" },
-      h("button", { class: "play-button", type: "button", disabled: !uris.length, onclick: () => playFinds(hunt.finds) },
-        playIcon(), "Tocar tudo"),
-      hunt.kind === "sense"
-        ? h("button", { class: "ghost-button", type: "button", disabled: running || !uris.length, onclick: saveHunt },
-          "Salvar como playlist")
-        : h("button", {
-          class: "ghost-button",
-          type: "button",
-          disabled: !uris.length || uris.every((uri) => state.kept.has(uri)),
-          onclick: (event) => keep(uris, event.currentTarget),
-        }, "Guardar todas"),
+      h("button", { class: "play-button", type: "button", disabled: empty, onclick: () => playFinds(hunt.finds) },
+        playIcon(), t("hunt.play_all")),
+      h("button", { class: "ghost-button", type: "button", disabled: empty, "aria-haspopup": "dialog", onclick: picker("new") },
+        t("hunt.create")),
+      h("button", { class: "ghost-button", type: "button", disabled: empty, "aria-haspopup": "dialog", onclick: picker("list") },
+        t("hunt.add_all")),
       h("button", { class: "text-button", type: "button", onclick: () => startHunt(state.lastHunt || { kind: hunt.kind }) },
-        again),
+        t(`hunt.again.${hunt.kind}`)),
       state.blocked.length > 0 && h("button", {
         class: "text-button",
         type: "button",
         "aria-expanded": String(state.showBlocked),
         "aria-controls": "blocked-list",
         onclick: () => { state.showBlocked = !state.showBlocked; renderHunt(); },
-      }, `Artistas bloqueados (${state.blocked.length})`),
+      }, t("hunt.blocked", { count: state.blocked.length })),
     ),
     state.showBlocked && state.blocked.length > 0 && h("ul", { class: "blocked-list", id: "blocked-list" },
       state.blocked.map((artist) => h("li", null,
         h("span", null, artist),
-        h("button", { class: "text-button", type: "button", onclick: () => setBlocked(artist, false) }, "Desbloquear")))),
+        h("button", { class: "text-button", type: "button", onclick: () => setBlocked(artist, false) }, t("hunt.unblock"))))),
   ];
   panel.replaceChildren(...header.filter(Boolean));
 
-  // Só as músicas que acabaram de chegar ganham a animação de "cair" na lista.
+  // Only songs that just arrived get the "falling" animation in the list.
   const fresh = (find) => {
     const isNew = !state.landed.has(find.uri);
     state.landed.add(find.uri);
@@ -885,22 +962,26 @@ function renderHunt() {
 
 function findDetails(find) {
   if (find.bpm) {
-    const energy = Math.round((find.energy || 0) * 100);
-    return `BPM medido na prévia: ${find.bpm}. Energia: ${energy} de 100.`;
+    return t("find.bpm", { bpm: find.bpm, energy: Math.round((find.energy || 0) * 100) });
   }
   const parts = [find.reason];
-  if (find.fans != null && !(find.reason || "").includes("fãs")) parts.push(`Artista com ${fans(find.fans)}.`);
+  if (find.fans != null && !/fãs|fans/.test(find.reason || "")) parts.push(t("find.fans", { fans: fans(find.fans) }));
   return parts.filter(Boolean).join(" ");
 }
 
 function findRow(find, finds, index, isNew) {
-  const kept = state.kept.has(find.uri);
+  const added = state.added.has(find.uri);
   const details = findDetails(find);
   const artist = (find.artists || [])[0];
   const open = state.openDetails.has(find.uri);
   const classes = ["track", "find", open && "is-open", isNew && "is-new"].filter(Boolean).join(" ");
   return h("li", { class: classes, "data-uri": find.uri },
-    h("button", { class: "track-button", type: "button", title: `Tocar ${find.title}`, onclick: () => playFinds(finds, find.uri) },
+    h("button", {
+      class: "track-button",
+      type: "button",
+      title: t("action.play_title", { title: find.title }),
+      onclick: () => playFinds(finds, find.uri),
+    },
       h("span", { class: "track-index" }, String(index + 1)),
       find.image ? h("img", { class: "track-art", src: find.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
       h("span", { class: "track-text" },
@@ -915,22 +996,21 @@ function findRow(find, finds, index, isNew) {
       class: "info-button",
       type: "button",
       "aria-expanded": String(open),
-      "aria-label": `Detalhes de ${find.title}`,
-      title: "Por que essa música?",
+      "aria-label": t("find.details_of", { title: find.title }),
+      title: t("find.why"),
       onclick: () => toggleDetails(find.uri),
     }, infoIcon()),
     h("button", {
-      class: "keep-button",
+      class: added ? "add-button is-added" : "add-button",
       type: "button",
-      disabled: kept,
-      title: "Guardar na playlist Achados da Sala",
-      "aria-label": `Guardar ${find.title} nos Achados da Sala`,
-      onclick: (event) => keep([find.uri], event.currentTarget),
-    }, kept ? "Guardada" : "Guardar"),
+      "aria-haspopup": "dialog",
+      "aria-label": t("find.add_title", { title: find.title }),
+      onclick: (event) => openPicker(event.currentTarget, [find], "list"),
+    }, t(added ? "find.added" : "find.add")),
     open && h("div", { class: "find-details" },
       details && h("span", null, details),
       artist && h("button", { class: "text-button", type: "button", onclick: () => setBlocked(artist, true) },
-        `Não mostrar mais ${artist}`)),
+        t("find.block", { artist }))),
   );
 }
 
@@ -940,7 +1020,7 @@ async function setBlocked(artist, blocked) {
     state.blocked = artists;
     if (!artists.length) state.showBlocked = false;
     toast(message);
-    // O servidor já tirou o artista do resultado; busca a versão atualizada.
+    // The server already took the artist out of the result; fetch the updated version.
     const hunt = await api("/api/hunts/current");
     if (hunt) state.hunt = hunt;
   } catch (error) {
@@ -957,52 +1037,297 @@ function toggleDetails(uri) {
 }
 
 function infoIcon() {
-  const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
-  icon.append(svg("circle", { cx: 12, cy: 12, r: 9 }), svg("path", { d: "M12 11v5M12 7.5v.5" }));
-  return icon;
+  const el = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
+  el.append(svg("circle", { cx: 12, cy: 12, r: 9 }), svg("path", { d: "M12 11v5M12 7.5v.5" }));
+  return el;
 }
 
 function fans(count) {
-  if (count == null) return "poucos fãs";
-  return `${compactNumber.format(count)} ${count === 1 ? "fã" : "fãs"}`;
+  if (count == null) return t("fans.few");
+  return t("fans.count", { count, n: compactNumber.format(count) });
 }
 
 function chainRow(chain) {
   const last = chain.path[chain.path.length - 1];
   return h("li", { class: "chain" },
-    h("ol", { class: "chain-path", "aria-label": "Caminho entre artistas" },
+    h("ol", { class: "chain-path", "aria-label": t("chain.label") },
       chain.path.map((artist) => h("li", null, artist.name))),
-    h("p", { class: "meta", title: "Fãs no catálogo que a sala consulta para achar artistas pouco conhecidos." },
-      `${last.name}: ${fans(last.fans)}.`));
+    h("p", { class: "meta", title: t("chain.fans_hint") }, `${last.name}: ${fans(last.fans)}.`));
 }
 
-async function keep(uris, button) {
-  button.disabled = true;
+// ---------- Keeping what you liked: a new playlist, or adding to one you already have
+
+function defaultPlaylistName(hunt) {
+  if (hunt.kind === "sense") return t("save.default_sense", { name: hunt.label });
+  const day = new Date().toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" });
+  return t("save.default_name", { label: hunt.label, day });
+}
+
+/** Small panel next to the button (a bottom sheet on phones) to pick where the songs go. */
+function openPicker(anchor, finds, mode) {
+  closePicker({ restoreFocus: false });
+  const hunt = huntHere();
+  state.picker = {
+    anchor,
+    mode,
+    from: mode,
+    uris: finds.map((find) => find.uri),
+    label: finds.length === 1 ? finds[0].title : t("count.songs", { count: finds.length }),
+    name: finds.length > 1 && hunt ? defaultPlaylistName(hunt) : "",
+    busy: false,
+    conflict: null,
+    rect: anchor.getBoundingClientRect(),
+  };
+  document.body.append(h("div", { class: "picker", id: "picker", role: "dialog", "aria-labelledby": "picker-title" }));
+  if (mode === "list" && !state.myPlaylists?.playlists && !state.myPlaylists?.loading) loadMyPlaylists();
+  renderPicker();
+  placePicker();
+  focusPicker();
+  document.addEventListener("pointerdown", pickerOutside, true);
+}
+
+function closePicker({ restoreFocus = true } = {}) {
+  const picker = state.picker;
+  if (!picker) return;
+  $("#picker")?.remove();
+  document.removeEventListener("pointerdown", pickerOutside, true);
+  state.picker = null;
+  if (!restoreFocus) return;
+  // The button may have been redrawn meanwhile: look for the same song's button.
+  const row = picker.uris.length === 1 && document.querySelector(`.find[data-uri="${CSS.escape(picker.uris[0])}"] .add-button`);
+  (picker.anchor.isConnected ? picker.anchor : row)?.focus();
+}
+
+function pickerOutside(event) {
+  if (!state.picker || event.target.closest("#picker") || state.picker.anchor.contains(event.target)) return;
+  closePicker({ restoreFocus: false });
+}
+
+function focusPicker() {
+  $("#picker")?.querySelector("input, .picker-option, .play-button")?.focus();
+}
+
+function switchPicker(changes) {
+  Object.assign(state.picker, changes);
+  renderPicker();
+  placePicker();
+  focusPicker();
+}
+
+async function loadMyPlaylists() {
+  state.myPlaylists = { loading: true };
   try {
-    const { message } = await api("/api/finds/keep", { uris });
-    uris.forEach((uri) => state.kept.add(uri));
-    toast(message);
-    renderHunt();
+    state.myPlaylists = await api("/api/my-playlists");
   } catch (error) {
-    button.disabled = false;
+    state.myPlaylists = { error: error.message };
+  }
+  renderPicker();
+  placePicker();
+}
+
+function renderPicker() {
+  const panel = $("#picker");
+  const picker = state.picker;
+  if (!panel || !picker) return;
+  const title = t(picker.mode === "list" ? "picker.title_add" : "picker.title_new");
+  const body = picker.conflict ? conflictView(picker) : picker.mode === "new" ? newPlaylistForm(picker) : playlistChoices(picker);
+  panel.classList.toggle("is-busy", picker.busy);
+  panel.replaceChildren(
+    h("header", { class: "picker-head" },
+      h("h2", { class: "picker-title", id: "picker-title" }, title),
+      h("p", { class: "picker-sub" }, picker.label),
+      h("button", { class: "picker-close", type: "button", "aria-label": t("common.close"), onclick: () => closePicker() },
+        icon(CLOSE_ICON))),
+    ...body);
+}
+
+function playlistChoices(picker) {
+  const mine = state.myPlaylists || {};
+  const option = (target, name, sub, art) => h("li", null,
+    h("button", { class: "picker-option", type: "button", disabled: picker.busy, onclick: () => addToPlaylist(target) },
+      art,
+      h("span", { class: "picker-option-text" },
+        h("span", { class: "picker-option-name" }, name),
+        h("span", { class: "picker-option-sub" }, sub))));
+  const rows = [option("finds", mine.finds || t("picker.finds"), t("picker.finds_sub"),
+    h("img", { class: "picker-art is-round", src: "/mascot-head.webp", alt: "" }))];
+  if (mine.loading) rows.push(h("li", { class: "picker-note" }, t("picker.loading")));
+  else if (mine.error) rows.push(h("li", { class: "picker-note is-error" }, mine.error));
+  for (const playlist of mine.playlists || []) {
+    const art = playlist.image
+      ? h("img", { class: "picker-art", src: playlist.image, alt: "", loading: "lazy" })
+      : h("span", { class: "picker-art is-empty", "aria-hidden": "true" }, playlist.name.charAt(0));
+    rows.push(option(playlist.id, playlist.name, t("count.tracks", { count: playlist.total }), art));
+  }
+  return [
+    h("ul", { class: "picker-list" }, rows),
+    h("button", { class: "picker-new", type: "button", disabled: picker.busy, onclick: () => switchPicker({ mode: "new" }) },
+      t("picker.new")),
+  ];
+}
+
+function newPlaylistForm(picker) {
+  const input = h("input", {
+    class: "picker-input",
+    id: "picker-name",
+    type: "text",
+    maxlength: "100",
+    autocomplete: "off",
+    required: true,
+    placeholder: t("picker.name_placeholder"),
+  });
+  input.value = picker.name;
+  input.addEventListener("input", () => { picker.name = input.value; });
+  const submit = (event) => {
+    event.preventDefault();
+    createPlaylist(false);
+  };
+  return [h("form", { class: "picker-form", onsubmit: submit },
+    h("label", { class: "filter-label", for: "picker-name" }, t("picker.name_label")),
+    input,
+    h("div", { class: "picker-actions" },
+      h("button", { class: "play-button is-small", type: "submit", disabled: picker.busy }, t("picker.create")),
+      picker.from === "list"
+        ? h("button", { class: "text-button", type: "button", onclick: () => switchPicker({ mode: "list" }) }, t("common.back"))
+        : h("button", { class: "text-button", type: "button", onclick: () => closePicker() }, t("common.cancel"))))];
+}
+
+function conflictView(picker) {
+  return [h("div", { class: "picker-form" },
+    h("p", { class: "picker-conflict" }, picker.conflict, " ", t("picker.replace_question")),
+    h("div", { class: "picker-actions" },
+      h("button", { class: "play-button is-small is-danger", type: "button", disabled: picker.busy, onclick: () => createPlaylist(true) },
+        t("picker.replace")),
+      h("button", { class: "text-button", type: "button", onclick: () => switchPicker({ conflict: null }) }, t("picker.rename"))))];
+}
+
+async function addToPlaylist(target) {
+  const picker = state.picker;
+  if (!picker || picker.busy) return;
+  picker.busy = true;
+  renderPicker();
+  try {
+    const { message } = await api("/api/playlists/add", { playlist: target, uris: picker.uris });
+    markAdded(picker.uris);
+    toast(message);
+    closePicker();
+  } catch (error) {
+    picker.busy = false;
+    renderPicker();
     toast(error.message, true);
   }
 }
 
-async function saveHunt(event) {
-  const button = event.currentTarget;
-  button.disabled = true;
+async function createPlaylist(replace) {
+  const picker = state.picker;
+  if (!picker || picker.busy) return;
+  const name = picker.name.trim();
+  if (!name) {
+    $("#picker-name")?.focus();
+    return;
+  }
+  picker.busy = true;
+  renderPicker();
   try {
-    const { message } = await api("/api/hunts/save", {});
+    const { message } = await api("/api/playlists/new", { name, uris: picker.uris, replace });
+    markAdded(picker.uris);
+    state.myPlaylists = null;
     toast(message);
+    closePicker();
+    if (!state.overview.me.is_owner) loadOverview();  // a friend's shelf shows their own playlists
   } catch (error) {
+    picker.busy = false;
+    if (error.data?.exists) {
+      switchPicker({ conflict: error.message });
+      return;
+    }
+    renderPicker();
     toast(error.message, true);
-  } finally {
-    button.disabled = false;
   }
 }
 
-// ---------- Atualizações (setup / prévia)
+function markAdded(uris) {
+  uris.forEach((uri) => state.added.add(uri));
+  state.huntSignature = "";
+  renderHunt();
+}
+
+/** Next to the button, below it, or above it when there's no room before the player. */
+function placePicker() {
+  const panel = $("#picker");
+  const picker = state.picker;
+  if (!panel || !picker) return;
+  const sheet = window.matchMedia("(max-width: 760px)").matches;
+  panel.classList.toggle("is-sheet", sheet);
+  if (sheet) {
+    panel.style.left = panel.style.top = "";
+    return;
+  }
+  if (picker.anchor.isConnected) picker.rect = picker.anchor.getBoundingClientRect();
+  const { rect } = picker;
+  const bottom = window.innerHeight - $("#player").offsetHeight - 12;
+  let top = rect.bottom + 8;
+  if (top + panel.offsetHeight > bottom) top = Math.max(12, rect.top - 8 - panel.offsetHeight);
+  // Starts at the button's left edge; buttons near the right edge (each song's "Add") get it aligned to their right.
+  const fits = rect.left + panel.offsetWidth <= window.innerWidth - 12;
+  const left = Math.max(12, fits ? rect.left : rect.right - panel.offsetWidth);
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+}
+
+// ---------- How it works: a short tour with the mascot
+
+const TOUR = [
+  { key: "welcome", art: "hero", focus: "40% 30%" },
+  { key: "shelf", art: "shelf", focus: "50% 40%" },
+  { key: "sense", art: "sensations", focus: "50% 30%" },
+  { key: "discover", art: "roulette", focus: "50% 40%" },
+  { key: "news", art: "news", focus: "60% 40%" },
+  { key: "keep", art: "journeys", focus: "50% 30%" },
+];
+
+function openTour(step = 0) {
+  let dialog = $("#tour");
+  if (!dialog) {
+    dialog = h("dialog", { class: "tour", id: "tour", "aria-labelledby": "tour-title" });
+    dialog.addEventListener("close", () => memory.set("tour-seen", "1"));
+    // A click on the dimmed backdrop lands on the dialog itself.
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+    document.body.append(dialog);
+  }
+  closePicker({ restoreFocus: false });
+  showTourStep(step);
+  if (!dialog.open) dialog.showModal();
+  dialog.querySelector(".tour-next")?.focus();
+}
+
+function showTourStep(step) {
+  const dialog = $("#tour");
+  state.tourStep = step;
+  const { key, art, focus } = TOUR[step];
+  const last = step === TOUR.length - 1;
+  const goTo = (next) => {
+    showTourStep(next);
+    dialog.querySelector(".tour-next")?.focus();
+  };
+  dialog.replaceChildren(
+    h("img", { class: "tour-art", src: `/mascot-${art}.webp`, alt: "", style: `object-position: ${focus}` }),
+    h("div", { class: "tour-body" },
+      h("p", { class: "tour-step" }, t("tour.step", { n: step + 1, total: TOUR.length })),
+      h("h2", { class: "tour-title", id: "tour-title" }, t(`tour.${key}.title`, { name: state.overview?.me?.name || "" })),
+      h("p", { class: "tour-text" }, t(`tour.${key}.text`)),
+      h("ol", { class: "tour-dots", "aria-hidden": "true" },
+        TOUR.map((_, index) => h("li", { class: index === step ? "is-current" : null }))),
+      h("div", { class: "tour-actions" },
+        step > 0 && h("button", { class: "text-button", type: "button", onclick: () => goTo(step - 1) }, t("common.back")),
+        h("button", { class: "play-button tour-next", type: "button", onclick: () => (last ? dialog.close() : goTo(step + 1)) },
+          t(last ? "tour.start" : "tour.next")))),
+    h("button", { class: "tour-close", type: "button", "aria-label": t("tour.skip"), title: t("tour.skip"), onclick: () => dialog.close() },
+      icon(CLOSE_ICON)),
+  );
+}
+
+// ---------- Curated playlist updates (setup / preview)
 
 async function startJob(dryRun) {
   try {
@@ -1027,15 +1352,15 @@ async function pollJob() {
     return;
   }
   if (job.status === "error") {
-    toast("A atualização falhou. Veja o motivo no painel.", true);
+    toast(t("job.failed"), true);
     return;
   }
   if (job.dry_run) {
-    toast("Prévia pronta. Nada foi alterado no Spotify.");
+    toast(t("job.preview_ready"));
     return;
   }
-  const outcome = job.lines.filter((line) => line.includes("gravada no Spotify") || line.includes("ficou vazia")).pop();
-  toast(outcome ? outcome.replace("gravada no Spotify", "atualizada") : "Pronto.");
+  const outcome = job.lines.filter((line) => /gravada no Spotify|saved to Spotify|ficou vazia|came out empty/.test(line)).pop();
+  toast(outcome ? outcome.trim() : t("job.done"));
   await Promise.all([loadOverview(), loadDetail()]);
 }
 
@@ -1043,11 +1368,11 @@ function renderConsole(job) {
   const panel = $("#console");
   panel.hidden = false;
   panel.dataset.status = job.status;
-  const name = job.label.replace(/^(Prévia de|Atualizando) /, "");
+  const name = job.name;
   $("#console-title").textContent = {
     running: `${job.label}…`,
-    done: job.dry_run ? `Prévia de ${name} pronta` : `${name} atualizada`,
-    error: `Não foi possível atualizar ${name}`,
+    done: t(job.dry_run ? "job.title_preview_done" : "job.title_done", { name }),
+    error: t("job.title_error", { name }),
   }[job.status];
   const box = $("#console-lines");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
@@ -1056,9 +1381,9 @@ function renderConsole(job) {
 }
 
 function lineClass(line) {
-  if (line.includes("não encontrado")) return "line is-warning";
+  if (/não encontrado|not found/.test(line)) return "line is-warning";
   if (line.startsWith("   ")) return "line is-item";
-  if (/: \d+ itens$/.test(line)) return "line is-heading";
+  if (/: \d+ (itens|items)$/.test(line)) return "line is-heading";
   return "line";
 }
 
@@ -1074,7 +1399,7 @@ async function refreshPlayer() {
   renderPlayer();
 }
 
-/** Consulta o player sem desperdício: 5 s tocando, 15 s parado, nada com a aba escondida. */
+/** Polls the player without waste: 5 s while playing, 15 s when stopped, nothing with the tab hidden. */
 function schedulePlayerPoll() {
   clearTimeout(state.pollTimer);
   const delay = state.player?.is_playing ? 5000 : 15000;
@@ -1110,9 +1435,9 @@ function renderPlayer() {
   }
   const item = player.item;
   bar.dataset.state = item ? (player.is_playing ? "playing" : "paused") : "idle";
-  $("#btn-play").setAttribute("aria-label", player.is_playing ? "Pausar" : "Tocar");
-  $("#now-title").textContent = item ? item.title : "Nada tocando";
-  $("#now-sub").textContent = item ? item.subtitle : (player.error || "Toque uma playlist daqui ou abra o Spotify.");
+  $("#btn-play").setAttribute("aria-label", t(player.is_playing ? "player.pause" : "player.play"));
+  $("#now-title").textContent = item ? item.title : t("player.nothing");
+  $("#now-sub").textContent = item ? item.subtitle : (player.error || t("player.hint"));
   const art = $("#now-art");
   if (item?.image) {
     if (art.getAttribute("src") !== item.image) art.src = item.image;
@@ -1121,13 +1446,19 @@ function renderPlayer() {
     art.hidden = true;
   }
   $("#btn-shuffle").setAttribute("aria-pressed", String(Boolean(player.shuffle)));
+  const repeat = $("#btn-repeat");
+  const mode = player.repeat || "off";
+  repeat.dataset.mode = mode;
+  repeat.setAttribute("aria-pressed", String(mode !== "off"));
+  repeat.setAttribute("aria-label", t(`player.repeat_${mode}`));
+  repeat.title = t(`player.repeat_${mode}`);
   const volume = $("#volume");
   volume.disabled = player.device?.volume == null;
   if (!volume.disabled && document.activeElement !== volume) {
     volume.value = player.device.volume;
     paintRange(volume);
   }
-  $("#device").textContent = player.device?.name ? `Tocando em ${player.device.name}` : "";
+  $("#device").textContent = player.device?.name ? t("player.on_device", { name: player.device.name }) : "";
   tick();
   markPlaying();
 }
@@ -1142,7 +1473,7 @@ function tick() {
   paintRange(seek);
   $("#time-pos").textContent = clock(now);
   $("#time-dur").textContent = clock(duration);
-  // Faixa acabou: busca a próxima sem esperar o ciclo normal.
+  // The track ended: fetch the next one without waiting for the normal cycle.
   if (state.player?.is_playing && duration && now >= duration) refreshPlayerSoon(800);
 }
 
@@ -1166,7 +1497,7 @@ function markPlaying() {
 
 async function command(body, optimistic) {
   if (state.player?.needs_scope) {
-    toast("Autorize o controle do player na barra de baixo.", true);
+    toast(t("player.authorize_first"), true);
     return;
   }
   if (optimistic && state.player?.item) {
@@ -1185,7 +1516,7 @@ function play(contextUri, offsetUri) {
   return command({ action: "play", context_uri: contextUri, offset_uri: offsetUri });
 }
 
-/** Toca uma lista solta de faixas (resultado de sensação/descoberta), sem criar playlist. */
+/** Plays a loose list of tracks (a sensation or discovery result) without creating a playlist. */
 function playFinds(finds, offsetUri) {
   return command({ action: "play", uris: finds.map((find) => find.uri), offset_uri: offsetUri });
 }
@@ -1210,6 +1541,11 @@ function bindPlayer() {
     const enabled = !state.player?.shuffle;
     command({ action: "shuffle", value: enabled }, (p) => { p.shuffle = enabled; });
   });
+  // Repeat goes around like in Spotify: off -> the whole list -> this track -> off.
+  $("#btn-repeat").addEventListener("click", () => {
+    const next = { off: "context", context: "track", track: "off" }[state.player?.repeat || "off"];
+    command({ action: "repeat", value: next }, (p) => { p.repeat = next; });
+  });
 
   const seek = $("#seek");
   seek.addEventListener("input", () => {
@@ -1228,7 +1564,7 @@ function bindPlayer() {
   volume.addEventListener("change", () => command({ action: "volume", value: Number(volume.value) }));
 }
 
-// ---------- Início
+// ---------- Start
 
 function bindGlobal() {
   $("#console-close").addEventListener("click", () => { $("#console").hidden = true; });
@@ -1237,15 +1573,22 @@ function bindGlobal() {
     const query = event.target.value;
     state.searchTimer = setTimeout(() => search(query), 300);
   });
+  // The picker follows its button when the page scrolls or the window changes size.
+  $("#stage").addEventListener("scroll", placePicker, { passive: true });
+  window.addEventListener("scroll", placePicker, { passive: true });
+  window.addEventListener("resize", placePicker);
 
   document.addEventListener("keydown", (event) => {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") {
-      $("#console").hidden = true;
+      if (state.picker) closePicker();
+      else $("#console").hidden = true;
       return;
     }
-    if (event.target.closest?.("input, textarea, select") || document.body.classList.contains("is-gated")) return;
+    const typing = event.target.closest?.("input, textarea, select");
+    if (typing || state.picker || $("#tour")?.open || document.body.classList.contains("is-gated")) return;
     if (event.code === "Space") {
+      if (event.target.closest?.("button, a")) return;  // space presses the focused button
       event.preventDefault();
       togglePlay();
     } else if (event.key === "ArrowRight") {
@@ -1262,15 +1605,16 @@ function bindGlobal() {
     if (!document.hidden) refreshPlayer();
   });
 
-  // Favoritos e o botão voltar mudam só o #; replaceState em select() não dispara este evento.
+  // Bookmarks and the back button only change the #; replaceState in select() doesn't fire this event.
   window.addEventListener("hashchange", () => {
     const key = decodeURIComponent(location.hash.slice(1));
     const showing = state.view === "playlist" ? state.selected : state.view;
-    if (state.overview && key && key !== showing) go(key);
+    if (state.overview && key && (VIEW_ALIASES[key] || key) !== showing) go(key);
   });
 }
 
 async function init() {
+  translatePage();
   bindGlobal();
   bindPlayer();
   try {
@@ -1281,10 +1625,11 @@ async function init() {
     }
     return;
   }
-  // pollHunt retoma uma busca que estava rodando quando a página foi recarregada.
+  // pollHunt resumes a discovery that was running when the page was reloaded.
   await Promise.all([go(state.initialKey), refreshPlayer(), pollHunt()]);
   schedulePlayerPoll();
   setInterval(tick, 500);
+  if (!memory.get("tour-seen")) openTour(0);
 }
 
 init();

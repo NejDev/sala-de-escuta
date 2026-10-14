@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import config, discovery
+from spotify_assistant import config, discovery, i18n
 from spotify_assistant.api import SpotifyError
 from spotify_assistant.tempo import Analysis
 
@@ -13,7 +13,7 @@ _tmp = tempfile.TemporaryDirectory()
 
 
 def setUpModule():
-    # A memória de faixas localizadas é global: aponta para um arquivo temporário e zera a cada teste.
+    # The memory of matched tracks is global: point it at a temporary file and reset it for each test.
     patcher = mock.patch.object(config, "MATCH_CACHE_FILE", Path(_tmp.name) / "matches.json")
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
@@ -23,6 +23,8 @@ def setUpModule():
 class FreshMatches(unittest.TestCase):
     def setUp(self):
         discovery.matches = discovery.MatchCache()
+        i18n.use("pt")  # messages are checked in Portuguese; EnglishMessagesTest covers English
+        self.addCleanup(i18n.use, i18n.DEFAULT)
 
 
 def dz_track(track_id, bpm, energy=0.8, title=None, artist="Artista", rank=1000, preview=True):
@@ -33,7 +35,7 @@ def dz_track(track_id, bpm, energy=0.8, title=None, artist="Artista", rank=1000,
         "isrc": f"ISRC{track_id}",
         "rank": rank,
         "readable": True,
-        # O medidor falso lê BPM e energia direto da "prévia".
+        # The fake meter reads BPM and energy straight from the "preview".
         "preview": f"{bpm}:{energy}" if preview else "",
     }
 
@@ -87,7 +89,7 @@ class FakeDeezer:
 
 
 class FakeSpotify:
-    """Toda faixa do Deezer existe no Spotify com o mesmo número."""
+    """Every Deezer track exists on Spotify under the same number."""
 
     def __init__(self, missing=()):
         self.missing = set(missing)
@@ -137,7 +139,7 @@ class RulesTest(unittest.TestCase):
     def test_next_hop_goes_to_lesser_known(self):
         options = [{"id": i, "nb_fan": fans} for i, fans in enumerate([50, 900, 5000, 80000, 120000, 3000000])]
         picks = {discovery.next_hop(options, {2}, random.Random(seed))["id"] for seed in range(30)}
-        # 50 fãs fica de fora (mínimo) e 5000 já foi visitado: sobra o terço de baixo dos restantes.
+        # 50 fans is left out (minimum) and 5000 was already visited: the bottom third of the rest remains.
         self.assertEqual(picks, {1})
         self.assertIsNone(discovery.next_hop([{"id": 9, "nb_fan": 10}], set(), random.Random()))
 
@@ -161,7 +163,7 @@ class ReligiousFilterTest(unittest.TestCase):
         self.assertTrue(discovery.religious_track({"name": "X", "artists": [{"name": "Y"}], "album": {"name": "Hinos Avulsos"}}))
 
     def test_playlist_full_of_hints_is_dropped(self):
-        # Nenhum título diz "gospel", mas várias faixas falam de Senhor, glória, milagre...
+        # No title says "gospel", but several tracks talk about the Lord, glory, miracles...
         tracks = [dz_track(i, 80, title=title) for i, title in enumerate(
             ["Senhor do Céu", "Glória", "Milagres", "Ressuscita-me", "Sonhos", "Estrada", "Mar"])]
         self.assertTrue(discovery.religious_collection("Esperança", tracks))
@@ -202,7 +204,7 @@ class FeelingTextTest(unittest.TestCase):
         for text in ("ÓDIO", "tô com muita raiva", "odeio segunda", "furioso"):
             spec = discovery.spec_from_text(text)
             self.assertEqual(spec["bpm"], [125, 185], text)
-            self.assertEqual(spec["sources"][0], text)  # a frase é a primeira busca
+            self.assertEqual(spec["sources"][0], text)  # the phrase is the first search
         self.assertEqual(discovery.spec_from_text("coração partido")["color"], "#9C7AA8")
         self.assertEqual(discovery.spec_from_text("chorando no banho")["bpm"], [55, 100])
 
@@ -220,10 +222,10 @@ class FeelingTextTest(unittest.TestCase):
         analyses = [Analysis(bpm, 0.5, energy) for bpm, energy in
                     [(92, 0.6), (184, 0.62), (90, 0.58), (95, 0.65), (46, 0.6), (150, 0.2), (91, 0.61)]]
         center = discovery.consensus(analyses)
-        self.assertAlmostEqual(center[0], 92, delta=2)  # 184 e 46 dobram/metade para ~92
+        self.assertAlmostEqual(center[0], 92, delta=2)  # 184 and 46 halve/double to ~92
         self.assertIsNotNone(discovery.consensus_distance(Analysis(186, 0.5, 0.6), center))
         self.assertIsNone(discovery.consensus_distance(Analysis(150, 0.5, 0.2), center))
-        self.assertIsNone(discovery.consensus(analyses[:3]))  # poucas prévias
+        self.assertIsNone(discovery.consensus(analyses[:3]))  # too few previews
 
 
 class SenseTest(FreshMatches):
@@ -248,7 +250,7 @@ class SenseTest(FreshMatches):
         hunt = discovery.Hunt("sense", "Treino pesado")
         discovery.sense(hunt, SPEC, FakeSpotify(missing={"8"}), self.deezer(), random.Random(2), MemoryCache(), fake_measure)
         found = {find.uri: find.bpm for find in hunt.finds}
-        # 2 (90) fora; 3 (70) vira 140; 4 sem energia; 8 não existe no Spotify.
+        # 2 (90) is out; 3 (70) becomes 140; 4 lacks energy; 8 isn't on Spotify.
         self.assertEqual(found, {"spotify:track:1": 128, "spotify:track:3": 140, "spotify:track:7": 145})
         self.assertEqual(hunt.progress, 6)
         self.assertIn("3 músicas", hunt.message)
@@ -263,7 +265,7 @@ class SenseTest(FreshMatches):
         hunt = discovery.Hunt("sense", "Domingo")
         discovery.sense(hunt, spec, FakeSpotify(), deezer, random.Random(4), MemoryCache(), fake_measure)
         kept = {find.uri.rsplit(":", 1)[1] for find in hunt.finds}
-        self.assertEqual(kept, {"1", "2", "3", "4", "5", "6"})  # 160/0.95 e 60/0.1 fogem do padrão
+        self.assertEqual(kept, {"1", "2", "3", "4", "5", "6"})  # 160/0.95 and 60/0.1 break the pattern
         self.assertIn("perto de", hunt.message)
 
     def test_cached_measurements_skip_download(self):
@@ -274,8 +276,8 @@ class SenseTest(FreshMatches):
         hunt = discovery.Hunt("sense", "Treino pesado")
         discovery.sense(hunt, SPEC, FakeSpotify(), deezer, random.Random(3), cache, fake_measure)
         downloaded = {call.args[0] for call in deezer.preview.call_args_list}
-        self.assertNotIn("128:0.8", downloaded)  # prévia da faixa 1, já medida
-        self.assertEqual(deezer.preview.call_count, 5)  # 6 candidatas, 1 já medida
+        self.assertNotIn("128:0.8", downloaded)  # track 1's preview, already measured
+        self.assertEqual(deezer.preview.call_count, 5)  # 6 candidates, 1 already measured
 
 
 class RabbitTest(FreshMatches):
@@ -290,7 +292,7 @@ class RabbitTest(FreshMatches):
                 2: [{"id": 21, "title": "Cool Struttin'"}, {"id": 22, "title": "Blue Minor"}],
                 3: [
                     {"id": 31, "title": "Eu e a Brisa"},
-                    {"id": 30, "title": "Eu e a Brisa (Ao Vivo)"},  # mesma música: pula
+                    {"id": 30, "title": "Eu e a Brisa (Ao Vivo)"},  # same song: skipped
                     {"id": 32, "title": "Rapaz de Bem"},
                     {"id": 33, "title": "Céu e Mar"},
                 ],
@@ -300,7 +302,7 @@ class RabbitTest(FreshMatches):
         discovery.rabbit_hole(hunt, FakeSpotify(), deezer, random.Random(), ["Chet Baker"], walks=1)
         chain = hunt.chains[0]
         self.assertEqual([a["name"] for a in chain["path"]], ["Chet Baker", "Sonny Clark", "Tina Brooks"])
-        # Uma do meio do caminho (Sonny Clark) e duas do fim (Tina Brooks); o artista de partida fica de fora.
+        # One from midway (Sonny Clark) and two from the end (Tina Brooks); the starting artist is left out.
         self.assertEqual([f.uri for f in chain["finds"]], ["spotify:track:21", "spotify:track:31", "spotify:track:32"])
         self.assertIn("Pulo 1 de 2", chain["finds"][0].reason)
         self.assertIn("Fim da toca", chain["finds"][-1].reason)
@@ -329,7 +331,7 @@ class SpotifyLimitsTest(FreshMatches):
         hunt = discovery.Hunt("roulette", "Roleta")
         with self.assertRaises(SpotifyError):
             discovery.roulette(hunt, sp, FakeDeezer(), random.Random(1))
-        self.assertEqual(sp.search.call_count, 1)  # não fica insistindo
+        self.assertEqual(sp.search.call_count, 1)  # doesn't keep retrying
 
 
 def song(track_id, title, artist_id, artist_name):
@@ -352,7 +354,7 @@ class FiltersTest(FreshMatches):
         options = [{"id": i, "name": f"A{i}", "nb_fan": fans} for i, fans in enumerate([150, 2000, 40000, 900000])]
         size = discovery.FanRange(1000, 50000)
         picks = {discovery.next_hop(options, set(), random.Random(s), size=size)["id"] for s in range(30)}
-        self.assertEqual(picks, {1})  # 2000 é o terço menos conhecido dentro de 1 mil..50 mil
+        self.assertEqual(picks, {1})  # 2000 is the least-known third within 1k..50k
         self.assertIsNone(discovery.next_hop(options, set(), random.Random(), size=discovery.FanRange(10_000_000)))
 
     def test_roulette_genre_pick_respects_size(self):
@@ -377,7 +379,8 @@ class NewsTest(FreshMatches):
     def deezer(self):
         today = date.today()
         recent = (today - timedelta(days=3)).isoformat()
-        newest = (today - timedelta(days=1)).isoformat()
+        self.newest = today - timedelta(days=1)
+        newest = self.newest.isoformat()
         old = (today - timedelta(days=200)).isoformat()
         lineup = [song(1, "x", 10, "Banda Média"), song(2, "x", 20, "Gigante"), song(3, "x", 30, "Pequena")]
         return FakeDeezer(
@@ -397,7 +400,7 @@ class NewsTest(FreshMatches):
             album_songs={
                 100: [song(1001, "Novo Single", 10, "Banda Média")],
                 101: [song(1011, "Novo Single (Clean)", 10, "Banda Média")],
-                # Trilha com vários artistas: a escolhida tem que ser a da própria banda.
+                # A soundtrack with several artists: the pick has to be the band's own song.
                 102: [song(1021, "Tema de Outro", 99, "Outro"), song(1022, "Nossa Faixa", 10, "Banda Média")],
                 103: [song(1031, "Velha", 10, "Banda Média")],
                 200: [song(2001, "Hit", 20, "Gigante")],
@@ -410,7 +413,7 @@ class NewsTest(FreshMatches):
         discovery.news(hunt, FakeSpotify(), self.deezer(), "k-pop", discovery.FanRange(1000, 1_000_000), days=30)
         self.assertEqual([f.uri for f in hunt.finds], ["spotify:track:1001", "spotify:track:1022"])
         self.assertEqual(hunt.finds[0].fans, 50_000)
-        self.assertIn("Single lançado", hunt.finds[0].reason)
+        self.assertEqual(hunt.finds[0].reason, f"Single de Banda Média (50.000 fãs), saiu em {self.newest:%d/%m/%Y}.")
         self.assertIn("2 lançamentos", hunt.message)
 
     def test_without_size_everyone_counts(self):
@@ -424,6 +427,66 @@ class NewsTest(FreshMatches):
         discovery.news(hunt, FakeSpotify(), self.deezer(), "k-pop", discovery.FanRange(100_000_000), days=30)
         self.assertEqual(hunt.finds, [])
         self.assertIn("Nenhum lançamento", hunt.message)
+
+
+def sized_track(track_id, bpm, artist_id):
+    track = dz_track(track_id, bpm, artist=f"Artista {artist_id}")
+    track["artist"]["id"] = artist_id
+    return track
+
+
+class SenseSizeTest(FreshMatches):
+    def setUp(self):
+        super().setUp()
+        discovery.fan_counts = discovery.FanCounts()
+
+    def test_within_size_keeps_order_and_stops_when_full(self):
+        deezer = FakeDeezer(fans={1: 50, 2: 5_000, 3: 80_000})
+        tracks = [sized_track(10, 120, 1), sized_track(11, 120, 2), sized_track(12, 120, 3), sized_track(13, 120, 2)]
+        size = discovery.FanRange(1_000, 100_000)
+        kept = discovery.within_size(deezer, tracks, size, want=2)
+        self.assertEqual([t["id"] for t in kept], [11, 12])
+        self.assertEqual(discovery.within_size(deezer, tracks, discovery.ANY_SIZE, want=3), tracks[:3])
+
+    def test_sense_only_listens_to_artists_of_the_chosen_size(self):
+        deezer = FakeDeezer(
+            playlists={"treino": [{"id": "p", "nb_tracks": 50}]},
+            tracks={"p": [sized_track(1, 128, 1), sized_track(2, 130, 2), sized_track(3, 140, 3)]},
+            fans={1: 200, 2: 20_000, 3: 9_000_000},
+        )
+        spec = {**SPEC, "sources": ["treino"]}
+        hunt = discovery.Hunt("sense", "Treino pesado")
+        discovery.sense(hunt, spec, FakeSpotify(), deezer, random.Random(1), MemoryCache(), fake_measure,
+                        size=discovery.FanRange(1_000, 1_000_000))
+        self.assertEqual([(f.uri, f.fans) for f in hunt.finds], [("spotify:track:2", 20_000)])
+        self.assertEqual(hunt.progress, 1)  # only the right-sized artist's preview was heard
+
+    def test_says_when_no_artist_fits(self):
+        deezer = FakeDeezer(
+            playlists={"treino": [{"id": "p", "nb_tracks": 50}]},
+            tracks={"p": [sized_track(1, 128, 1)]},
+            fans={1: 200},
+        )
+        hunt = discovery.Hunt("sense", "Treino pesado")
+        discovery.sense(hunt, {**SPEC, "sources": ["treino"]}, FakeSpotify(), deezer, random.Random(1), MemoryCache(),
+                        fake_measure, size=discovery.FanRange(1_000))
+        self.assertEqual(hunt.finds, [])
+        self.assertIn("Nenhum artista desse tamanho", hunt.message)
+
+
+class EnglishMessagesTest(FreshMatches):
+    def setUp(self):
+        super().setUp()
+        i18n.use("en")
+
+    def test_free_text_and_progress_in_english(self):
+        spec = discovery.spec_from_text("missing you")
+        self.assertEqual(spec["description"], "Songs for missing you.")
+        self.assertEqual(spec["bpm"], [60, 115])  # the nostalgia entry
+        self.assertEqual(discovery.spec_from_text("anger")["color"], "#D8453B")
+        hunt = discovery.Hunt("rabbit", "Rabbit hole")
+        discovery.rabbit_hole(hunt, FakeSpotify(), FakeDeezer(), random.Random(1), ["Nobody"], walks=1)
+        self.assertEqual(hunt.message, "The hole led nowhere this time. Try again, with another artist or another size.")
 
 
 class TempoCacheTest(unittest.TestCase):

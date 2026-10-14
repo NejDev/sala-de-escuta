@@ -9,7 +9,7 @@ from spotify_assistant.playlists import run
 
 
 class FakeSpotify:
-    """Catálogo em memória que imita as respostas da Web API."""
+    """In-memory catalog that mimics the Web API's responses."""
 
     def __init__(self, owned=None):
         self.playlists = dict(owned or {})  # id -> {"name", "uris"}

@@ -1,1 +1,1 @@
-"""Assistente pessoal de playlists do Spotify."""
+"""Personal Spotify playlist assistant."""

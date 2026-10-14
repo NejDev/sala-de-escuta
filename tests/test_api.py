@@ -24,7 +24,7 @@ class HttpRequestTest(unittest.TestCase):
         self.assertIsNone(self.request(b"  \n"))
 
     def test_non_json_success_body_is_not_an_error(self):
-        # Foi o erro ao clicar em "próxima": 200 com texto solto derrubava o painel.
+        # This was the bug when clicking "next": a 200 with plain text crashed the panel.
         self.assertIsNone(self.request(b"ok"))
 
 
@@ -58,11 +58,11 @@ class RateGateTest(unittest.TestCase):
                 sp.search("x", "track")
             with self.assertRaises(api.SpotifyError) as again:
                 sp.search("y", "track")
-            self.assertEqual(request.call_count, 1)  # o segundo nem saiu do PC
+            self.assertEqual(request.call_count, 1)  # the second one never even left the PC
             self.assertEqual(again.exception.status, 429)
             self.assertGreater(again.exception.retry_after, 69000)
         with mock.patch.object(api, "http_request", return_value={"id": "me"}):
-            self.assertEqual(sp.me(), {"id": "me"})  # o resto continua funcionando
+            self.assertEqual(sp.me(), {"id": "me"})  # everything else keeps working
 
 
 if __name__ == "__main__":

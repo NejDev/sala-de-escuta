@@ -1,4 +1,4 @@
-"""Regras puras de escolha: casa o que está no playlists.json com resultados do catálogo."""
+"""Pure selection rules: matches what's in playlists.json against catalog results."""
 from __future__ import annotations
 
 import re
@@ -6,10 +6,12 @@ import unicodedata
 from datetime import date, timedelta
 from typing import TypeVar
 
+from .i18n import t
+
 T = TypeVar("T")
 
 STOPWORDS = {"the", "an", "of", "in", "on", "and", "to", "de", "la", "le", "du", "des"}
-# Versões que nunca queremos numa playlist "refinada" (a não ser que o título peça).
+# Versions we never want in a "refined" playlist (unless the title asks for them).
 UNWANTED = (
     "karaoke", "lullaby", "8 bit", "music box", "tribute", "cover", "remix",
     "sped up", "slowed", "lofi", "lo fi", "ninar",
@@ -33,10 +35,10 @@ def base_title(name: str) -> str:
 
 
 def title_overlap(wanted: str, candidate: str) -> float:
-    """Fração das palavras pedidas presentes no título encontrado.
+    """Fraction of the requested words present in the title found.
 
-    Palavras com 3+ letras casam por prefixo ('prelude' ~ 'preludes');
-    números e palavras curtas precisam ser iguais ('1' não casa com '18').
+    Words with 3+ letters match by prefix ('prelude' ~ 'preludes');
+    numbers and short words must be identical ('1' doesn't match '18').
     """
     want, have = tokens(wanted), tokens(candidate)
     if not want:
@@ -53,7 +55,7 @@ def artist_matches(wanted: str, artists: list[dict]) -> bool:
 def parse_track_spec(spec: str) -> tuple[str, str]:
     artist, sep, title = spec.partition(" - ")
     if not sep:
-        raise SystemExit(f'Faixa fora do formato "Artista - Título" no playlists.json: {spec!r}')
+        raise SystemExit(t("playlists.bad_entry", entry=repr(spec)))
     return artist.strip(), title.strip()
 
 
@@ -74,7 +76,7 @@ def pick_track(candidates: list[dict], artist: str, title: str) -> dict | None:
         score = overlap * 10 - UNWANTED_PENALTY * unwanted_hits(track, title)
         if normalize(base_title(track["name"])) == normalize(title):
             score += 3
-        if score > best_score:  # empate: fica o primeiro (mais relevante na busca)
+        if score > best_score:  # tie: keep the first one (most relevant in the search)
             best, best_score = track, score
     return best
 

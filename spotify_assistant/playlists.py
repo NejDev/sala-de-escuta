@@ -1,4 +1,4 @@
-"""Monta o conteúdo de cada playlist do playlists.json e grava no Spotify."""
+"""Builds the contents of each playlist in playlists.json and saves it to Spotify."""
 from __future__ import annotations
 
 import logging
@@ -9,6 +9,7 @@ from datetime import date
 from . import curation
 from .api import Spotify, SpotifyError
 from .config import save_state
+from .i18n import t
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ def build_podcasts(sp: Spotify, spec: dict, state: dict, today: date) -> Built:
         except SpotifyError as err:
             if err.status != 404:
                 raise
-            del show_ids[name]  # programa saiu do catálogo; busca de novo na próxima vez
+            del show_ids[name]  # show left the catalog; search again next time
             built.missing.append(name)
             continue
         fresh = curation.recent_episodes(episodes, today, cfg.get("max_age_days", 10), cfg.get("max_per_show", 2))
@@ -119,7 +120,7 @@ def run(
     elif only:
         unknown = sorted(set(only) - specs.keys())
         if unknown:
-            raise SystemExit(f"Não existe no playlists.json: {', '.join(unknown)}")
+            raise SystemExit(t("playlists.unknown", names=", ".join(unknown)))
         targets = [specs[name] for name in only]
     else:
         targets = config["playlists"]
@@ -128,14 +129,14 @@ def run(
     for spec in targets:
         for source in spec.get("mix", {}).get("from", []):
             if source not in specs or "mix" in specs[source]:
-                raise SystemExit(f'"{spec["name"]}" mistura "{source}", que não existe (ou também é uma mistura).')
+                raise SystemExit(t("playlists.bad_mix", name=spec["name"], source=source))
             needed.add(source)
 
     rng = random.Random()
     built: dict[str, Built] = {}
     for spec in config["playlists"]:
         if spec["name"] in needed and "mix" not in spec:
-            log.info("Montando %s...", spec["name"])
+            log.info(t("playlists.building", name=spec["name"]))
             if "podcasts" in spec:
                 built[spec["name"]] = build_podcasts(sp, spec, state, today)
             else:
@@ -146,34 +147,34 @@ def run(
 
     for spec in targets:
         result = built[spec["name"]]
-        log.info("\n%s: %d itens", spec["name"], len(result.uris))
+        log.info(t("playlists.summary", name=spec["name"], count=len(result.uris)))
         if dry_run:
             for label in result.labels:
                 log.info("   %s", label)
         for missing in result.missing:
-            log.warning("   não encontrado: %s", missing)
+            log.warning(t("playlists.missing", item=missing))
 
     if dry_run:
-        save_state(state)  # só guarda o cache de IDs dos podcasts
-        log.info("\nSimulação: nada foi alterado no Spotify.")
+        save_state(state)  # only saves the podcast ID cache
+        log.info(t("playlists.dry_run"))
         return
 
     owned = owned_playlists(sp)
     for spec in targets:
         result = built[spec["name"]]
         if not result.uris:
-            log.warning("%s ficou vazia nesta rodada; o conteúdo atual foi mantido.", spec["name"])
+            log.warning(t("playlists.empty", name=spec["name"]))
             continue
         playlist_id = ensure_playlist(sp, spec, state, owned)
         sp.replace_items(playlist_id, result.uris)
         if "podcasts" in spec:
             sp.update_details(playlist_id, description=f"{spec.get('description', '')} Atualizada em {today:%d/%m/%Y}.")
-        log.info("%s gravada no Spotify (%d itens).", spec["name"], len(result.uris))
+        log.info(t("playlists.saved", name=spec["name"], count=len(result.uris)))
     save_state(state)
 
 
 def owned_playlists(sp: Spotify) -> dict[str, str]:
-    """id -> nome das playlists que pertencem ao usuário logado."""
+    """id -> name of the playlists owned by the logged-in user."""
     me = sp.me()["id"]
     return {playlist["id"]: playlist["name"] for playlist in sp.my_playlists() if playlist["owner"]["id"] == me}
 
@@ -182,11 +183,11 @@ def ensure_playlist(sp: Spotify, spec: dict, state: dict, owned: dict[str, str])
     ids = state.setdefault("playlists", {})
     name = spec["name"]
     playlist_id = ids.get(name)
-    if playlist_id not in owned:  # apagada no app, ou primeira execução
+    if playlist_id not in owned:  # deleted in the app, or first run
         playlist_id = next((pid for pid, pname in owned.items() if pname == name), None)
     if playlist_id is None:
         playlist_id = sp.create_playlist(name, spec.get("description", ""), spec.get("public", False))["id"]
-        log.info("Playlist criada: %s", name)
+        log.info(t("playlists.created", name=name))
     ids[name] = playlist_id
     save_state(state)
     return playlist_id

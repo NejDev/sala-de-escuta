@@ -1,7 +1,7 @@
-"""Cliente mínimo da Spotify Web API (só biblioteca padrão).
+"""Minimal Spotify Web API client (standard library only).
 
-Segue as regras do Development Mode de fev/2026: criação via POST /me/playlists,
-itens em /playlists/{id}/items e busca limitada a 10 resultados.
+Follows the Development Mode rules from Feb 2026: creation via POST /me/playlists,
+items at /playlists/{id}/items, and search capped at 10 results.
 """
 from __future__ import annotations
 
@@ -15,13 +15,14 @@ import urllib.request
 from typing import Any, Callable, Iterator
 
 from . import config
+from .i18n import t
 
 API_BASE = "https://api.spotify.com/v1"
 MAX_ATTEMPTS = 5
 MAX_RETRY_WAIT_S = 120
 SEARCH_LIMIT = 10
 ITEMS_PER_REQUEST = 100
-# Freio global: no máximo ~4 pedidos por segundo para a Spotify, somando tudo (player, buscas...).
+# Global brake: at most ~4 requests per second to Spotify, counting everything (player, searches...).
 MIN_INTERVAL_S = 0.25
 
 log = logging.getLogger(__name__)
@@ -31,8 +32,8 @@ class SpotifyError(RuntimeError):
     def __init__(self, status: int, message: str, retry_after: int | None = None, family: str = ""):
         super().__init__(f"HTTP {status}: {message}")
         self.status = status
-        self.retry_after = retry_after  # segundos até a Spotify aceitar de novo (429)
-        self.family = family  # tipo de pedido pausado: "search", "me/player"...
+        self.retry_after = retry_after  # seconds until Spotify accepts requests again (429)
+        self.family = family  # kind of request that was paused: "search", "me/player"...
 
 
 def endpoint_family(url_or_path: str) -> str:
@@ -45,12 +46,12 @@ def endpoint_family(url_or_path: str) -> str:
 
 
 class _Gate:
-    """Espaça os pedidos e lembra as pausas que a Spotify impôs (sobrevive a reinícios)."""
+    """Spaces out requests and remembers the pauses Spotify imposed (survives restarts)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._next_slot = 0.0
-        self._paused: dict[str, float] | None = None  # família -> horário (epoch) em que volta
+        self._paused: dict[str, float] | None = None  # family -> time (epoch) when it is allowed again
 
     def _load(self) -> dict[str, float]:
         if self._paused is None:
@@ -73,7 +74,7 @@ class _Gate:
             self._paused = paused
             config.DATA_DIR.mkdir(exist_ok=True)
             config.SPOTIFY_PAUSES_FILE.write_text(json.dumps(paused), encoding="utf-8")
-        log.warning("Spotify pausou '%s' por %ss", family, seconds)
+        log.warning("Spotify paused '%s' for %ss", family, seconds)
 
     def wait_turn(self) -> None:
         with self._lock:
@@ -107,7 +108,7 @@ def http_request(
         data = json.dumps(json_body).encode()
         headers["Content-Type"] = "application/json"
     elif method in ("POST", "PUT", "DELETE"):
-        data = b""  # o Spotify recusa POST/PUT sem Content-Length (411)
+        data = b""  # Spotify rejects POST/PUT without Content-Length (411)
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
@@ -119,8 +120,8 @@ def http_request(
             try:
                 return json.loads(raw)
             except ValueError:
-                # Comandos do player (próxima, anterior...) às vezes respondem 200 com texto solto.
-                log.debug("Resposta não-JSON de %s %s: %r", method, url, raw[:80])
+                # Player commands (next, previous...) sometimes respond 200 with plain text.
+                log.debug("Non-JSON response from %s %s: %r", method, url, raw[:80])
                 return None
         except urllib.error.HTTPError as err:
             body = err.read().decode(errors="replace")
@@ -128,10 +129,10 @@ def http_request(
                 wait = int(err.headers.get("Retry-After") or 2**attempt)
                 if wait > MAX_RETRY_WAIT_S:
                     raise SpotifyError(
-                        err.code, f"limite de requisições; tente de novo em {wait}s",
+                        err.code, t("api.rate_limited", seconds=wait),
                         retry_after=wait, family=endpoint_family(url),
                     ) from None
-                log.warning("Spotify respondeu %s; nova tentativa em %ss", err.code, wait)
+                log.warning("Spotify answered %s; retrying in %ss", err.code, wait)
                 time.sleep(wait)
                 continue
             raise SpotifyError(err.code, _error_message(body)) from None
@@ -139,7 +140,7 @@ def http_request(
             if attempt < MAX_ATTEMPTS:
                 time.sleep(2**attempt)
                 continue
-            raise SpotifyError(0, f"sem conexão: {err.reason}") from None
+            raise SpotifyError(0, t("api.offline", reason=err.reason)) from None
 
 
 def _error_message(body: str) -> str:
@@ -161,7 +162,7 @@ class Spotify:
     def _call(self, method: str, path: str, *, params: dict | None = None, body: Any = None) -> Any:
         url = path if path.startswith("https://") else API_BASE + path
         family = endpoint_family(url)
-        # Pausado pela Spotify: nem tenta, para não esticar o castigo.
+        # Paused by Spotify: don't even try, so the penalty isn't extended.
         remaining = gate.remaining(family)
         if remaining:
             raise SpotifyError(429, "pausado pela Spotify", retry_after=remaining, family=family)
@@ -213,8 +214,8 @@ class Spotify:
         return [episode for episode in data["items"] if episode]
 
     def playlist_items(self, playlist_id: str) -> list[dict]:
-        """Faixas/episódios da playlist (o objeto vem em 'item'; 'track' é o nome antigo)."""
-        # Sem additional_types=episode, episódios vêm "disfarçados" de faixa, sem programa nem data.
+        """Tracks/episodes in the playlist (the object comes in 'item'; 'track' is the old name)."""
+        # Without additional_types=episode, episodes come "disguised" as tracks, with no show or date.
         params = {"limit": 50, "market": self.market, "additional_types": "episode"}
         page = self._call("GET", f"/playlists/{playlist_id}/items", params=params)
         items = []
@@ -229,7 +230,7 @@ class Spotify:
     def add_items(self, playlist_id: str, uris: list[str]) -> None:
         self._call("POST", f"/playlists/{playlist_id}/items", body={"uris": uris})
 
-    # Player: exige Premium e uma sessão do Spotify aberta (PC, celular...).
+    # Player: requires Premium and an open Spotify session (PC, phone...).
 
     def playback(self) -> dict | None:
         return self._call("GET", "/me/player", params={"additional_types": "episode"})
@@ -269,3 +270,7 @@ class Spotify:
 
     def set_shuffle(self, enabled: bool) -> None:
         self._call("PUT", "/me/player/shuffle", params={"state": "true" if enabled else "false"})
+
+    def set_repeat(self, mode: str) -> None:
+        """mode: off, context (the whole playlist/album) or track."""
+        self._call("PUT", "/me/player/repeat", params={"state": mode})

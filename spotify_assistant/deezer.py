@@ -1,8 +1,8 @@
-"""Cliente mínimo da API pública do Deezer (sem chave).
+"""Minimal client for Deezer's public API (no key).
 
-Usado só para descoberta: playlists montadas por pessoas para cada momento,
-artistas relacionados com número de fãs e prévias de 30 s para medir o BPM.
-As faixas encontradas são levadas para o Spotify pelo ISRC.
+Used only for discovery: playlists built by people for each moment,
+related artists with fan counts, and 30 s previews to measure BPM.
+The tracks found are carried over to Spotify by ISRC.
 """
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ import urllib.request
 from collections import deque
 
 from .curation import normalize
+from .i18n import t
 
 API_BASE = "https://api.deezer.com"
-# Limite do Deezer: 50 requisições a cada 5 s por IP. Ficamos um pouco abaixo.
+# Deezer limit: 50 requests every 5 s per IP. We stay a bit below it.
 WINDOW_S = 5.0
 MAX_PER_WINDOW = 40
 QUOTA_ERROR_CODE = 4
@@ -54,7 +55,7 @@ class Deezer:
                     data = json.loads(response.read())
             except (urllib.error.URLError, TimeoutError) as err:
                 if attempt == 2:
-                    raise DeezerError(f"sem conexão com o Deezer: {err}") from None
+                    raise DeezerError(t("catalog.offline")) from err
                 time.sleep(1 + attempt)
                 continue
             error = data.get("error") if isinstance(data, dict) else None
@@ -63,8 +64,8 @@ class Deezer:
             if error.get("code") == QUOTA_ERROR_CODE and attempt < 2:
                 time.sleep(WINDOW_S)
                 continue
-            raise DeezerError(error.get("message", "erro do Deezer"))
-        raise DeezerError("o Deezer não respondeu")
+            raise DeezerError(error.get("message") or t("catalog.error"))
+        raise DeezerError(t("catalog.no_answer"))
 
     def search_playlists(self, query: str, limit: int = 8) -> list[dict]:
         return self.get("/search/playlist", q=query, limit=limit).get("data", [])
@@ -76,18 +77,18 @@ class Deezer:
         return self.get("/search", q=query, limit=limit).get("data", [])
 
     def search_artist(self, name: str) -> dict | None:
-        """O perfil com mais fãs entre os de mesmo nome (o Deezer tem muitos perfis duplicados)."""
+        """The profile with the most fans among those with the same name (Deezer has many duplicate profiles)."""
         found = self.get("/search/artist", q=name, limit=10).get("data", [])
         wanted = normalize(name)
         same_name = [artist for artist in found if normalize(artist["name"]) == wanted]
         return max(same_name or found[:1], key=lambda artist: artist.get("nb_fan", 0), default=None)
 
     def artist(self, artist_id: int) -> dict:
-        """Artista completo (inclui nb_fan, o número de fãs)."""
+        """Full artist (includes nb_fan, the number of fans)."""
         return self.get(f"/artist/{artist_id}")
 
     def artist_albums(self, artist_id: int, limit: int = 25) -> list[dict]:
-        """Discos do artista com release_date e record_type (single, ep, album). Sem ordem garantida."""
+        """The artist's releases with release_date and record_type (single, ep, album). No guaranteed order."""
         return self.get(f"/artist/{artist_id}/albums", limit=limit).get("data", [])
 
     def album_tracks(self, album_id: int) -> list[dict]:
@@ -104,6 +105,6 @@ class Deezer:
 
     @staticmethod
     def preview(url: str) -> bytes:
-        """Prévias vêm da CDN, fora do limite da API."""
+        """Previews come from the CDN, outside the API rate limit."""
         with urllib.request.urlopen(url, timeout=20) as response:
             return response.read()

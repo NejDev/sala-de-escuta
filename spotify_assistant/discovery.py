@@ -1,14 +1,17 @@
-"""Sensações e Descobrir.
+"""Sensations, Discover and New releases.
 
-- Sensações: parte de playlists que pessoas montaram para um momento (treino,
-  foco...), ouve a prévia de cada faixa, mede BPM e energia e fica só com o que
-  cabe na faixa daquela sensação.
-- Roleta: sorteia álbuns pouco ouvidos de um ano qualquer (tag:hipster do
-  Spotify) e faixas menos populares de gêneros do mundo todo (Deezer).
-- Toca do coelho: parte de um artista que você já ouve e pula de relacionado
-  em relacionado, sempre para os menos conhecidos.
+- Sensations: starts from playlists people made for a moment (workout, focus...),
+  listens to each track's preview, measures BPM and energy and keeps only what
+  fits that sensation's range.
+- Roulette: draws barely-played albums from any year (Spotify's tag:hipster) and
+  lesser-known tracks from genres all over the world (Deezer).
+- Rabbit hole: starts from an artist you already listen to and hops from related
+  artist to related artist, always toward the lesser-known ones.
+- New releases: the latest releases from a genre's artists, within the chosen size.
 
-Tudo termina no Spotify: faixas do Deezer são localizadas pelo ISRC.
+Everything ends up on Spotify: Deezer tracks are located by ISRC.
+Progress messages and reasons are written with i18n.t() in the language of
+whoever started the discovery (the discovery thread sets it).
 """
 from __future__ import annotations
 
@@ -23,9 +26,10 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 from typing import Callable, Collection, Iterator
 
-from . import config, curation, tempo
+from . import config, curation, i18n, tempo
 from .api import Spotify, SpotifyError
 from .deezer import Deezer, DeezerError
+from .i18n import t
 from .views import pick_image
 
 SENSE_TARGET = 20
@@ -34,14 +38,15 @@ PLAYLISTS_PER_SOURCE = 2
 ROULETTE_COUNT = 12
 RABBIT_WALKS = 4
 RABBIT_HOPS = 4
-RABBIT_TRACKS = 2  # do último artista; dos do meio sai uma de cada
+RABBIT_TRACKS = 2  # from the last artist; one from each artist in between
 MIN_FANS = 100
 LISTEN_THREADS = 6
+SIZE_BATCH = 24  # tracks whose artist's fans are checked at once (Sensations)
 NEWS_RESULTS = 24
-NEWS_MAX_ARTISTS = 45  # artistas do tamanho certo cujos lançamentos a gente olha
-NEWS_ARTIST_POOL = 120  # artistas do gênero levantados nas playlists, antes do filtro de fãs
+NEWS_MAX_ARTISTS = 45  # right-sized artists whose releases we look at
+NEWS_ARTIST_POOL = 120  # genre artists gathered from playlists, before the fans filter
 
-# Buscas que trazem faixas típicas de cada gênero no Deezer. Edite à vontade.
+# Searches that bring up typical tracks of each genre on Deezer. Edit freely.
 WORLD_GENRES = (
     "zamrock", "ethio jazz", "afrobeat", "highlife", "city pop", "enka", "rebetiko", "fado",
     "chamamé", "cumbia psicodélica", "chicha peruana", "tropicália", "baião", "frevo", "carimbó",
@@ -58,78 +63,83 @@ WORLD_GENRES = (
     "hawaiian slack key", "bossa nova japonesa", "turkish psych", "persian pop",
 )
 
-# Faixas "de algoritmo" que lotam playlists de foco/relaxamento e não são música para descobrir.
+# "Algorithm" tracks that crowd focus/relaxation playlists and aren't music worth discovering.
 JUNK_WORDS = (
     "binaural", "white noise", "brown noise", "pink noise", "rain sounds", "ruido branco",
     "asmr", "hz", "solfeggio", "sleep music", "study music", "relaxing music", "musica relaxante",
     "bpm", "workout remix", "workout music", "fitness music",
 )
 
-# Dicionário local de sentimentos para o campo livre das Sensações (sem IA paga).
-# Cada entrada: radicais em português/inglês -> faixa de BPM, energia, cor e buscas extras.
-# Radicais com 4+ letras casam por prefixo ("raiv" pega "raiva" e "raivoso").
+# Local dictionary of feelings for the Sensations free-text field (no paid AI).
+# Each entry: Portuguese/English stems -> BPM range, energy, color and extra searches.
+# Stems with 4+ letters match as a prefix ("raiv" catches "raiva" and "raivoso");
+# shorter ones only match a whole word.
 FEELINGS: tuple[tuple[tuple[str, ...], dict], ...] = (
     (("odio", "odiar", "odiand", "odei", "raiv", "furi", "puto", "puta da vida", "brav", "irritad", "revolt",
-      "vinganc", "rage", "angry", "hate"),
+      "vinganc", "rage", "angry", "anger", "hate", "fury", "mad", "pissed", "annoy", "revenge"),
      {"bpm": [125, 185], "energy": [0.72, 1.0], "color": "#D8453B",
       "sources": ["raiva", "rage music", "metal pesado", "hardcore punk", "nu metal"]}),
-    (("coracao partido", "termino", "fossa", "sofrenci", "corno", "breakup", "heartbreak"),
+    (("coracao partido", "termino", "fossa", "sofrenci", "corno", "breakup", "break up", "heartbr", "dumped"),
      {"bpm": [60, 115], "energy": [0.2, 0.8], "color": "#9C7AA8",
       "sources": ["sofrência", "fossa", "breakup songs", "músicas de término"]}),
-    (("trist", "chor", "depre", "melancol", "deprimid", "sad", "luto"),
+    (("trist", "chor", "depre", "melancol", "melanchol", "deprimid", "sad", "sadn", "luto", "cry", "cryi",
+      "grief", "griev", "mourn", "gloom"),
      {"bpm": [55, 100], "energy": [0.0, 0.62], "color": "#8E9AAF",
       "sources": ["músicas tristes", "sad songs", "sad piano", "sad indie"]}),
-    (("saudad", "nostalg", "lembranc", "infancia", "memoria"),
+    (("saudad", "nostalg", "lembranc", "infancia", "memor", "miss you", "missing", "childhood", "throwback"),
      {"bpm": [60, 115], "energy": [0.0, 0.72], "color": "#C9A27E",
       "sources": ["saudade", "nostalgia", "mpb saudade", "anos 80 nostalgia"]}),
-    (("solid", "sozinh", "lonely", "isolad"),
+    (("solid", "sozinh", "lonely", "lonel", "alone", "isolad", "isolat"),
      {"bpm": [55, 100], "energy": [0.0, 0.6], "color": "#7C8BA6",
       "sources": ["solidão", "lonely songs", "sad indie"]}),
-    (("amor", "apaixon", "paixao", "romant", "love", "namor", "crush"),
+    (("amor", "apaixon", "paixao", "romant", "romanc", "love", "namor", "crush"),
      {"bpm": [60, 115], "energy": [0.2, 0.78], "color": "#E3909E",
       "sources": ["músicas românticas", "love songs", "r&b romântico", "mpb romântica"]}),
-    (("sexy", "sensual", "desejo", "tesao", "safad"),
+    (("sexy", "sensual", "desejo", "desir", "tesao", "safad", "seduct"),
      {"bpm": [65, 110], "energy": [0.3, 0.78], "color": "#C0587E",
       "sources": ["sensual", "slow jams", "r&b sensual"]}),
-    (("feliz", "felicid", "alegri", "alegre", "happy", "bom humor", "good vibes", "contente"),
+    (("feliz", "felicid", "alegri", "alegre", "happy", "happi", "joy", "joyf", "cheer", "glad", "bom humor",
+      "good mood", "good vibes", "contente"),
      {"bpm": [100, 135], "energy": [0.55, 1.0], "color": "#F2C14E",
       "sources": ["músicas felizes", "happy hits", "good vibes"]}),
-    (("eufori", "hype", "empolgad", "energia", "pilhad", "animad"),
+    (("eufori", "euphori", "hype", "empolgad", "excit", "pumped", "energ", "pilhad", "animad"),
      {"bpm": [120, 150], "energy": [0.7, 1.0], "color": "#F06A4F",
       "sources": ["hype", "euforia", "edm festival", "músicas animadas"]}),
-    (("confian", "poderos", "chefe", "boss", "foda", "imbativel", "marra"),
+    (("confian", "confiden", "poderos", "power", "chefe", "boss", "foda", "badass", "imbativel", "unstopp",
+      "marra", "villain"),
      {"bpm": [85, 145], "energy": [0.65, 1.0], "color": "#D4A84B",
       "sources": ["confiança", "boss music", "rap motivação", "músicas de vilão"]}),
-    (("esperanc", "recomec", "superac", "hope"),
+    (("esperanc", "recomec", "superac", "hope", "uplift", "fresh start", "overcom"),
      {"bpm": [70, 125], "energy": [0.35, 0.88], "color": "#9FD3A8",
       "sources": ["esperança", "superação", "uplifting", "hopeful indie"]}),
-    (("ansied", "ansios", "nervos", "estress", "stress", "panico", "preocupad"),
+    (("ansied", "ansios", "anxi", "nervos", "nervou", "estress", "stress", "panico", "panic", "preocupad",
+      "worr", "overwhelm"),
      {"bpm": [55, 90], "energy": [0.0, 0.5], "color": "#7FB7BE",
       "sources": ["calma ansiedade", "calm anxiety", "ambient calm", "piano calmo"]}),
-    (("calm", "paz", "tranquil", "zen", "medit", "relax", "sereno"),
+    (("calm", "paz", "peace", "tranquil", "zen", "medit", "relax", "chill", "sereno", "serene", "unwind"),
      {"bpm": [50, 88], "energy": [0.0, 0.48], "color": "#B8C4A0",
       "sources": ["paz", "meditação", "ambient peaceful", "música calma"]}),
-    (("medo", "terror", "sombri", "dark", "tens", "assombr", "creepy"),
+    (("medo", "fear", "terror", "horror", "sombri", "dark", "tens", "assombr", "haunt", "creep", "spook", "scar"),
      {"bpm": [60, 130], "energy": [0.15, 0.8], "color": "#6F5E8C",
       "sources": ["dark ambient", "trilha de terror", "darkwave", "músicas sombrias"]}),
-    (("sono", "dormir", "cansad", "exaust", "sleep"),
+    (("sono", "dormir", "cansad", "exaust", "exhaust", "tired", "sleep", "insomn"),
      {"bpm": [45, 78], "energy": [0.0, 0.38], "color": "#5B6C8F",
       "sources": ["dormir", "sleep piano", "ambient sleep"]}),
-    (("foco", "concentr", "estud", "focus", "produtiv"),
+    (("foco", "concentr", "estud", "focus", "study", "studi", "produtiv", "productiv"),
      {"bpm": [55, 100], "energy": [0.0, 0.7], "color": "#7FB7BE",
       "sources": ["foco", "deep focus", "lofi estudar"]}),
-    (("festa", "balada", "danc", "rolê", "role", "party"),
+    (("festa", "balada", "danc", "rolê", "role", "party", "club", "rave", "celebrat"),
      {"bpm": [112, 132], "energy": [0.65, 1.0], "color": "#E3909E",
       "sources": ["festa", "dance hits", "balada"]}),
 )
 CONSENSUS_LISTEN = 48
 CONSENSUS_MIN_MEASURED = 6
-CONSENSUS_BPM_OCTAVES = 0.2  # ±15% em torno do pulso típico
+CONSENSUS_BPM_OCTAVES = 0.2  # ±15% around the typical pulse
 CONSENSUS_ENERGY = 0.22
 
-# Nada religioso, de nenhuma denominação. Palavras fortes descartam a faixa sozinhas;
-# as "pistas" só contam para descartar uma playlist inteira quando aparecem em várias faixas
-# (playlists chamadas "paz" ou "esperança" costumam ser gospel sem dizer no título da música).
+# Nothing religious, of any denomination. Strong words discard a track on their own;
+# "hints" only count toward discarding a whole playlist when they show up in several tracks
+# (playlists called "peace" or "hope" are often gospel without saying so in the song title).
 RELIGIOUS_WORDS = (
     "gospel", "worship", "louvor", "louvores", "adoracao", "christian", "cristao", "crista", "cristaos",
     "evangelico", "evangelica", "catolico", "catolica", "catholic", "igreja", "church", "hino", "hinos",
@@ -162,15 +172,15 @@ class Find:
     reason: str = ""
     bpm: float | None = None
     energy: float | None = None
-    tag: str = ""  # rótulo curto (gênero ou ano) que aparece na pilha da roleta
-    artists: list[str] = field(default_factory=list)  # para "não mostrar mais este artista"
-    released: str | None = None  # data de lançamento (Novidades)
-    fans: int | None = None  # fãs do artista, quando a gente sabe
+    tag: str = ""  # short label (genre or year) shown on the roulette pile
+    artists: list[str] = field(default_factory=list)  # for "don't show this artist again"
+    released: str | None = None  # release date (New releases)
+    fans: int | None = None  # the artist's fans, when we know them
 
 
 @dataclass(frozen=True)
 class FanRange:
-    """Tamanho do artista escolhido pela pessoa: mínimo e (opcional) máximo de fãs."""
+    """Artist size the person chose: minimum and (optionally) maximum fans."""
 
     min: int = 0
     max: int | None = None
@@ -188,7 +198,7 @@ ANY_SIZE = FanRange()
 
 
 class FanCounts:
-    """Fãs por artista, guardados enquanto o painel está aberto (cada consulta custa um pedido)."""
+    """Fans per artist, kept while the panel is open (each lookup costs a request)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -203,6 +213,11 @@ class FanCounts:
         with self._lock:
             self._by_id[artist_id] = fans
         return fans
+
+    def known(self, artist_id: int | None) -> int | None:
+        """Fans already looked up, without asking again."""
+        with self._lock:
+            return self._by_id.get(artist_id)
 
     def by_name(self, dz: Deezer, name: str) -> int | None:
         key = curation.normalize(name)
@@ -221,7 +236,7 @@ fan_counts = FanCounts()
 
 @dataclass
 class Hunt:
-    kind: str  # sense | roulette | rabbit
+    kind: str  # sense | roulette | rabbit | news
     label: str
     color: str | None = None
     status: str = "running"  # running | done | error | cancelled
@@ -231,7 +246,7 @@ class Hunt:
     finds: list[Find] = field(default_factory=list)
     chains: list[dict] = field(default_factory=list)
     cancelled: bool = False
-    spec: dict | None = None  # parâmetros da sensação (usados ao salvar como playlist)
+    spec: dict | None = None  # the sensation's parameters (used for the playlist description)
 
     def snapshot(self) -> dict:
         return {
@@ -251,7 +266,7 @@ class Hunt:
 
 
 class TempoCache:
-    """BPM/energia já medidos, por id do Deezer, para não ouvir a mesma prévia duas vezes."""
+    """BPM/energy already measured, by Deezer id, so the same preview isn't heard twice."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -287,7 +302,7 @@ _pool_lock = threading.Lock()
 
 
 def measure_in_process(mp3: bytes) -> tempo.Analysis | None:
-    """A análise é CPU pura; em processos separados ela não disputa o GIL com o servidor."""
+    """The analysis is pure CPU; in separate processes it doesn't fight the server for the GIL."""
     global _pool
     with _pool_lock:
         if _pool is None:
@@ -295,11 +310,11 @@ def measure_in_process(mp3: bytes) -> tempo.Analysis | None:
     return _pool.submit(tempo.measure, mp3).result()
 
 
-# ---------- Regras puras
+# ---------- Pure rules
 
 
 def fit_bpm(bpm: float, low: float, high: float) -> int | None:
-    """BPM dentro da faixa, aceitando metade/dobro (o erro mais comum de quem mede tempo)."""
+    """BPM inside the range, accepting half/double (the most common tempo-measuring mistake)."""
     for candidate in (bpm, bpm * 2, bpm / 2):
         if low <= candidate <= high:
             return round(candidate)
@@ -319,8 +334,8 @@ def next_hop(
     options: list[dict], visited: set, rng: random.Random, blocked: Collection[str] = frozenset(),
     size: FanRange = ANY_SIZE,
 ) -> dict | None:
-    """Entre os relacionados do tamanho pedido, sorteia no terço menos conhecido."""
-    floor = max(MIN_FANS, size.min)  # abaixo de 100 fãs costuma ser perfil vazio ou duplicado
+    """Among the related artists of the requested size, picks from the least-known third."""
+    floor = max(MIN_FANS, size.min)  # under 100 fans it's usually an empty or duplicate profile
     fresh = [
         artist for artist in options
         if artist["id"] not in visited and artist.get("nb_fan", 0) >= floor
@@ -348,7 +363,7 @@ def is_religious(*texts: str) -> bool:
 
 
 def _track_texts(track: dict) -> tuple[str, ...]:
-    """Título, artista e álbum de uma faixa do Deezer ou do Spotify."""
+    """Title, artist and album of a Deezer or Spotify track."""
     artists = [track.get("artist", {}).get("name", "")] + [a.get("name", "") for a in track.get("artists", [])]
     album = track.get("album") or {}
     return (track.get("title") or track.get("name") or "", *artists, album.get("title") or album.get("name") or "")
@@ -359,7 +374,7 @@ def religious_track(track: dict) -> bool:
 
 
 def religious_collection(name: str, tracks: list[dict], owner: str = "") -> bool:
-    """Playlist/álbum religioso: nome explícito, ou várias faixas com palavras e pistas religiosas."""
+    """Religious playlist/album: an explicit name, or several tracks with religious words and hints."""
     if is_religious(name, owner):
         return True
     hits = sum(1 for track in tracks if _says(_track_texts(track), RELIGIOUS_WORDS + RELIGIOUS_HINTS))
@@ -367,12 +382,12 @@ def religious_collection(name: str, tracks: list[dict], owner: str = "") -> bool
 
 
 def blocked_set(names: list[str]) -> set[str]:
-    """Nomes de artistas bloqueados, normalizados para comparar sem acento/maiúscula."""
+    """Blocked artist names, normalized to compare without accents or case."""
     return {curation.normalize(name) for name in names if name.strip()}
 
 
 def blocked_track(track: dict, blocked: Collection[str]) -> bool:
-    """Faixa (do Deezer ou do Spotify) com algum artista que a pessoa pediu para não ver mais."""
+    """A track (Deezer or Spotify) with any artist the person asked not to see again."""
     if not blocked:
         return False
     names = [track.get("artist", {}).get("name", "")] + [a.get("name", "") for a in track.get("artists", [])]
@@ -396,11 +411,11 @@ def _mentions(tokens: list[str], text: str, stem: str) -> bool:
 
 
 def spec_from_text(text: str) -> dict:
-    """Transforma o que a pessoa escreveu ("ódio", "saudade de casa") numa sensação.
+    """Turns what the person wrote ("anger", "saudade de casa") into a sensation.
 
-    A própria frase é a primeira busca: há muita playlist batizada com sentimentos.
-    Se o dicionário reconhece o sentimento, ele dá o ritmo e amplia as buscas;
-    senão "bpm" fica None e o ritmo é aprendido com as músicas (ver consensus).
+    The phrase itself is the first search: plenty of playlists are named after feelings.
+    If the dictionary recognizes the feeling, it sets the rhythm and widens the searches;
+    otherwise "bpm" stays None and the rhythm is learned from the songs (see consensus).
     """
     clean = " ".join(text.split())
     normalized = curation.normalize(clean)
@@ -411,7 +426,7 @@ def spec_from_text(text: str) -> dict:
             extra = [s for s in params["sources"] if curation.normalize(s) != normalized]
             return {
                 "name": label,
-                "description": f"Músicas para {clean.lower()}.",
+                "description": t("sense.free_description", feeling=clean.lower()),
                 "color": params["color"],
                 "bpm": params["bpm"],
                 "energy": params["energy"],
@@ -419,16 +434,16 @@ def spec_from_text(text: str) -> dict:
             }
     return {
         "name": label,
-        "description": f"Músicas para {clean.lower()}, no ritmo que as playlists sobre isso têm em comum.",
+        "description": t("sense.free_learned", feeling=clean.lower()),
         "color": None,
         "bpm": None,
         "energy": None,
-        "sources": [clean, f"músicas {clean}", f"{clean} playlist"],
+        "sources": [clean, t("sense.query_songs", feeling=clean), f"{clean} playlist"],
     }
 
 
 def fold_bpm(bpm: float) -> float:
-    """Leva o BPM para a oitava 70–140, onde metade/dobro viram o mesmo pulso."""
+    """Brings the BPM into the 70–140 octave, where half/double become the same pulse."""
     while bpm < 70:
         bpm *= 2
     while bpm >= 140:
@@ -437,7 +452,7 @@ def fold_bpm(bpm: float) -> float:
 
 
 def consensus(analyses: list[tempo.Analysis]) -> tuple[float, float] | None:
-    """Pulso e energia típicos (medianas) de um conjunto de prévias."""
+    """Typical pulse and energy (medians) of a set of previews."""
     if len(analyses) < CONSENSUS_MIN_MEASURED:
         return None
     bpms = sorted(fold_bpm(a.bpm) for a in analyses)
@@ -447,7 +462,7 @@ def consensus(analyses: list[tempo.Analysis]) -> tuple[float, float] | None:
 
 
 def consensus_distance(analysis: tempo.Analysis, center: tuple[float, float]) -> float | None:
-    """Distância até o centro (0 = igual); None se ficou fora do padrão."""
+    """Distance to the center (0 = identical); None if it's outside the pattern."""
     center_bpm, center_energy = center
     bpm_gap = abs(math.log2(fold_bpm(analysis.bpm) / center_bpm)) / CONSENSUS_BPM_OCTAVES
     energy_gap = abs(analysis.energy - center_energy) / CONSENSUS_ENERGY
@@ -457,16 +472,16 @@ def consensus_distance(analysis: tempo.Analysis, center: tuple[float, float]) ->
 
 
 def lesser_known(tracks: list[dict]) -> list[dict]:
-    """Metade menos popular de uma busca (o Deezer ordena da mais para a menos ouvida)."""
+    """The less popular half of a search (Deezer sorts from most to least played)."""
     ranked = sorted(tracks, key=lambda track: track.get("rank", 0))
     return ranked[: max(1, len(ranked) // 2)]
 
 
-# ---------- Ponte Deezer -> Spotify
+# ---------- Deezer -> Spotify bridge
 
 
 class MatchCache:
-    """Faixas já localizadas no Spotify (por ISRC ou título+artista): cada uma é buscada uma vez só."""
+    """Tracks already located on Spotify (by ISRC or title+artist): each one is searched only once."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -488,7 +503,7 @@ class MatchCache:
 
     def put(self, key: str, track: dict | None) -> None:
         slim = None
-        if track:  # só o que o painel usa, para o arquivo não crescer à toa
+        if track:  # only what the panel uses, so the file doesn't grow for nothing
             slim = {
                 "uri": track["uri"],
                 "name": track["name"],
@@ -547,13 +562,13 @@ def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: f
     )
 
 
-# ---------- Sensações
+# ---------- Sensations
 
 
 def gather_candidates(
     dz: Deezer, queries: list[str], rng: random.Random, blocked: Collection[str] = frozenset(),
 ) -> list[dict]:
-    """Faixas com prévia de playlists montadas para o momento, alternando entre as fontes."""
+    """Tracks with previews from playlists made for the moment, alternating between the sources."""
     groups, seen = [], set()
     for query in queries:
         playlists = [p for p in dz.search_playlists(query) if p.get("nb_tracks", 0) >= 10][:6]
@@ -572,13 +587,36 @@ def gather_candidates(
     return curation.interleave(groups)
 
 
+def within_size(
+    dz: Deezer, tracks: list[dict], size: FanRange, want: int, hunt: Hunt | None = None,
+) -> list[dict]:
+    """The first `want` tracks by artists of the chosen size, checking fans in batches."""
+    if not size.active:
+        return tracks[:want]
+    kept: list[dict] = []
+    with ThreadPoolExecutor(max_workers=LISTEN_THREADS) as executor:
+        for start in range(0, len(tracks), SIZE_BATCH):
+            if hunt and hunt.cancelled:
+                break
+            batch = tracks[start : start + SIZE_BATCH]
+            ids = list(dict.fromkeys(artist_id for track in batch if (artist_id := (track.get("artist") or {}).get("id"))))
+            fans = dict(zip(ids, executor.map(lambda artist_id: fan_counts.by_id(dz, artist_id), ids)))
+            kept.extend(track for track in batch if (track.get("artist") or {}).get("id") in fans
+                        and size.ok(fans[track["artist"]["id"]]))
+            if hunt:
+                hunt.message = t("sense.checking_size", count=len(kept))
+            if len(kept) >= want:
+                break
+    return kept[:want]
+
+
 def listen(
     dz: Deezer,
     tracks: list[dict],
     cache: TempoCache,
     measure: Callable[[bytes], tempo.Analysis | None],
 ) -> Iterator[tuple[dict, tempo.Analysis | None]]:
-    """Mede as faixas em paralelo e entrega na ordem em que ficam prontas."""
+    """Measures the tracks in parallel and yields them in the order they're ready."""
 
     def work(track: dict) -> tempo.Analysis | None:
         key = str(track["id"])
@@ -587,8 +625,8 @@ def listen(
             return analysis
         try:
             analysis = measure(dz.preview(track["preview"]))
-        except Exception as err:  # prévia expirada, MP3 estranho...
-            log.debug("Não deu para medir %s: %s", track.get("title"), err)
+        except Exception as err:  # expired preview, odd MP3...
+            log.debug("Couldn't measure %s: %s", track.get("title"), err)
             analysis = None
         cache.put(key, analysis)
         return analysis
@@ -611,16 +649,23 @@ def sense(
     cache: TempoCache,
     measure: Callable[[bytes], tempo.Analysis | None] = measure_in_process,
     blocked: Collection[str] = frozenset(),
+    size: FanRange = ANY_SIZE,
 ) -> None:
-    hunt.message = "Procurando playlists feitas para esse momento…"
+    hunt.message = t("sense.looking")
     candidates = gather_candidates(dz, spec["sources"], rng, blocked)
     if not candidates:
-        hunt.message = f"Não achei playlists sobre “{spec['name']}”. Tente outra palavra."
+        hunt.message = t("sense.no_playlists", name=spec["name"])
         return
-    if spec.get("bpm") is None:
-        _sense_by_consensus(hunt, spec, sp, dz, candidates[:CONSENSUS_LISTEN], cache, measure, blocked)
+    by_consensus = spec.get("bpm") is None
+    candidates = within_size(dz, candidates, size, CONSENSUS_LISTEN if by_consensus else SENSE_MAX_LISTEN, hunt)
+    if hunt.cancelled:
         return
-    candidates = candidates[:SENSE_MAX_LISTEN]
+    if not candidates:
+        hunt.message = t("sense.no_size", name=spec["name"])
+        return
+    if by_consensus:
+        _sense_by_consensus(hunt, spec, sp, dz, candidates, cache, measure, blocked)
+        return
     hunt.total = len(candidates)
     seen: set[str] = set()
     for track, analysis in listen(dz, candidates, cache, measure):
@@ -630,20 +675,20 @@ def sense(
         bpm = fits(analysis, spec)
         if bpm is not None:
             _add_find(hunt, sp, track, analysis, bpm, seen, blocked)
-        hunt.message = f"Ouvindo prévias: {hunt.progress} de {hunt.total}. {len(hunt.finds)} no ritmo certo."
+        hunt.message = t("sense.listening", progress=hunt.progress, total=hunt.total, found=len(hunt.finds))
         if len(hunt.finds) >= SENSE_TARGET:
             break
     if hunt.finds:
-        hunt.message = f"{len(hunt.finds)} músicas no ritmo de “{spec['name']}”, de {hunt.progress} prévias ouvidas."
+        hunt.message = t("sense.done", count=len(hunt.finds), name=spec["name"], heard=hunt.progress)
     else:
-        hunt.message = "Nenhuma prévia ficou no ritmo desta vez. Gere de novo para ouvir outras."
+        hunt.message = t("sense.none")
 
 
 def _add_find(
     hunt: Hunt, sp: Spotify, track: dict, analysis: tempo.Analysis, bpm: float, seen: set[str],
     blocked: Collection[str] = frozenset(),
 ) -> None:
-    if blocked_track(track, blocked):  # bloqueado no meio da busca
+    if blocked_track(track, blocked):  # blocked while the discovery was running
         return
     match = to_spotify(sp, track)
     if not match or blocked_track(match, blocked):
@@ -651,7 +696,8 @@ def _add_find(
     key = curation.normalize(f"{match['name']} {match['artists'][0]['name']}")
     if key not in seen:
         seen.add(key)
-        hunt.finds.append(find_from(match, bpm=bpm, energy=analysis.energy))
+        fans = fan_counts.known((track.get("artist") or {}).get("id"))
+        hunt.finds.append(find_from(match, bpm=bpm, energy=analysis.energy, fans=fans))
 
 
 def _sense_by_consensus(
@@ -664,7 +710,7 @@ def _sense_by_consensus(
     measure: Callable[[bytes], tempo.Analysis | None],
     blocked: Collection[str] = frozenset(),
 ) -> None:
-    """Palavra fora do dicionário: ouve tudo primeiro, descobre o ritmo em comum e fica com quem segue ele."""
+    """A word outside the dictionary: listen to everything first, find the shared rhythm, keep what follows it."""
     hunt.total = len(candidates)
     measured: list[tuple[dict, tempo.Analysis]] = []
     for track, analysis in listen(dz, candidates, cache, measure):
@@ -673,12 +719,12 @@ def _sense_by_consensus(
         hunt.progress += 1
         if analysis is not None:
             measured.append((track, analysis))
-        hunt.message = f"Ouvindo para entender o ritmo de “{spec['name']}”: {hunt.progress} de {hunt.total}."
+        hunt.message = t("consensus.listening", name=spec["name"], progress=hunt.progress, total=hunt.total)
     center = consensus([analysis for _, analysis in measured])
     if center is None:
-        hunt.message = f"Poucas músicas para entender “{spec['name']}”. Tente outra palavra."
+        hunt.message = t("consensus.few", name=spec["name"])
         return
-    hunt.message = f"O ritmo de “{spec['name']}” fica perto de {round(center[0])} BPM. Separando as músicas…"
+    hunt.message = t("consensus.center", name=spec["name"], bpm=round(center[0]))
     ranked = sorted(
         ((distance, track, analysis) for track, analysis in measured
          if (distance := consensus_distance(analysis, center)) is not None),
@@ -692,12 +738,12 @@ def _sense_by_consensus(
         if len(hunt.finds) >= SENSE_TARGET:
             break
     hunt.message = (
-        f"{len(hunt.finds)} músicas no ritmo de “{spec['name']}”, perto de {round(center[0])} BPM."
-        if hunt.finds else f"As músicas sobre “{spec['name']}” não têm um ritmo em comum. Tente outra palavra."
+        t("consensus.done", count=len(hunt.finds), name=spec["name"], bpm=round(center[0]))
+        if hunt.finds else t("consensus.none", name=spec["name"])
     )
 
 
-# ---------- Roleta
+# ---------- Roulette
 
 
 def obscure_album_pick(
@@ -727,7 +773,7 @@ def obscure_album_pick(
             return None
     return find_from(
         rng.choice(secular),
-        reason=f"Sorteada de um álbum de {year} que quase ninguém ouve.",
+        reason=t("reason.obscure_album", year=year),
         image=pick_image(album.get("images"), 64),
         tag=str(year),
         fans=fans,
@@ -738,7 +784,7 @@ def world_genre_pick(
     sp: Spotify, dz: Deezer, rng: random.Random, blocked: Collection[str] = frozenset(),
     genre: str | None = None, size: FanRange = ANY_SIZE,
 ) -> Find | None:
-    """Faixa de uma playlist com o nome do gênero (buscar faixas casaria só o título)."""
+    """A track from a playlist named after the genre (searching tracks would only match titles)."""
     genre = genre or rng.choice(WORLD_GENRES)
     playlists = [p for p in dz.search_playlists(genre, limit=6) if p.get("nb_tracks", 0) >= 10]
     if not playlists:
@@ -750,7 +796,7 @@ def world_genre_pick(
     tracks = [track for track in listed if usable(track, blocked)]
     if not tracks:
         return None
-    # Sem tamanho escolhido, puxa para o lado menos popular; com tamanho, quem decide é o filtro.
+    # With no size chosen, lean toward the less popular side; with a size, the filter decides.
     pool = lesser_known(tracks) if not size.active else tracks
     rng.shuffle(pool)
     for track in pool[:6]:
@@ -759,7 +805,7 @@ def world_genre_pick(
             continue
         match = to_spotify(sp, track)
         if match and not blocked_track(match, blocked):
-            return find_from(match, reason=f"Sorteada de uma playlist de {genre}.", tag=genre.capitalize(), fans=fans)
+            return find_from(match, reason=t("reason.genre_playlist", genre=genre), tag=genre.capitalize(), fans=fans)
     return None
 
 
@@ -768,35 +814,35 @@ def roulette(
     blocked: Collection[str] = frozenset(), genre: str | None = None, size: FanRange = ANY_SIZE,
 ) -> None:
     hunt.total = count
-    hunt.message = "Girando a roleta…"
+    hunt.message = t("roulette.spinning")
     attempts = 0
-    budget = count * (6 if genre or size.active else 4)  # filtros descartam mais tentativas
+    budget = count * (6 if genre or size.active else 4)  # filters throw away more attempts
     while len(hunt.finds) < count and attempts < budget and not hunt.cancelled:
         attempts += 1
         try:
-            # Com gênero escolhido, só playlists desse gênero; sem, alterna com álbuns perdidos de um ano qualquer.
+            # With a genre, only that genre's playlists; without one, alternate with lost albums from any year.
             if genre or attempts % 2 == 0:
                 find = world_genre_pick(sp, dz, rng, blocked, genre=genre, size=size)
             else:
                 find = obscure_album_pick(sp, rng, blocked, dz=dz, size=size)
         except (SpotifyError, DeezerError) as err:
             if isinstance(err, SpotifyError) and err.status == 429:
-                raise  # pausa da Spotify: insistir só aumenta o castigo
-            log.warning("Roleta: %s", err)
+                raise  # Spotify pause: insisting only makes it longer
+            log.warning("Roulette: %s", err)
             continue
         blocked_now = find is not None and any(curation.normalize(name) in blocked for name in find.artists)
         if find and not blocked_now and all(find.uri != known.uri for known in hunt.finds):
             hunt.finds.append(find)
             hunt.progress = len(hunt.finds)
-            hunt.message = f"Sorteadas {hunt.progress} de {count}."
-    hunt.message = f"{len(hunt.finds)} músicas sorteadas." if hunt.finds else "A roleta não achou nada desta vez. Gire de novo."
+            hunt.message = t("roulette.progress", progress=hunt.progress, total=count)
+    hunt.message = t("roulette.done", count=len(hunt.finds)) if hunt.finds else t("roulette.none")
 
 
-# ---------- Novidades
+# ---------- New releases
 
 
 def genre_artists(dz: Deezer, genre: str, blocked: Collection[str] = frozenset()) -> list[dict]:
-    """Artistas que aparecem em playlists do gênero, incluindo as de lançamentos."""
+    """Artists that show up in the genre's playlists, including new-release ones."""
     artists: dict[int, dict] = {}
     for query in (f"{genre} new releases", f"{genre} lançamentos", f"new {genre}", genre):
         playlists = [p for p in dz.search_playlists(query, limit=5) if p.get("nb_tracks", 0) >= 10][:2]
@@ -816,7 +862,7 @@ def genre_artists(dz: Deezer, genre: str, blocked: Collection[str] = frozenset()
 
 
 def recent_albums(albums: list[dict], since: date) -> list[dict]:
-    """Discos lançados de 'since' para cá, do mais novo para o mais antigo."""
+    """Records released from 'since' onward, newest first."""
     fresh = []
     for album in albums:
         try:
@@ -829,7 +875,7 @@ def recent_albums(albums: list[dict], since: date) -> list[dict]:
 
 
 def focus_track(album: dict, tracks: list[dict], artist_id: int | None = None) -> dict | None:
-    """A faixa que dá nome ao lançamento; senão, a primeira do próprio artista (trilhas têm vários)."""
+    """The track the release is named after; otherwise the artist's own first one (soundtracks have many)."""
     playable = [track for track in tracks if track.get("readable", True)]
     if artist_id is not None:
         own = [track for track in playable if (track.get("artist") or {}).get("id") == artist_id]
@@ -839,7 +885,7 @@ def focus_track(album: dict, tracks: list[dict], artist_id: int | None = None) -
     return named or (playable[0] if playable else None)
 
 
-RECORD_TYPES = {"single": "Single", "ep": "EP", "album": "Álbum", "compile": "Coletânea"}
+RECORD_TYPES = ("single", "ep", "album", "compile")
 
 
 def _is_edit(title: str) -> bool:
@@ -850,12 +896,12 @@ def news(
     hunt: Hunt, sp: Spotify, dz: Deezer, genre: str, size: FanRange = ANY_SIZE, days: int = 30,
     blocked: Collection[str] = frozenset(),
 ) -> None:
-    """Lançamentos recentes de artistas do gênero, dentro do tamanho escolhido."""
+    """Recent releases from the genre's artists, within the chosen size."""
     since = date.today() - timedelta(days=days)
-    hunt.message = f"Procurando artistas de {genre}…"
+    hunt.message = t("news.looking", genre=genre)
     artists = genre_artists(dz, genre, blocked)
     if not artists:
-        hunt.message = f"Não achei artistas de “{genre}”. Tente escrever o gênero de outro jeito."
+        hunt.message = t("news.no_artists", genre=genre)
         return
     hunt.total = len(artists)
     releases: list[tuple[dict, dict, int | None]] = []
@@ -866,7 +912,7 @@ def news(
             return artist, fans, None
         return artist, fans, recent_albums(dz.artist_albums(artist["id"]), since)
 
-    # Vários artistas ao mesmo tempo; o freio do cliente Deezer segura o ritmo de pedidos.
+    # Several artists at once; the Deezer client's brake keeps the request pace.
     executor = ThreadPoolExecutor(max_workers=LISTEN_THREADS)
     futures = [executor.submit(inspect, artist) for artist in artists]
     checked = 0
@@ -880,24 +926,24 @@ def news(
                 continue
             checked += 1
             releases.extend((album, artist, fans) for album in albums)
-            hunt.message = f"Olhando {hunt.progress} de {hunt.total} artistas. {len(releases)} lançamentos até agora."
+            hunt.message = t("news.progress", progress=hunt.progress, total=hunt.total, releases=len(releases))
             if checked >= NEWS_MAX_ARTISTS:
                 break
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     if not releases:
-        hunt.message = f"Nenhum lançamento de {genre} nesse tamanho nos últimos {days} dias. Aumente o período ou o tamanho."
+        hunt.message = t("news.none", genre=genre, days=days)
         return
 
-    hunt.message = "Separando a faixa principal de cada lançamento…"
+    hunt.message = t("news.picking")
     seen: set[tuple[int, str]] = set()
-    # Mais novo primeiro; no mesmo dia, a versão original antes da "clean"/"edit".
+    # Newest first; on the same day, the original version before the "clean"/"edit" one.
     releases.sort(key=lambda item: (item[0]["release_date"], not _is_edit(item[0].get("title", ""))), reverse=True)
     for album, artist, fans in releases:
         if hunt.cancelled:
             return
         key = (artist["id"], curation.normalize(curation.base_title(album.get("title", ""))))
-        if key in seen:  # mesmo lançamento em outra versão (clean, explícita, deluxe do mesmo dia)
+        if key in seen:  # same release in another version (clean, explicit, same-day deluxe)
             continue
         seen.add(key)
         track = focus_track(album, dz.album_tracks(album["id"]), artist["id"])
@@ -907,24 +953,24 @@ def news(
         if not match or blocked_track(match, blocked) or any(found.uri == match["uri"] for found in hunt.finds):
             continue
         released = date.fromisoformat(album["release_date"])
-        kind = RECORD_TYPES.get(album.get("record_type", ""), "Lançamento")
-        who = artist["name"] + (f" ({fans:,} fãs)".replace(",", ".") if fans is not None else "")
+        record = album.get("record_type", "")
+        kind = t(f"record.{record}" if record in RECORD_TYPES else "record.other")
+        who = t("reason.who_fans", name=artist["name"], fans=i18n.number(fans)) if fans is not None else artist["name"]
         hunt.finds.append(find_from(
             match,
-            reason=f"{kind} lançado em {released:%d/%m/%Y} por {who}.",
+            reason=t("reason.release", kind=kind, who=who, date=i18n.long_date(released)),
             released=album["release_date"],
             fans=fans,
-            tag=f"{released:%d/%m}",
+            tag=i18n.short_date(released),
         ))
         if len(hunt.finds) >= NEWS_RESULTS:
             break
     hunt.message = (
-        f"{len(hunt.finds)} lançamentos de {genre} dos últimos {days} dias." if hunt.finds
-        else f"Os lançamentos encontrados não estão no Spotify do Brasil. Tente outro gênero ou período."
+        t("news.done", count=len(hunt.finds), genre=genre, days=days) if hunt.finds else t("news.not_on_spotify")
     )
 
 
-# ---------- Toca do coelho
+# ---------- Rabbit hole
 
 
 def walk(
@@ -948,15 +994,15 @@ def artist_picks(
     sp: Spotify, dz: Deezer, artist: dict, wanted: int, reason: str, taken: set[str],
     blocked: Collection[str] = frozenset(),
 ) -> list[Find]:
-    """As faixas mais ouvidas do artista que existem no Spotify (sem repetir a mesma música)."""
+    """The artist's most-played tracks that exist on Spotify (without repeating the same song)."""
     picks: list[Find] = []
     for top in dz.top_tracks(artist["id"]):
         title = curation.normalize(curation.base_title(top.get("title", "")))
-        if title and title in taken:  # a mesma música em outra gravação
+        if title and title in taken:  # the same song in another recording
             continue
         if religious_track(top):
             continue
-        match = to_spotify(sp, dz.track(top["id"]))  # o "top" não traz ISRC
+        match = to_spotify(sp, dz.track(top["id"]))  # the "top" entry has no ISRC
         if match and match["uri"] not in taken and not religious_track(match) and not blocked_track(match, blocked):
             taken.update({title, match["uri"]})
             picks.append(find_from(match, reason=reason, fans=artist.get("nb_fan")))
@@ -975,13 +1021,13 @@ def rabbit_hole(
     blocked: Collection[str] = frozenset(),
     size: FanRange = ANY_SIZE,
 ) -> None:
-    """Cada caminho vira uma viagem: uma faixa de cada artista no meio e duas do último."""
+    """Each path becomes a trip: one track from each artist along the way and two from the last."""
     hunt.total = walks
     for index in range(walks):
         if hunt.cancelled or not seeds:
             return
         seed = rng.choice(seeds)
-        hunt.message = f"Descendo a toca a partir de {seed}…"
+        hunt.message = t("rabbit.going", seed=seed)
         try:
             path = walk(dz, seed, RABBIT_HOPS, rng, blocked, size)
             finds: list[Find] = []
@@ -990,14 +1036,14 @@ def rabbit_hole(
             for number, artist in enumerate(steps, start=1):
                 last = number == len(steps)
                 reason = (
-                    f"Fim da toca: {number} pulos a partir de {seed}." if last
-                    else f"Pulo {number} de {len(steps)} a partir de {seed}."
+                    t("reason.rabbit_end", hops=number, seed=seed) if last
+                    else t("reason.rabbit_hop", hop=number, hops=len(steps), seed=seed)
                 )
                 finds.extend(artist_picks(sp, dz, artist, RABBIT_TRACKS if last else 1, reason, taken, blocked))
         except (SpotifyError, DeezerError) as err:
             if isinstance(err, SpotifyError) and err.status == 429:
-                raise  # pausa da Spotify: insistir só aumenta o castigo
-            log.warning("Toca do coelho: %s", err)
+                raise  # Spotify pause: insisting only makes it longer
+            log.warning("Rabbit hole: %s", err)
             continue
         if finds:
             hunt.chains.append({
@@ -1007,6 +1053,5 @@ def rabbit_hole(
             hunt.finds.extend(finds)
         hunt.progress = index + 1
     hunt.message = (
-        f"{len(hunt.chains)} caminhos, {len(hunt.finds)} músicas do conhecido ao desconhecido." if hunt.chains
-        else "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho."
+        t("rabbit.done", chains=len(hunt.chains), count=len(hunt.finds)) if hunt.chains else t("rabbit.none")
     )

@@ -1,9 +1,9 @@
-"""Converte objetos da Spotify Web API no formato enxuto que o painel desenha."""
+"""Converts Spotify Web API objects into the compact format the panel renders."""
 from __future__ import annotations
 
 
 def pick_image(images: list[dict] | None, min_size: int) -> str | None:
-    """Menor imagem com pelo menos min_size px (o Spotify lista da maior para a menor)."""
+    """Smallest image that is at least min_size px (Spotify lists them from largest to smallest)."""
     if not images:
         return None
     fitting = [image for image in images if (image.get("width") or 0) >= min_size]

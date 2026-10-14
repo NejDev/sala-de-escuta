@@ -1,0 +1,112 @@
+{
+  "sensations": [
+    {
+      "id": "workout",
+      "name": {"pt": "Treino pesado", "en": "Heavy workout"},
+      "description": {
+        "pt": "Para levantar peso: batida firme, grave alto, nada de introdução longa.",
+        "en": "For lifting: a firm beat, loud bass, no long intros."
+      },
+      "color": "#F06A4F",
+      "bpm": [125, 150],
+      "energy": [0.65, 1.0],
+      "sources": ["treino academia", "gym motivation", "workout rap", "phonk gym", "rock workout"]
+    },
+    {
+      "id": "running",
+      "name": {"pt": "Corrida", "en": "Running"},
+      "description": {
+        "pt": "Ritmo de passada: entre 150 e 180 batidas, para o pé acompanhar sem pensar.",
+        "en": "Stride tempo: 150 to 180 beats, so your feet follow without thinking."
+      },
+      "color": "#F2C14E",
+      "bpm": [150, 182],
+      "energy": [0.6, 1.0],
+      "sources": ["corrida running", "running 170 bpm", "drum and bass running", "pop running"]
+    },
+    {
+      "id": "deep-focus",
+      "name": {"pt": "Foco profundo", "en": "Deep focus"},
+      "description": {
+        "pt": "Para estudar ou programar: pulso lento e constante, sem voz chamando atenção.",
+        "en": "For studying or coding: a slow, steady pulse, no vocals pulling at you."
+      },
+      "color": "#7FB7BE",
+      "bpm": [55, 95],
+      "energy": [0.0, 0.7],
+      "sources": ["lofi estudar", "lofi hip hop focus", "piano estudo", "ambient focus", "jazz para estudar", "post rock instrumental"]
+    },
+    {
+      "id": "work-groove",
+      "name": {"pt": "Trabalho no ritmo", "en": "Work groove"},
+      "description": {
+        "pt": "Produtivo sem ser sonolento: house suave, nu jazz e bossa instrumental.",
+        "en": "Productive without being sleepy: soft house, nu jazz and instrumental bossa."
+      },
+      "color": "#9DB4E6",
+      "bpm": [95, 122],
+      "energy": [0.35, 0.8],
+      "sources": ["deep house work", "chillhop", "musica para trabalhar", "nu jazz", "bossa nova instrumental"]
+    },
+    {
+      "id": "house-party",
+      "name": {"pt": "Festa em casa", "en": "House party"},
+      "description": {
+        "pt": "Para animar a sala: pista de dança entre 112 e 132 batidas.",
+        "en": "To get the room going: a dance floor between 112 and 132 beats."
+      },
+      "color": "#E3909E",
+      "bpm": [112, 132],
+      "energy": [0.65, 1.0],
+      "sources": ["festa em casa", "dance pop hits", "disco classics", "funk brasileiro festa"]
+    },
+    {
+      "id": "wind-down",
+      "name": {"pt": "Desacelerar", "en": "Wind down"},
+      "description": {
+        "pt": "Fim do dia: violão, piano e ambientes calmos para baixar o ritmo.",
+        "en": "End of the day: acoustic guitar, piano and calm ambience to slow down."
+      },
+      "color": "#B8C4A0",
+      "bpm": [50, 90],
+      "energy": [0.0, 0.6],
+      "sources": ["relaxar", "acoustic chill", "piano relaxante", "musica calma"]
+    },
+    {
+      "id": "rainy-day",
+      "name": {"pt": "Dia de chuva", "en": "Rainy day"},
+      "description": {
+        "pt": "Melancolia boa: indie, jazz e canções para olhar pela janela.",
+        "en": "The good kind of melancholy: indie, jazz and songs for staring out the window."
+      },
+      "color": "#8E9AAF",
+      "bpm": [60, 100],
+      "energy": [0.0, 0.72],
+      "sources": ["dia de chuva", "sad indie", "musicas melancolicas", "rainy day jazz"]
+    },
+    {
+      "id": "courage",
+      "name": {"pt": "Coragem", "en": "Courage"},
+      "description": {
+        "pt": "Antes de algo difícil: trilhas épicas e orquestras que crescem.",
+        "en": "Before something hard: epic scores and swelling orchestras."
+      },
+      "color": "#D4A84B",
+      "bpm": [80, 140],
+      "energy": [0.55, 1.0],
+      "sources": ["epic music motivation", "trilha sonora epica", "cinematic orchestral"]
+    },
+    {
+      "id": "road-trip",
+      "name": {"pt": "Pé na estrada", "en": "Road trip"},
+      "description": {
+        "pt": "Viagem de carro: rock, indie e clássicos para cantar junto.",
+        "en": "Car trip: rock, indie and classics to sing along to."
+      },
+      "color": "#E6D5AA",
+      "bpm": [100, 130],
+      "energy": [0.5, 0.92],
+      "sources": ["road trip", "rock na estrada", "viagem de carro"]
+    }
+  ]
+}

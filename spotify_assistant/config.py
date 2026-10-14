@@ -1,4 +1,4 @@
-"""Caminhos do projeto, leitura do .env, do playlists.json e do estado local."""
+"""Project paths and loading of .env, playlists.json, and local state."""
 from __future__ import annotations
 
 import json
@@ -7,30 +7,33 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import i18n
+from .i18n import t
+
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 TOKEN_FILE = DATA_DIR / "token.json"
 STATE_FILE = DATA_DIR / "state.json"
 LOG_FILE = DATA_DIR / "assistant.log"
 PLAYLISTS_FILE = ROOT / "playlists.json"
-SENSATIONS_FILE = ROOT / "sensacoes.json"
-BLOCKED_FILE = ROOT / "bloqueados.json"
+SENSATIONS_FILE = ROOT / "sensations.json"
+BLOCKED_FILE = ROOT / "bloqueados.json"  # legacy single-user file, moved on startup
 TEMPO_CACHE_FILE = DATA_DIR / "tempo-cache.json"
 MATCH_CACHE_FILE = DATA_DIR / "spotify-matches.json"
-SPOTIFY_PAUSES_FILE = DATA_DIR / "spotify-pausas.json"
+SPOTIFY_PAUSES_FILE = DATA_DIR / "spotify-pauses.json"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 
 @dataclass(frozen=True)
 class Settings:
     client_id: str
-    redirect_uri: str  # volta do login quando o painel é aberto no próprio PC
-    public_url: str = ""  # endereço público (túnel) por onde os amigos entram, sem barra no fim
+    redirect_uri: str  # login callback when the panel is opened on the host PC itself
+    public_url: str = ""  # public address (tunnel) that friends use to get in, no trailing slash
 
 
 @dataclass(frozen=True)
 class UserPaths:
-    """Arquivos de uma pessoa da sala: data/users/<id do Spotify>/."""
+    """Files for one person in the room: data/users/<Spotify id>/."""
 
     id: str
     dir: Path
@@ -45,14 +48,28 @@ class UserPaths:
 
     @property
     def blocked(self) -> Path:
-        return self.dir / "bloqueados.json"
+        return self.dir / "blocked.json"
 
 
 def user_paths(user_id: str) -> UserPaths:
-    # IDs do Spotify são alfanuméricos; qualquer outra coisa poderia escapar da pasta.
+    # Spotify IDs are alphanumeric; anything else could escape the folder.
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", user_id) or user_id.startswith("."):
-        raise ValueError(f"id de usuário inválido: {user_id!r}")
+        raise ValueError(f"invalid user id: {user_id!r}")
     return UserPaths(user_id, DATA_DIR / "users" / user_id)
+
+
+# Data files from the Portuguese version -> current names (renamed on startup).
+RENAMED_FILES = {"bloqueados.json": "blocked.json", "perfil.json": "profile.json"}
+
+
+def rename_legacy_files() -> None:
+    old_pauses = DATA_DIR / "spotify-pausas.json"
+    if old_pauses.exists() and not SPOTIFY_PAUSES_FILE.exists():
+        old_pauses.rename(SPOTIFY_PAUSES_FILE)
+    for folder in (DATA_DIR / "users").glob("*"):
+        for old, new in RENAMED_FILES.items():
+            if (folder / old).exists() and not (folder / new).exists():
+                (folder / old).rename(folder / new)
 
 
 def list_users() -> list[str]:
@@ -89,15 +106,21 @@ def parse_env(text: str) -> dict[str, str]:
     return values
 
 
-def load_settings() -> Settings:
+def load_env() -> None:
+    """Reads .env into the environment and sets the command-line language (SALA_LANG)."""
     env_file = ROOT / ".env"
     if env_file.exists():
-        # utf-8-sig: o Bloco de Notas às vezes salva com BOM
+        # utf-8-sig: Notepad sometimes saves with a BOM
         for key, value in parse_env(env_file.read_text(encoding="utf-8-sig")).items():
             os.environ.setdefault(key, value)
+    i18n.use(os.environ.get("SALA_LANG", "").strip().lower()[:2] or None)
+
+
+def load_settings() -> Settings:
+    load_env()
     client_id = os.environ.get("SPOTIFY_CLIENT_ID", "")
     if not client_id:
-        raise SystemExit("Defina SPOTIFY_CLIENT_ID no arquivo .env (veja .env.example).")
+        raise SystemExit(t("config.no_client_id"))
     return Settings(
         client_id,
         os.environ.get("SPOTIFY_REDIRECT_URI") or DEFAULT_REDIRECT_URI,
@@ -110,21 +133,22 @@ def load_playlists() -> dict:
 
 
 def load_sensations() -> list[dict]:
-    return json.loads(SENSATIONS_FILE.read_text(encoding="utf-8"))["sensacoes"]
+    return json.loads(SENSATIONS_FILE.read_text(encoding="utf-8"))["sensations"]
 
 
 def load_blocked(path: Path | None = None) -> list[str]:
-    """Artistas que nunca devem aparecer nas descobertas (cada pessoa tem a sua lista)."""
+    """Artists that must never show up in discoveries (each person has their own list)."""
     try:
-        return json.loads((path or BLOCKED_FILE).read_text(encoding="utf-8"))["artistas"]
+        data = json.loads((path or BLOCKED_FILE).read_text(encoding="utf-8"))
     except FileNotFoundError:
         return []
+    return data.get("artists", data.get("artistas", []))  # "artistas": files from the Portuguese version
 
 
 def save_blocked(artists: list[str], path: Path | None = None) -> None:
     path = path or BLOCKED_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"artistas": sorted(set(artists), key=str.casefold)}
+    data = {"artists": sorted(set(artists), key=str.casefold)}
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
@@ -133,7 +157,7 @@ def save_playlists(config: dict) -> None:
 
 
 class State(dict):
-    """O estado de uma pessoa (IDs das playlists...) e o arquivo de onde ele veio."""
+    """A person's state (playlist IDs...) and the file it came from."""
 
     path: Path | None = None
 

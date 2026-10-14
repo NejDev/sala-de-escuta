@@ -6,6 +6,7 @@ import logging
 import sys
 
 from . import accounts, config
+from .i18n import t
 from .api import Spotify, SpotifyError
 from .auth import TokenManager, login
 from .config import DATA_DIR, LOG_FILE, load_playlists, load_settings, load_state
@@ -14,33 +15,27 @@ from .playlists import run
 
 log = logging.getLogger("spotify_assistant")
 
-FORBIDDEN_HINT = (
-    "O Spotify recusou o acesso. Confira: (1) a conta dona do app é Premium; "
-    "(2) o e-mail da conta está em User Management no app do Spotify for Developers; "
-    "(3) entre de novo se mudou as permissões."
-)
-
-
 def main(argv: list[str] | None = None) -> int:
     _configure_logging()
-    parser = argparse.ArgumentParser(prog="spotify_assistant", description="Sala de escuta: playlists do Spotify.")
+    config.load_env()  # SALA_LANG decides the language of this help and of the messages
+    parser = argparse.ArgumentParser(prog="spotify_assistant", description=t("cli.description"))
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("login", help="entra com a conta do dono (abre o navegador)")
-    commands.add_parser("check", help="testa a conexão e mostra quem está na sala")
-    ui = commands.add_parser("ui", help="abre o painel no navegador")
-    ui.add_argument("--no-browser", action="store_true", help="só sobe o servidor, sem abrir o navegador")
-    setup = commands.add_parser("setup", help="cria/recria as playlists do playlists.json na conta do dono")
-    setup.add_argument("--only", action="append", metavar="NOME", help="só esta playlist (pode repetir)")
-    weekly = commands.add_parser("weekly", help="atualiza as playlists semanais de todos da sala")
+    commands.add_parser("login", help=t("cli.login"))
+    commands.add_parser("check", help=t("cli.check"))
+    ui = commands.add_parser("ui", help=t("cli.ui"))
+    ui.add_argument("--no-browser", action="store_true", help=t("cli.no_browser"))
+    setup = commands.add_parser("setup", help=t("cli.setup"))
+    setup.add_argument("--only", action="append", metavar="NAME", help=t("cli.only"))
+    weekly = commands.add_parser("weekly", help=t("cli.weekly"))
     for command in (setup, weekly):
-        command.add_argument("--dry-run", action="store_true", help="mostra o que seria feito, sem alterar nada")
+        command.add_argument("--dry-run", action="store_true", help=t("cli.dry_run"))
     args = parser.parse_args(argv)
 
     try:
         settings = load_settings()
         if args.command == "login":
             person = accounts.register(login(settings))
-            log.info("Login feito como %s. Agora rode: python -m spotify_assistant check", person.name)
+            log.info(t("cli.logged_in", name=person.name))
             return 0
         accounts.migrate_legacy(settings)
         if args.command == "ui":
@@ -51,35 +46,35 @@ def main(argv: list[str] | None = None) -> int:
 
         owner = config.owner_id()
         if not owner:
-            raise SystemExit("Ninguém entrou na sala ainda. Rode: python -m spotify_assistant login")
+            raise SystemExit(t("cli.nobody"))
         paths = config.user_paths(owner)
         playlists_config = load_playlists()
         sp = Spotify(TokenManager(settings, paths.token), market=playlists_config.get("market", "BR"))
         if args.command == "check":
             me = sp.me()
-            log.info("Dono: %s (%s).", me.get("display_name") or me["id"], me["id"])
+            log.info(t("cli.owner", name=me.get("display_name") or me["id"], id=me["id"]))
             for user_id in config.list_users():
-                log.info("  na sala: %s", accounts.display_name(user_id))
+                log.info(t("cli.member", name=accounts.display_name(user_id)))
             return 0
         run(sp, playlists_config, load_state(paths.state), only=args.only, dry_run=args.dry_run)
         return 0
     except SystemExit as exc:
-        if isinstance(exc.code, str):  # mensagens nossas; vão para o log também
+        if isinstance(exc.code, str):  # our own messages; they go to the log too
             log.error(exc.code)
             return 1
         raise
     except SpotifyError as err:
-        log.error("Erro do Spotify: %s", err)
+        log.error(t("cli.spotify_error", error=err))
         if err.status == 403:
-            log.error(FORBIDDEN_HINT)
+            log.error(t("cli.forbidden"))
         return 1
     except Exception:
-        log.exception("Erro inesperado")
+        log.exception("Unexpected error")
         return 1
 
 
 def weekly_for_everyone(settings: config.Settings, dry_run: bool = False) -> int:
-    """Atualiza as playlists semanais de cada pessoa que já criou alguma delas."""
+    """Updates the weekly playlists of everyone who has already created one of them."""
     playlists_config = load_playlists()
     weekly_names = {spec["name"] for spec in playlists_config["playlists"] if spec.get("refresh") == "weekly"}
     failures = 0
@@ -87,14 +82,14 @@ def weekly_for_everyone(settings: config.Settings, dry_run: bool = False) -> int
         paths = config.user_paths(user_id)
         state = load_state(paths.state)
         if not weekly_names & set(state.get("playlists", {})):
-            continue  # nunca criou a Tech Radar: não criamos nada sem a pessoa pedir
+            continue  # never created the Tech Radar: we don't create anything unless the person asks
         log.info("== %s", accounts.display_name(user_id))
         try:
             sp = Spotify(TokenManager(settings, paths.token), market=playlists_config.get("market", "BR"))
             run(sp, playlists_config, state, weekly=True, dry_run=dry_run)
         except (SystemExit, SpotifyError) as err:
             failures += 1
-            log.error("Não deu para atualizar %s: %s", accounts.display_name(user_id), getattr(err, "code", err))
+            log.error(t("cli.weekly_failed", name=accounts.display_name(user_id), error=getattr(err, "code", err)))
     return 1 if failures else 0
 
 
@@ -103,7 +98,7 @@ def _configure_logging() -> None:
     file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     handlers: list[logging.Handler] = [file_handler]
-    if sys.stdout is not None:  # pythonw (Agendador de Tarefas) não tem console
+    if sys.stdout is not None:  # pythonw (Task Scheduler) has no console
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         handlers.append(logging.StreamHandler(sys.stdout))
     logging.basicConfig(level=logging.INFO, format="%(message)s", handlers=handlers)

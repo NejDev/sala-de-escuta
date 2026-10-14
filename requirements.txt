@@ -1,2 +1,2 @@
-# Opcional: só as Sensações precisam (decodifica as prévias MP3 para medir o BPM).
+# Optional: only Sensations needs it (decodes the MP3 previews to measure BPM).
 miniaudio>=1.59
