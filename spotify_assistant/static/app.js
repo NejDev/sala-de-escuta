@@ -206,32 +206,37 @@ async function loadDetail() {
 
 function renderShelf() {
   const onPlaylist = state.view === "playlist";
-  const spines = state.overview.playlists.map((playlist, index) => h("button", {
-    class: "spine",
+  // Ponto na cor da playlist; vira equalizador quando ela está tocando.
+  const item = ({ key, label, color, uri, current, explore, number }) => h("button", {
+    class: explore ? "nav-item is-explore" : "nav-item",
     type: "button",
-    style: `--spine: ${colorOf(playlist)}`,
-    "aria-current": onPlaylist && playlist.name === state.selected ? "true" : null,
-    "data-uri": playlist.uri,
-    title: `${playlist.name} (tecla ${index + 1})`,
-    onclick: () => select(playlist.name),
+    style: color ? `--spine: ${color}` : null,
+    "aria-current": current ? "page" : null,
+    "data-uri": uri,
+    title: `${label} (tecla ${number})`,
+    onclick: () => go(key),
   },
-    h("span", { class: "spine-eq", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
-    h("span", { class: "spine-name" }, playlist.name),
-    h("span", { class: "spine-count", "aria-label": `${playlist.total} itens` }, String(playlist.total)),
-  ));
-  // Lombadas vazadas: o espaço da estante para música nova.
-  const offset = spines.length;
-  const hollow = Object.entries(VIEWS).map(([key, label], index) => h("button", {
-    class: "spine is-hollow",
-    type: "button",
-    "aria-current": state.view === key ? "true" : null,
-    title: `${label} (tecla ${offset + index + 1})`,
-    onclick: () => openView(key),
-  }, h("span", { class: "spine-name" }, label)));
-  const group = (label, buttons) => h("section", { class: "shelf-group", "aria-label": label },
-    h("p", { class: "shelf-label", "aria-hidden": "true" }, label),
-    h("div", { class: "shelf-row" }, buttons));
-  $("#shelf").replaceChildren(group("Suas playlists", spines), group("Explorar", hollow));
+    h("span", { class: "nav-mark", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
+    h("span", null, label));
+  const playlists = state.overview.playlists.map((playlist, index) => item({
+    key: playlist.name,
+    label: playlist.name,
+    color: colorOf(playlist),
+    uri: playlist.uri,
+    current: onPlaylist && playlist.name === state.selected,
+    number: index + 1,
+  }));
+  const explore = Object.entries(VIEWS).map(([key, label], index) => item({
+    key,
+    label,
+    explore: true,
+    current: state.view === key,
+    number: playlists.length + index + 1,
+  }));
+  const group = (label, items) => h("div", { class: "nav-group", role: "group", "aria-label": label },
+    h("span", { class: "nav-label", "aria-hidden": "true" }, label),
+    items);
+  $("#shelf").replaceChildren(group("Playlists", playlists), group("Explorar", explore));
   markPlaying();
 }
 
@@ -448,22 +453,22 @@ function senseIntro() {
     const text = feeling.value.trim();
     if (text) startHunt({ kind: "sense", text });
   };
-  return [
+  // Tela larga: à esquerda o título e o campo livre; à direita os momentos prontos.
+  const main = h("div", { class: "sense-main" },
     h("div", { class: "sleeve-text" },
       h("h1", { class: "title" }, "Sensações"),
       h("p", { class: "description" },
         "Escreva o que está sentindo ou escolha um momento. A sala acha músicas para isso, ouve a prévia "
         + "de cada uma e fica só com as que têm o ritmo certo."),
       !ready && h("p", { class: "meta is-warning" },
-        "Para medir o BPM, instale o decodificador com pip install miniaudio e reabra o painel."),
-    ),
+        "Para medir o BPM, instale o decodificador com pip install miniaudio e reabra o painel.")),
     h("form", { class: "feeling", onsubmit: submit },
       h("label", { class: "feeling-label", for: "feeling-input" }, "O que você está sentindo?"),
       h("div", { class: "feeling-row" },
         feeling,
         h("button", { class: "play-button", type: "submit", disabled: !ready }, "Montar")),
-      h("p", { class: "feeling-hint" },
-        "Vale qualquer coisa: uma palavra, uma frase, um momento do dia.")),
+      h("p", { class: "feeling-hint" }, "Vale qualquer coisa: uma palavra, uma frase, um momento do dia.")));
+  const moods = h("div", { class: "sense-moods" },
     h("p", { class: "moods-label" }, "Ou escolha um momento"),
     h("ul", { class: "moods" }, sensations.map((sensation) => h("li", null,
       h("button", {
@@ -476,9 +481,8 @@ function senseIntro() {
       },
         h("span", { class: "mood-name" }, sensation.name),
         h("span", { class: "mood-bpm" }, `${sensation.bpm[0]}–${sensation.bpm[1]} BPM`),
-        h("span", { class: "mood-text" }, sensation.description),
-      )))),
-  ];
+        h("span", { class: "mood-text" }, sensation.description))))));
+  return [h("div", { class: "sense-layout" }, main, moods)];
 }
 
 function discoverIntro() {
@@ -519,10 +523,11 @@ function discoverIntro() {
 }
 
 // ---------- Roda da roleta
+// Começa vazia; cada música sorteada pinta uma fatia com o gênero ou o ano que saiu.
 
-const WHEEL_GENRES = ["Zamrock", "Enka", "Fado", "Huayno", "Ethio jazz", "City pop",
-  "Schlager", "Choro", "Rebetiko", "Italo disco", "Tropicália", "Zydeco"];
+const WHEEL_SLICES = 12;
 const WHEEL_COLORS = ["#5CC8C0", "#D4A84B", "#E3909E", "#E6D5AA", "#9DB4E6", "#F06A4F"];
+const WHEEL_LABEL_MAX = 10;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 function svg(tag, attrs) {
@@ -535,28 +540,30 @@ function wheel() {
   const size = 100;
   const radius = 48;
   const center = size / 2;
-  const slice = 360 / WHEEL_GENRES.length;
+  const slice = 360 / WHEEL_SLICES;
   const root = svg("svg", { class: "wheel", id: "wheel", viewBox: `0 0 ${size} ${size}`, "aria-hidden": "true" });
-  WHEEL_GENRES.forEach((genre, index) => {
+  for (let index = 0; index < WHEEL_SLICES; index++) {
     const start = (index * slice - 90) * (Math.PI / 180);
     const end = ((index + 1) * slice - 90) * (Math.PI / 180);
     const path = `M${center},${center} L${center + radius * Math.cos(start)},${center + radius * Math.sin(start)} `
       + `A${radius},${radius} 0 0 1 ${center + radius * Math.cos(end)},${center + radius * Math.sin(end)} Z`;
-    root.append(svg("path", { d: path, fill: WHEEL_COLORS[index % WHEEL_COLORS.length], stroke: "#0E1525", "stroke-width": 0.6 }));
-    const label = svg("text", {
-      x: center + 26,
+    root.append(svg("path", { class: "wheel-slice", d: path }));
+    root.append(svg("text", {
+      class: "wheel-label",
+      x: center + 15,
       y: center,
-      "text-anchor": "middle",
       "dominant-baseline": "middle",
       transform: `rotate(${index * slice + slice / 2 - 90} ${center} ${center})`,
-    });
-    label.textContent = genre;
-    root.append(label);
-  });
+    }));
+  }
   return h("div", { class: "wheel-wrap" },
     h("span", { class: "wheel-pointer", "aria-hidden": "true" }),
     root,
     h("span", { class: "wheel-hub", id: "wheel-hub", "aria-hidden": "true" }));
+}
+
+function shorten(text) {
+  return text.length > WHEEL_LABEL_MAX ? `${text.slice(0, WHEEL_LABEL_MAX - 1)}…` : text;
 }
 
 function currentAngle(el) {
@@ -566,13 +573,24 @@ function currentAngle(el) {
   return (Math.atan2(b, a) * 180) / Math.PI;
 }
 
-/** Gira enquanto a roleta sorteia; quando termina, desacelera até parar. */
+/** Pinta as fatias já sorteadas, gira enquanto sorteia e desacelera até parar no fim. */
 function updateWheel(hunt) {
   const el = $("#wheel");
   if (!el) return;
+  const roulette = hunt?.kind === "roulette" ? hunt : null;
+  const finds = roulette ? roulette.finds : [];
+  const slices = el.querySelectorAll(".wheel-slice");
+  const labels = el.querySelectorAll(".wheel-label");
+  slices.forEach((slice, index) => {
+    const find = finds[index];
+    slice.classList.toggle("is-filled", Boolean(find));
+    slice.style.fill = find ? WHEEL_COLORS[index % WHEEL_COLORS.length] : "";
+    labels[index].textContent = find ? shorten(find.tag || "") : "";
+  });
   const hub = $("#wheel-hub");
-  const spinning = hunt?.kind === "roulette" && hunt.status === "running";
-  if (hub) hub.textContent = hunt?.kind === "roulette" && hunt.total ? `${hunt.progress}/${hunt.total}` : "";
+  if (hub) hub.textContent = roulette ? `${finds.length}/${roulette.total || WHEEL_SLICES}` : "";
+
+  const spinning = roulette?.status === "running";
   if (spinning && !el.classList.contains("is-spinning")) {
     el.style.transition = "none";
     el.style.transform = "";
@@ -748,7 +766,8 @@ function chainRow(chain) {
   return h("li", { class: "chain" },
     h("ol", { class: "chain-path", "aria-label": "Caminho entre artistas" },
       chain.path.map((artist) => h("li", null, artist.name))),
-    h("p", { class: "meta" }, `${last.name} tem ${fans(last.fans)} no Deezer.`));
+    h("p", { class: "meta", title: "Fãs no catálogo que a sala consulta para achar artistas pouco conhecidos." },
+      `${last.name}: ${fans(last.fans)}.`));
 }
 
 async function keep(uris, button) {
@@ -919,10 +938,10 @@ function paintRange(input) {
 
 function markPlaying() {
   const player = state.player || {};
-  for (const spine of document.querySelectorAll(".spine")) {
-    const active = Boolean(spine.dataset.uri) && spine.dataset.uri === player.context_uri;
-    spine.classList.toggle("is-playing", active && Boolean(player.is_playing));
-    spine.classList.toggle("is-paused", active && !player.is_playing);
+  for (const item of document.querySelectorAll(".nav-item")) {
+    const active = Boolean(item.dataset.uri) && item.dataset.uri === player.context_uri;
+    item.classList.toggle("is-playing", active && Boolean(player.is_playing));
+    item.classList.toggle("is-paused", active && !player.is_playing);
   }
   for (const row of document.querySelectorAll(".track")) {
     row.classList.toggle("is-current", Boolean(player.item) && row.dataset.uri === player.item.uri);

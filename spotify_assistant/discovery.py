@@ -34,7 +34,7 @@ PLAYLISTS_PER_SOURCE = 2
 ROULETTE_COUNT = 12
 RABBIT_WALKS = 4
 RABBIT_HOPS = 4
-RABBIT_TRACKS = 2
+RABBIT_TRACKS = 2  # do último artista; dos do meio sai uma de cada
 MIN_FANS = 100
 LISTEN_THREADS = 6
 
@@ -137,6 +137,7 @@ class Find:
     reason: str = ""
     bpm: float | None = None
     energy: float | None = None
+    tag: str = ""  # rótulo curto (gênero ou ano) que vai na fatia da roleta
 
 
 @dataclass
@@ -344,7 +345,7 @@ def to_spotify(sp: Spotify, track: dict) -> dict | None:
 
 
 def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: float | None = None,
-              image: str | None = None) -> Find:
+              image: str | None = None, tag: str = "") -> Find:
     return Find(
         uri=track["uri"],
         title=track["name"],
@@ -354,6 +355,7 @@ def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: f
         reason=reason,
         bpm=bpm,
         energy=energy,
+        tag=tag,
     )
 
 
@@ -512,6 +514,7 @@ def obscure_album_pick(sp: Spotify, rng: random.Random) -> Find | None:
         rng.choice(tracks),
         reason=f"Sorteada de um álbum de {year} que quase ninguém ouve.",
         image=pick_image(album.get("images"), 64),
+        tag=str(year),
     )
 
 
@@ -525,7 +528,9 @@ def world_genre_pick(sp: Spotify, dz: Deezer, rng: random.Random) -> Find | None
     if not tracks:
         return None
     match = to_spotify(sp, rng.choice(lesser_known(tracks)))
-    return find_from(match, reason=f"Sorteada de uma playlist de {genre}.") if match else None
+    if not match:
+        return None
+    return find_from(match, reason=f"Sorteada de uma playlist de {genre}.", tag=genre.capitalize())
 
 
 def roulette(hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int = ROULETTE_COUNT) -> None:
@@ -563,6 +568,22 @@ def walk(dz: Deezer, seed: str, hops: int, rng: random.Random) -> list[dict]:
     return path if len(path) > 1 else []
 
 
+def artist_picks(sp: Spotify, dz: Deezer, artist: dict, wanted: int, reason: str, taken: set[str]) -> list[Find]:
+    """As faixas mais ouvidas do artista que existem no Spotify (sem repetir a mesma música)."""
+    picks: list[Find] = []
+    for top in dz.top_tracks(artist["id"]):
+        title = curation.normalize(curation.base_title(top.get("title", "")))
+        if title and title in taken:  # a mesma música em outra gravação
+            continue
+        match = to_spotify(sp, dz.track(top["id"]))  # o "top" não traz ISRC
+        if match and match["uri"] not in taken:
+            taken.update({title, match["uri"]})
+            picks.append(find_from(match, reason=reason))
+        if len(picks) == wanted:
+            break
+    return picks
+
+
 def rabbit_hole(
     hunt: Hunt,
     sp: Spotify,
@@ -571,6 +592,7 @@ def rabbit_hole(
     seeds: list[str],
     walks: int = RABBIT_WALKS,
 ) -> None:
+    """Cada caminho vira uma viagem: uma faixa de cada artista no meio e duas do último."""
     hunt.total = walks
     for index in range(walks):
         if hunt.cancelled or not seeds:
@@ -579,18 +601,16 @@ def rabbit_hole(
         hunt.message = f"Descendo a toca a partir de {seed}…"
         try:
             path = walk(dz, seed, RABBIT_HOPS, rng)
-            finds, titles = [], set()
-            if path:
-                for top in dz.top_tracks(path[-1]["id"]):
-                    title = curation.normalize(curation.base_title(top.get("title", "")))
-                    if title and title in titles:  # a mesma música em outra gravação
-                        continue
-                    match = to_spotify(sp, dz.track(top["id"]))  # o "top" não traz ISRC
-                    if match:
-                        titles.add(title)
-                        finds.append(find_from(match, reason=f"Chegou aqui a partir de {seed}."))
-                    if len(finds) == RABBIT_TRACKS:
-                        break
+            finds: list[Find] = []
+            taken: set[str] = set()
+            steps = path[1:]
+            for number, artist in enumerate(steps, start=1):
+                last = number == len(steps)
+                reason = (
+                    f"Fim da toca: {number} pulos a partir de {seed}." if last
+                    else f"Pulo {number} de {len(steps)} a partir de {seed}."
+                )
+                finds.extend(artist_picks(sp, dz, artist, RABBIT_TRACKS if last else 1, reason, taken))
         except (SpotifyError, DeezerError) as err:
             log.warning("Toca do coelho: %s", err)
             continue
@@ -602,6 +622,6 @@ def rabbit_hole(
             hunt.finds.extend(finds)
         hunt.progress = index + 1
     hunt.message = (
-        f"{len(hunt.chains)} artistas encontrados longe do óbvio." if hunt.chains
+        f"{len(hunt.chains)} caminhos, {len(hunt.finds)} músicas do conhecido ao desconhecido." if hunt.chains
         else "A toca não levou a lugar nenhum desta vez. Tente de novo ou escolha outro artista."
     )

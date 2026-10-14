@@ -14,6 +14,11 @@
   --mood: #D4A84B;
   --player-h: 92px;
   --gutter: clamp(16px, 3vw, 40px);
+  --content: 1320px;
+  /* Margem lateral que centraliza a coluna de conteúdo em telas largas. */
+  --inset: max(var(--gutter), calc((100% - var(--content)) / 2));
+  /* A barra de topo é mais larga que o conteúdo: o menu inteiro precisa caber numa linha. */
+  --nav-inset: max(var(--gutter), calc((100% - 1440px) / 2));
   color-scheme: dark;
 }
 
@@ -62,98 +67,92 @@ body.is-gated .room,
 body.is-gated .player,
 body.is-gated .console { display: none; }
 
-/* ---------- Estante (topo): lombadas deitadas, em seções */
+/* ---------- Barra de topo: marca + navegação em seções */
 
-.topbar { padding: 18px var(--gutter) 0; }
-
-.shelf {
-  display: flex;
-  align-items: flex-end;
-  gap: 32px;
-  padding-bottom: 14px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--line);
-  scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
-}
-
-.shelf-group { flex: none; }
-.shelf-label { margin: 0 0 8px 2px; color: var(--smoke); font-size: .8125rem; }
-.shelf-row { display: flex; gap: 6px; padding-top: 4px; }
-
-.spine {
+.topbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 42px;
-  padding: 0 14px 0 16px;
-  border: 0;
-  border-radius: 3px;
-  background: var(--spine, var(--mood));
-  color: var(--ink);
-  box-shadow: inset 0 3px 0 rgb(255 255 255 / .16), inset 0 -2px 0 rgb(0 0 0 / .14);
-  filter: saturate(.6) brightness(.72);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: filter .25s, transform .25s cubic-bezier(.2, .7, .2, 1);
+  gap: 32px;
+  padding: 14px var(--nav-inset);
+  border-bottom: 1px solid var(--line);
 }
-.spine:hover { filter: saturate(.8) brightness(.86); }
-/* A escolhida sai um pouco da pilha. */
-.spine[aria-current="true"] { filter: none; transform: translateY(-4px); }
 
-.spine-name {
-  font-size: 1.125rem;
+.brand {
+  flex: none;
+  margin: 0;
+  font-size: 1.5rem;
   font-stretch: 62%;
-  font-weight: 800;
+  font-weight: 900;
   line-height: 1;
 }
 
-.spine-count {
-  font-size: .75rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  opacity: .7;
+/* Em telas médias o grupo "Explorar" desce para a linha de baixo em vez de sumir. */
+.shelf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  min-width: 0;
 }
 
-.spine-eq {
-  display: none;
+.nav-group { display: flex; flex: none; align-items: center; gap: 2px; }
+.nav-group + .nav-group { padding-left: 18px; border-left: 1px solid var(--line); }
+.nav-label { margin-right: 10px; color: var(--smoke); font-size: .8125rem; }
+
+.nav-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--smoke);
+  font-size: .875rem;
+  font-stretch: 87.5%;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .2s, color .2s;
+}
+.nav-item:hover { background: var(--velvet); color: var(--linen); }
+/* A escolhida acende na própria cor: a sala inteira muda de luz junto. */
+.nav-item[aria-current] { background: var(--spine, var(--linen)); color: var(--ink); }
+
+.nav-mark {
+  display: flex;
   align-items: flex-end;
   gap: 2px;
-  height: 12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--spine, transparent);
 }
-.spine-eq i { width: 3px; height: 45%; background: var(--ink); }
-.spine.is-playing .spine-eq,
-.spine.is-paused .spine-eq { display: flex; }
-.spine.is-playing .spine-eq i { animation: eq 1.1s ease-in-out infinite; }
-.spine.is-playing .spine-eq i:nth-child(2) { animation-delay: -.45s; }
-.spine.is-playing .spine-eq i:nth-child(3) { animation-delay: -.8s; }
+.nav-item.is-explore .nav-mark { box-shadow: inset 0 0 0 2px currentColor; }
+.nav-item[aria-current] .nav-mark { background: var(--ink); }
+.nav-mark i { display: none; width: 3px; height: 45%; background: var(--spine, var(--linen)); }
+.nav-item[aria-current] .nav-mark i { background: var(--ink); }
+
+/* Tocando: o ponto vira equalizador. */
+.nav-item.is-playing .nav-mark,
+.nav-item.is-paused .nav-mark { width: 13px; height: 12px; border-radius: 0; background: none; }
+.nav-item.is-playing .nav-mark i,
+.nav-item.is-paused .nav-mark i { display: block; }
+.nav-item.is-playing .nav-mark i { animation: eq 1.1s ease-in-out infinite; }
+.nav-item.is-playing .nav-mark i:nth-child(2) { animation-delay: -.45s; }
+.nav-item.is-playing .nav-mark i:nth-child(3) { animation-delay: -.8s; }
 
 @keyframes eq {
   0%, 100% { height: 30%; }
   50% { height: 100%; }
 }
 
-/* Explorar: lombadas vazadas, o espaço da estante para música nova. */
-.spine.is-hollow {
-  background: transparent;
-  color: var(--linen);
-  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--linen) 40%, transparent);
-  filter: none;
-  opacity: .75;
-}
-.spine.is-hollow:hover { filter: none; opacity: 1; }
-.spine.is-hollow[aria-current="true"] {
-  background: var(--linen);
-  color: var(--ink);
-  box-shadow: inset 0 3px 0 rgb(255 255 255 / .3);
-  opacity: 1;
-}
-
 /* ---------- Palco */
 
 .stage {
   overflow-y: auto;
-  padding: 36px var(--gutter) 72px;
+  padding: 40px var(--inset) 72px;
   scrollbar-color: var(--line) transparent;
 }
 
@@ -162,7 +161,7 @@ body.is-gated .console { display: none; }
   grid-template-columns: 216px minmax(0, 1fr);
   align-items: end;
   gap: 36px;
-  max-width: 1080px;
+  max-width: var(--content);
 }
 
 .cover {
@@ -296,7 +295,7 @@ body.is-gated .console { display: none; }
 /* ---------- Faixas */
 
 .tracks {
-  max-width: 1080px;
+  max-width: var(--content);
   margin: 44px 0 0;
   padding: 0;
   list-style: none;
@@ -362,7 +361,7 @@ body.is-gated .console { display: none; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 6px 10px;
-  max-width: 1080px;
+  max-width: var(--content);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -427,7 +426,15 @@ body.is-gated .console { display: none; }
 .feeling-input::placeholder { color: color-mix(in srgb, var(--smoke) 55%, transparent); }
 .feeling-input:focus-visible { outline: none; border-bottom-color: var(--mood); }
 .feeling-hint { margin: 10px 0 0; color: var(--smoke); font-size: .8125rem; }
-.moods-label { margin: 8px 0 -14px; color: var(--smoke); font-size: .875rem; }
+.moods-label { margin: 0 0 12px; color: var(--smoke); font-size: .875rem; }
+
+.sense-layout { display: grid; gap: 44px; }
+.sense-main { display: grid; align-content: start; gap: 32px; }
+/* Tela larga: duas colunas, para a direita não ficar vazia. */
+@media (min-width: 1100px) {
+  .sense-layout { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 64px; align-items: start; }
+  .sense-moods { padding-top: 14px; }
+}
 
 /* Roleta: roda que gira enquanto sorteia e desacelera até parar. */
 .path.path-roulette { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto 1fr; gap: 10px 24px; align-items: start; }
@@ -436,7 +443,9 @@ body.is-gated .console { display: none; }
 .wheel-wrap { position: relative; grid-column: 2; grid-row: 1 / span 3; }
 .wheel { display: block; width: 168px; height: auto; transform: rotate(0deg); }
 .wheel.is-spinning { animation: spin .7s linear infinite; }
-.wheel text { fill: var(--ink); stroke: none; font-size: 7.5px; font-stretch: 62%; font-weight: 800; }
+.wheel-slice { fill: var(--night); stroke: var(--line); stroke-width: .6; transition: fill .4s; }
+.wheel-slice.is-filled { stroke: var(--night); }
+.wheel-label { fill: var(--ink); stroke: none; font-size: 7px; font-stretch: 62%; font-weight: 800; }
 .wheel-pointer {
   position: absolute;
   top: -6px;
@@ -469,7 +478,7 @@ body.is-gated .console { display: none; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 16px;
-  max-width: 1080px;
+  max-width: var(--content);
 }
 
 .path {
@@ -495,7 +504,7 @@ body.is-gated .console { display: none; }
 .path .adder-input { max-width: 420px; background: var(--night); }
 .path .play-button { --mood: var(--tone); margin-top: 6px; }
 
-.hunt { max-width: 1080px; margin-top: 52px; }
+.hunt { max-width: var(--content); margin-top: 52px; }
 .hunt:not([hidden]) + .tracks { margin-top: 20px; }
 
 .hunt-title {
@@ -854,10 +863,10 @@ body.is-gated .console { display: none; }
 @media (max-width: 760px) {
   :root { --player-h: 132px; }
 
-  .topbar { padding-top: 12px; }
-  .shelf { gap: 20px; }
-  .spine { height: 38px; padding: 0 12px; }
-  .spine-count { display: none; }
+  .topbar { gap: 16px; padding-top: 10px; padding-bottom: 10px; }
+  .brand { display: none; }
+  .shelf { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .nav-group + .nav-group { padding-left: 14px; }
 
   .stage { padding-top: 24px; padding-bottom: 56px; }
   .sleeve { grid-template-columns: minmax(0, 1fr); gap: 20px; }
@@ -884,6 +893,11 @@ body.is-gated .console { display: none; }
   .timeline { grid-area: timeline; width: 100%; }
   .output { display: none; }
   .player[data-state="auth"] .player-auth { flex-direction: column; gap: 10px; text-align: center; }
+}
+
+/* Abaixo disso o menu inteiro não cabe ao lado da marca numa linha só. */
+@media (max-width: 1399px) {
+  .brand { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

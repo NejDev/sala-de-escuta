@@ -340,7 +340,7 @@ class App:
             hunt.status = "cancelled" if hunt.cancelled else "done"
         except (SpotifyError, DeezerError) as err:
             hunt.status = "error"
-            hunt.message = spotify_message(err) if isinstance(err, SpotifyError) else f"O Deezer falhou: {err}"
+            hunt.message = spotify_message(err) if isinstance(err, SpotifyError) else f"A busca de músicas novas falhou ({err}). Tente de novo."
         except SystemExit as exc:
             hunt.status = "error"
             hunt.message = str(exc.code)
@@ -520,7 +520,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except SpotifyError as err:
             self._send_json({"error": spotify_message(err)}, 502)
         except DeezerError as err:
-            self._send_json({"error": f"O Deezer falhou: {err}"}, 502)
+            self._send_json({"error": f"A busca de músicas novas falhou ({err}). Tente de novo."}, 502)
         except SystemExit as exc:  # sessão expirou durante a renovação do token
             self.server.app.reset_session()
             self._send_json({"error": str(exc.code), "login": True}, 401)

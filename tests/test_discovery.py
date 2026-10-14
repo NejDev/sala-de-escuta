@@ -205,18 +205,24 @@ class RabbitTest(unittest.TestCase):
                 1: [{"id": 2, "name": "Sonny Clark", "nb_fan": 3800}],
                 2: [{"id": 3, "name": "Tina Brooks", "nb_fan": 644}],
             },
-            tops={3: [
-                {"id": 31, "title": "Eu e a Brisa"},
-                {"id": 30, "title": "Eu e a Brisa (Ao Vivo)"},  # mesma música: pula
-                {"id": 32, "title": "Rapaz de Bem"},
-                {"id": 33, "title": "Céu e Mar"},
-            ]},
+            tops={
+                2: [{"id": 21, "title": "Cool Struttin'"}, {"id": 22, "title": "Blue Minor"}],
+                3: [
+                    {"id": 31, "title": "Eu e a Brisa"},
+                    {"id": 30, "title": "Eu e a Brisa (Ao Vivo)"},  # mesma música: pula
+                    {"id": 32, "title": "Rapaz de Bem"},
+                    {"id": 33, "title": "Céu e Mar"},
+                ],
+            },
         )
         hunt = discovery.Hunt("rabbit", "Toca do coelho")
         discovery.rabbit_hole(hunt, FakeSpotify(), deezer, random.Random(), ["Chet Baker"], walks=1)
         chain = hunt.chains[0]
         self.assertEqual([a["name"] for a in chain["path"]], ["Chet Baker", "Sonny Clark", "Tina Brooks"])
-        self.assertEqual([f.uri for f in chain["finds"]], ["spotify:track:31", "spotify:track:32"])
+        # Uma do meio do caminho (Sonny Clark) e duas do fim (Tina Brooks); o artista de partida fica de fora.
+        self.assertEqual([f.uri for f in chain["finds"]], ["spotify:track:21", "spotify:track:31", "spotify:track:32"])
+        self.assertIn("Pulo 1 de 2", chain["finds"][0].reason)
+        self.assertIn("Fim da toca", chain["finds"][-1].reason)
 
     def test_unknown_seed_reports_nothing_found(self):
         hunt = discovery.Hunt("rabbit", "Toca do coelho")
