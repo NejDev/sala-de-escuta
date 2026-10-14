@@ -1,0 +1,2 @@
+# Opcional: só as Sensações precisam (decodifica as prévias MP3 para medir o BPM).
+miniaudio>=1.59

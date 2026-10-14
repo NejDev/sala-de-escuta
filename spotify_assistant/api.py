@@ -97,10 +97,16 @@ class Spotify:
     def me(self) -> dict:
         return self._call("GET", "/me")
 
-    def search(self, query: str, kind: str) -> list[dict]:
+    def search(self, query: str, kind: str, offset: int = 0) -> list[dict]:
         params = {"q": query, "type": kind, "limit": SEARCH_LIMIT, "market": self.market}
+        if offset:
+            params["offset"] = offset
         data = self._call("GET", "/search", params=params)
         return [item for item in data[f"{kind}s"]["items"] if item]
+
+    def album_tracks(self, album_id: str) -> list[dict]:
+        data = self._call("GET", f"/albums/{album_id}/tracks", params={"limit": 50, "market": self.market})
+        return [track for track in data["items"] if track]
 
     def my_playlists(self) -> Iterator[dict]:
         page = self._call("GET", "/me/playlists", params={"limit": 50})
@@ -151,10 +157,19 @@ class Spotify:
     def devices(self) -> list[dict]:
         return self._call("GET", "/me/player/devices")["devices"]
 
-    def play(self, *, context_uri: str | None = None, offset_uri: str | None = None, device_id: str | None = None) -> None:
+    def play(
+        self,
+        *,
+        context_uri: str | None = None,
+        uris: list[str] | None = None,
+        offset_uri: str | None = None,
+        device_id: str | None = None,
+    ) -> None:
         body: dict[str, Any] = {}
         if context_uri:
             body["context_uri"] = context_uri
+        elif uris:
+            body["uris"] = uris[:ITEMS_PER_REQUEST]
         if offset_uri:
             body["offset"] = {"uri": offset_uri}
         params = {"device_id": device_id} if device_id else None

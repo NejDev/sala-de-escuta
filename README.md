@@ -10,7 +10,12 @@ Cria e mantém 5 playlists na sua conta:
 | The Classical Room | clássica, do contemplativo ao grandioso | `setup` |
 | The Study Collection | jazz + lo-fi + clássica alternados | `setup` |
 
-Só usa a biblioteca padrão do Python 3.12, sem `pip install`.
+Python 3.12. As playlists e o painel usam só a biblioteca padrão; medir BPM nas **Sensações**
+precisa de um decodificador de MP3:
+
+```powershell
+pip install -r requirements.txt
+```
 
 ## Painel visual
 
@@ -24,11 +29,36 @@ http://127.0.0.1:8888 e fica no ar enquanto a janela preta estiver aberta.
   **Ver prévia** mostra o resultado sem mexer em nada.
 - **Adicionar faixa / Acompanhar outro programa**: busca no catálogo. A faixa entra na playlist
   na hora e também no `playlists.json`, para não sumir no próximo `setup`.
-- **Atalhos**: espaço toca/pausa, ← → trocam de faixa, 1–5 trocam de playlist.
+- **Atalhos**: espaço toca/pausa, ← → trocam de faixa, 1–7 trocam de lombada.
 
 Na primeira vez, clique em **Autorizar no Spotify** na barra de baixo para liberar o controle do player.
 
 As cores das lombadas ficam no campo `color` de cada playlist no `playlists.json`.
+
+### Sensações
+
+Escolha o que vai fazer (treino pesado, corrida, foco profundo, festa, dia de chuva...). A sala busca
+playlists que pessoas montaram para esse momento no Deezer, **ouve a prévia de 30 s de cada faixa e
+mede BPM e energia**, e fica só com o que cabe na faixa daquela sensação. As músicas aparecem
+conforme são aprovadas; dá para tocar tudo direto no Spotify ou salvar como playlist
+`Sensação: <nome>` (sempre a mesma, atualizada a cada vez que você salvar).
+
+Por que medir? A Spotify parou de entregar BPM para apps novos e o BPM do Deezer quase sempre vem
+zerado. O medidor (`spotify_assistant/tempo.py`) acertou 12 de 17 músicas com BPM conhecido e
+outras 2 no dobro/metade do tempo; trate o número como aproximado.
+
+As sensações ficam em `sensacoes.json`: faixa de BPM, faixa de energia (0 a 1), cor e as buscas
+usadas como fonte. Medições ficam em `data/tempo-cache.json` para não ouvir a mesma prévia duas vezes.
+
+### Descobrir
+
+- **Roleta**: sorteia álbuns pouco ouvidos de um ano qualquer e faixas menos populares de playlists
+  de gêneros do mundo todo (zamrock, enka, huayno, ethio jazz...). A lista de gêneros fica em
+  `WORLD_GENRES`, no `spotify_assistant/discovery.py`.
+- **Toca do coelho**: parte de um artista (digitado ou sorteado das suas playlists) e pula 4 vezes
+  para artistas relacionados, sempre entre os menos conhecidos. Mostra o caminho e o número de fãs.
+
+**Guardar** manda a faixa para a playlist `Achados da Sala`, criada na primeira vez.
 
 ## Linha de comando
 

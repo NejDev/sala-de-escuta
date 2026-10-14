@@ -16,10 +16,28 @@ const memory = {
   },
 };
 
+// Telas que não são playlists: a chave vira o # da URL.
+const VIEWS = {
+  sensacoes: "Sensações",
+  descobrir: "Descobrir",
+};
+const HUNT_KINDS = { sensacoes: ["sense"], descobrir: ["roulette", "rabbit"] };
+const ROOM_LIGHT = "#EEE7D7";
+const compactNumber = new Intl.NumberFormat("pt-BR", { notation: "compact" });
+
 const state = {
   overview: null,
-  selected: decodeURIComponent(location.hash.slice(1)) || memory.get("selected"),
+  view: "playlist",
+  initialKey: decodeURIComponent(location.hash.slice(1)) || memory.get("selected"),
+  selected: null,
   detail: null,
+  sensations: null,
+  hunt: null,
+  huntTimer: 0,
+  huntSignature: "",
+  lastHunt: null,
+  seed: "",
+  kept: new Set(),
   addingOpen: false,
   player: null,
   playerSyncedAt: 0,
@@ -140,16 +158,27 @@ function colorOf(playlist) {
 async function loadOverview() {
   state.overview = await api("/api/overview");
   renderShelf();
-  if (current()) renderSleeve();
+  if (state.view === "playlist" && current()) renderSleeve();
+}
+
+/** Abre uma playlist pelo nome ou uma das telas de VIEWS pela chave. */
+function go(key) {
+  return key in VIEWS ? openView(key) : select(key);
+}
+
+function shelfKeys() {
+  return [...state.overview.playlists.map((playlist) => playlist.name), ...Object.keys(VIEWS)];
 }
 
 async function select(name) {
   const playlists = state.overview.playlists;
+  state.view = "playlist";
   state.selected = playlists.some((playlist) => playlist.name === name) ? name : playlists[0].name;
   memory.set("selected", state.selected);
   history.replaceState(null, "", `#${encodeURIComponent(state.selected)}`);
   state.detail = null;
   state.addingOpen = false;
+  $("#hunt").hidden = true;
   renderShelf();
   renderSleeve();
   renderAdder();
@@ -167,18 +196,19 @@ async function loadDetail() {
     detail = { items: [] };
     toast(error.message, true);
   }
-  if (state.selected !== name) return;
+  if (state.view !== "playlist" || state.selected !== name) return;
   state.detail = detail;
   renderSleeve();
   renderTracks();
 }
 
 function renderShelf() {
+  const onPlaylist = state.view === "playlist";
   const spines = state.overview.playlists.map((playlist, index) => h("button", {
     class: "spine",
     type: "button",
     style: `--spine: ${colorOf(playlist)}`,
-    "aria-current": playlist.name === state.selected ? "true" : null,
+    "aria-current": onPlaylist && playlist.name === state.selected ? "true" : null,
     "data-uri": playlist.uri,
     title: `${playlist.name} (tecla ${index + 1})`,
     onclick: () => select(playlist.name),
@@ -187,14 +217,32 @@ function renderShelf() {
     h("span", { class: "spine-name" }, playlist.name),
     h("span", { class: "spine-count", "aria-label": `${playlist.total} itens` }, String(playlist.total)),
   ));
-  $("#shelf").replaceChildren(...spines);
+  // Lombadas vazadas: o espaço da estante para música nova.
+  const offset = spines.length;
+  const hollow = Object.entries(VIEWS).map(([key, label], index) => h("button", {
+    class: "spine is-hollow",
+    type: "button",
+    "aria-current": state.view === key ? "true" : null,
+    title: `${label} (tecla ${offset + index + 1})`,
+    onclick: () => openView(key),
+  },
+    h("span", { class: "spine-eq", "aria-hidden": "true" }),
+    h("span", { class: "spine-name" }, label),
+    h("span", { class: "spine-count", "aria-hidden": "true" }, "+"),
+  ));
+  $("#shelf").replaceChildren(...spines, h("span", { class: "shelf-gap", "aria-hidden": "true" }), ...hollow);
   markPlaying();
+}
+
+function setMood(color) {
+  document.documentElement.style.setProperty("--mood", color);
 }
 
 function renderSleeve() {
   const playlist = current();
   if (!playlist) return;
-  document.documentElement.style.setProperty("--mood", colorOf(playlist));
+  $("#sleeve").className = "sleeve";
+  setMood(colorOf(playlist));
   document.title = `Sala de escuta: ${playlist.name}`;
 
   const items = state.detail?.items;
@@ -339,6 +387,268 @@ async function addItem(playlist, result, button) {
   } catch (error) {
     button.disabled = false;
     toast(error.message, true);
+  }
+}
+
+// ---------- Sensações e Descobrir
+
+async function openView(key) {
+  state.view = key;
+  state.addingOpen = false;
+  memory.set("selected", key);
+  history.replaceState(null, "", `#${key}`);
+  document.title = `Sala de escuta: ${VIEWS[key]}`;
+  $("#adder").hidden = true;
+  $("#stage").scrollTo({ top: 0 });
+  renderShelf();
+  if (key === "sensacoes" && !state.sensations) {
+    try {
+      state.sensations = await api("/api/sensations");
+    } catch (error) {
+      toast(error.message, true);
+      return;
+    }
+  }
+  if (state.view !== key) return;
+  state.huntSignature = "";
+  renderIntro();
+  renderHunt();
+}
+
+/** A busca em andamento, se ela pertence à tela aberta. */
+function huntHere() {
+  const hunt = state.hunt;
+  return hunt && (HUNT_KINDS[state.view] || []).includes(hunt.kind) ? hunt : null;
+}
+
+function renderIntro() {
+  const sleeve = $("#sleeve");
+  sleeve.className = "sleeve is-plain";
+  setMood(huntHere()?.color || ROOM_LIGHT);
+  sleeve.replaceChildren(...(state.view === "sensacoes" ? senseIntro() : discoverIntro()));
+}
+
+function senseIntro() {
+  const { sensations, tempo_ready: ready } = state.sensations;
+  const active = huntHere();
+  return [
+    h("div", { class: "sleeve-text" },
+      h("h1", { class: "title" }, "Sensações"),
+      h("p", { class: "description" },
+        "Diga o que você vai fazer. A sala procura músicas feitas para esse momento, ouve a prévia de cada uma "
+        + "e mede o BPM e a energia para ficar só com o que combina."),
+      !ready && h("p", { class: "meta is-warning" },
+        "Para medir o BPM, instale o decodificador com pip install miniaudio e reabra o painel."),
+    ),
+    h("ul", { class: "moods" }, sensations.map((sensation) => h("li", null,
+      h("button", {
+        class: "mood",
+        type: "button",
+        style: `--tone: ${sensation.color}`,
+        "aria-pressed": String(active?.label === sensation.name),
+        disabled: !ready,
+        onclick: () => startHunt({ kind: "sense", name: sensation.name }),
+      },
+        h("span", { class: "mood-name" }, sensation.name),
+        h("span", { class: "mood-bpm" }, `${sensation.bpm[0]}–${sensation.bpm[1]} BPM`),
+        h("span", { class: "mood-text" }, sensation.description),
+      )))),
+  ];
+}
+
+function discoverIntro() {
+  const seed = h("input", {
+    class: "adder-input",
+    id: "seed-input",
+    type: "search",
+    autocomplete: "off",
+    spellcheck: "false",
+    placeholder: "Vazio: sorteia um artista das suas playlists",
+  });
+  seed.value = state.seed;
+  seed.addEventListener("input", () => { state.seed = seed.value; });
+  seed.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") startHunt({ kind: "rabbit", seed: seed.value });
+  });
+  return [
+    h("div", { class: "sleeve-text" },
+      h("h1", { class: "title" }, "Descobrir"),
+      h("p", { class: "description" }, "Duas formas de chegar em músicas que você nunca ouviu.")),
+    h("div", { class: "paths" },
+      h("section", { class: "path", style: "--tone: #F2C14E" },
+        h("h2", { class: "path-name" }, "Roleta"),
+        h("p", { class: "path-text" },
+          "Sorteia álbuns pouco ouvidos de qualquer ano e faixas de gêneros do mundo todo, do zamrock ao enka."),
+        h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "roulette" }) },
+          "Girar a roleta")),
+      h("section", { class: "path", style: "--tone: #9DB4E6" },
+        h("h2", { class: "path-name" }, "Toca do coelho"),
+        h("p", { class: "path-text" },
+          "Parte de um artista e pula de relacionado em relacionado, sempre para os menos conhecidos."),
+        h("label", { class: "adder-label", for: "seed-input" }, "Artista de partida"),
+        seed,
+        h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "rabbit", seed: seed.value }) },
+          "Entrar na toca"))),
+  ];
+}
+
+async function startHunt(body) {
+  if (!body) return;
+  state.lastHunt = body;
+  try {
+    state.hunt = await api("/api/hunts", body);
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  state.huntSignature = "";
+  renderIntro();
+  renderHunt();
+  $("#hunt").scrollIntoView({ behavior: "smooth", block: "start" });
+  pollHunt();
+}
+
+async function pollHunt() {
+  clearTimeout(state.huntTimer);
+  let hunt;
+  try {
+    hunt = await api("/api/hunts/current");
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  if (!hunt) return;
+  const finished = state.hunt?.status === "running" && hunt.status !== "running";
+  state.hunt = hunt;
+  if (huntHere()) renderHunt();
+  if (hunt.status === "running") {
+    state.huntTimer = setTimeout(pollHunt, 800);
+  } else if (finished && hunt.status === "error") {
+    toast(hunt.message, true);
+  }
+}
+
+function renderHunt() {
+  const panel = $("#hunt");
+  const list = $("#tracks");
+  const hunt = huntHere();
+  if (!hunt) {
+    panel.hidden = true;
+    list.replaceChildren();
+    return;
+  }
+  const signature = JSON.stringify([hunt.status, hunt.progress, hunt.finds.length, hunt.message, state.kept.size]);
+  if (!panel.hidden && signature === state.huntSignature) return;
+  state.huntSignature = signature;
+  if (hunt.color) setMood(hunt.color);
+
+  const running = hunt.status === "running";
+  const uris = hunt.finds.map((find) => find.uri);
+  const again = { sense: "Gerar de novo", roulette: "Girar de novo", rabbit: "Descer de novo" }[hunt.kind];
+  const percent = hunt.total ? Math.max(4, Math.round((hunt.progress / hunt.total) * 100)) : 4;
+  panel.hidden = false;
+  const header = [
+    h("h2", { class: "hunt-title" }, hunt.label),
+    h("p", { class: "meta" }, hunt.message),
+    running && h("div", { class: "progress", "aria-hidden": "true" }, h("i", { style: `width: ${percent}%` })),
+    h("div", { class: "actions" },
+      h("button", { class: "play-button", type: "button", disabled: !uris.length, onclick: () => playFinds(hunt.finds) },
+        playIcon(), "Tocar tudo"),
+      hunt.kind === "sense"
+        ? h("button", { class: "ghost-button", type: "button", disabled: running || !uris.length, onclick: saveHunt },
+          "Salvar como playlist")
+        : h("button", {
+          class: "ghost-button",
+          type: "button",
+          disabled: !uris.length || uris.every((uri) => state.kept.has(uri)),
+          onclick: (event) => keep(uris, event.currentTarget),
+        }, "Guardar todas"),
+      h("button", { class: "text-button", type: "button", onclick: () => startHunt(state.lastHunt || { kind: hunt.kind }) },
+        again),
+    ),
+  ];
+  panel.replaceChildren(...header.filter(Boolean));
+
+  if (hunt.kind === "rabbit") {
+    list.replaceChildren(...hunt.chains.flatMap((chain) => [
+      chainRow(chain),
+      ...chain.finds.map((find, index) => findRow(find, hunt.finds, index, false)),
+    ]));
+  } else {
+    list.replaceChildren(...hunt.finds.map((find, index) => findRow(find, hunt.finds, index, true)));
+  }
+  markPlaying();
+}
+
+function findRow(find, finds, index, showReason) {
+  const kept = state.kept.has(find.uri);
+  let detail = null;
+  if (find.bpm) {
+    const energy = Math.round((find.energy || 0) * 100);
+    detail = h("span", { class: "tempo" },
+      h("span", { class: "bpm" }, h("b", null, String(find.bpm)), " BPM"),
+      h("span", { class: "energy", role: "img", "aria-label": `Energia ${energy} de 100`, title: `Energia ${energy} de 100` },
+        h("i", { style: `width: ${energy}%` })));
+  } else if (showReason && find.reason) {
+    detail = h("span", { class: "reason", title: find.reason }, find.reason);
+  }
+  return h("li", { class: "track find", "data-uri": find.uri },
+    h("button", { class: "track-button", type: "button", title: `Tocar ${find.title}`, onclick: () => playFinds(finds, find.uri) },
+      h("span", { class: "track-index" }, String(index + 1)),
+      find.image ? h("img", { class: "track-art", src: find.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
+      h("span", { class: "track-text" },
+        h("span", { class: "track-title" }, find.title),
+        h("span", { class: "track-sub" }, find.subtitle)),
+      detail || h("span"),
+      h("span", { class: "track-time" }, clock(find.duration_ms)),
+    ),
+    h("button", {
+      class: "keep-button",
+      type: "button",
+      disabled: kept,
+      title: "Guardar na playlist Achados da Sala",
+      "aria-label": `Guardar ${find.title} nos Achados da Sala`,
+      onclick: (event) => keep([find.uri], event.currentTarget),
+    }, kept ? "Guardada" : "Guardar"),
+  );
+}
+
+function fans(count) {
+  if (count == null) return "poucos fãs";
+  return `${compactNumber.format(count)} ${count === 1 ? "fã" : "fãs"}`;
+}
+
+function chainRow(chain) {
+  const last = chain.path[chain.path.length - 1];
+  return h("li", { class: "chain" },
+    h("ol", { class: "chain-path", "aria-label": "Caminho entre artistas" },
+      chain.path.map((artist) => h("li", null, artist.name))),
+    h("p", { class: "meta" }, `${last.name} tem ${fans(last.fans)} no Deezer.`));
+}
+
+async function keep(uris, button) {
+  button.disabled = true;
+  try {
+    const { message } = await api("/api/finds/keep", { uris });
+    uris.forEach((uri) => state.kept.add(uri));
+    toast(message);
+    renderHunt();
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message, true);
+  }
+}
+
+async function saveHunt(event) {
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const { message } = await api("/api/hunts/save", {});
+    toast(message);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -515,6 +825,11 @@ function play(contextUri, offsetUri) {
   return command({ action: "play", context_uri: contextUri, offset_uri: offsetUri });
 }
 
+/** Toca uma lista solta de faixas (resultado de sensação/descoberta), sem criar playlist. */
+function playFinds(finds, offsetUri) {
+  return command({ action: "play", uris: finds.map((find) => find.uri), offset_uri: offsetUri });
+}
+
 function togglePlay() {
   const player = state.player;
   if (player?.is_playing) {
@@ -577,9 +892,9 @@ function bindGlobal() {
       command({ action: "next" });
     } else if (event.key === "ArrowLeft") {
       command({ action: "previous" });
-    } else if (/^[1-9]$/.test(event.key)) {
-      const playlist = state.overview?.playlists[Number(event.key) - 1];
-      if (playlist) select(playlist.name);
+    } else if (/^[1-9]$/.test(event.key) && state.overview) {
+      const key = shelfKeys()[Number(event.key) - 1];
+      if (key) go(key);
     }
   });
 
@@ -589,8 +904,9 @@ function bindGlobal() {
 
   // Favoritos e o botão voltar mudam só o #; replaceState em select() não dispara este evento.
   window.addEventListener("hashchange", () => {
-    const name = decodeURIComponent(location.hash.slice(1));
-    if (state.overview && name && name !== state.selected) select(name);
+    const key = decodeURIComponent(location.hash.slice(1));
+    const showing = state.view === "playlist" ? state.selected : state.view;
+    if (state.overview && key && key !== showing) go(key);
   });
 }
 
@@ -605,7 +921,8 @@ async function init() {
     }
     return;
   }
-  await Promise.all([select(state.selected), refreshPlayer()]);
+  // pollHunt retoma uma busca que estava rodando quando a página foi recarregada.
+  await Promise.all([go(state.initialKey), refreshPlayer(), pollHunt()]);
   setInterval(() => { if (!document.hidden) refreshPlayer(); }, 3000);
   setInterval(tick, 500);
 }

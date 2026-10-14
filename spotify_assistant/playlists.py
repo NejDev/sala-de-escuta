@@ -158,13 +158,13 @@ def run(
         log.info("\nSimulação: nada foi alterado no Spotify.")
         return
 
-    owned = _owned_playlists(sp)
+    owned = owned_playlists(sp)
     for spec in targets:
         result = built[spec["name"]]
         if not result.uris:
             log.warning("%s ficou vazia nesta rodada; o conteúdo atual foi mantido.", spec["name"])
             continue
-        playlist_id = _ensure_playlist(sp, spec, state, owned)
+        playlist_id = ensure_playlist(sp, spec, state, owned)
         sp.replace_items(playlist_id, result.uris)
         if "podcasts" in spec:
             sp.update_details(playlist_id, description=f"{spec.get('description', '')} Atualizada em {today:%d/%m/%Y}.")
@@ -172,13 +172,13 @@ def run(
     save_state(state)
 
 
-def _owned_playlists(sp: Spotify) -> dict[str, str]:
+def owned_playlists(sp: Spotify) -> dict[str, str]:
     """id -> nome das playlists que pertencem ao usuário logado."""
     me = sp.me()["id"]
     return {playlist["id"]: playlist["name"] for playlist in sp.my_playlists() if playlist["owner"]["id"] == me}
 
 
-def _ensure_playlist(sp: Spotify, spec: dict, state: dict, owned: dict[str, str]) -> str:
+def ensure_playlist(sp: Spotify, spec: dict, state: dict, owned: dict[str, str]) -> str:
     ids = state.setdefault("playlists", {})
     name = spec["name"]
     playlist_id = ids.get(name)

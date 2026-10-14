@@ -8,6 +8,7 @@ from __future__ import annotations
 import http.server
 import json
 import logging
+import random
 import re
 import subprocess
 import threading
@@ -18,10 +19,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from . import discovery, tempo
 from .api import Spotify, SpotifyError
 from .auth import AuthRequest, TokenManager, finish_authorization, missing_scopes, start_authorization
-from .config import Settings, load_playlists, load_state, save_playlists, save_state
-from .playlists import run
+from .config import Settings, load_playlists, load_sensations, load_state, save_playlists, save_state
+from .deezer import Deezer, DeezerError
+from .discovery import Hunt
+from .playlists import ensure_playlist, owned_playlists, run
+from .views import item_row, pick_image
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CONTENT_TYPES = {
@@ -31,6 +36,11 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
 }
 PLAYLIST_PATH = re.compile(r"/api/playlists/(?P<name>[^/]+)(?P<items>/items)?")
+FINDS_PLAYLIST = {
+    "name": "Achados da Sala",
+    "description": "Músicas descobertas na Sala de escuta: roleta, toca do coelho e sensações.",
+    "public": False,
+}
 TASK_NAME = "Spotify Assistant - Tech Radar BR"  # mesmo nome do scripts/agendar-semanal.ps1
 SCHEDULE_TTL_S = 60
 MAX_BODY_BYTES = 64_000
@@ -67,36 +77,6 @@ class JobLogHandler(logging.Handler):
         for line in record.getMessage().splitlines():
             if line.strip():
                 self.job.lines.append(line.rstrip())
-
-
-def pick_image(images: list[dict] | None, min_size: int) -> str | None:
-    """Menor imagem com pelo menos min_size px (o Spotify lista da maior para a menor)."""
-    if not images:
-        return None
-    fitting = [image for image in images if (image.get("width") or 0) >= min_size]
-    return (fitting[-1] if fitting else images[0])["url"]
-
-
-def item_row(item: dict, image_size: int = 64) -> dict:
-    if item.get("type") == "episode":
-        show = item.get("show") or {}
-        row = {
-            "subtitle": show.get("name", ""),
-            "image": pick_image(item.get("images") or show.get("images"), image_size),
-            "release_date": item.get("release_date"),
-        }
-    else:
-        row = {
-            "subtitle": ", ".join(artist["name"] for artist in item.get("artists", [])),
-            "image": pick_image((item.get("album") or {}).get("images"), image_size),
-        }
-    return {
-        "uri": item["uri"],
-        "type": item.get("type", "track"),
-        "title": item["name"],
-        "duration_ms": item.get("duration_ms") or 0,
-        **row,
-    }
 
 
 def playlist_kind(spec: dict) -> str:
@@ -140,6 +120,10 @@ class App:
         self._job: Job | None = None
         self._job_lock = threading.Lock()
         self._schedule: tuple[float, dict | None] = (float("-inf"), None)
+        self._hunt: Hunt | None = None
+        self._hunt_lock = threading.Lock()
+        self._seeds: list[str] = []
+        self.deezer = Deezer()
 
     # Sessão
 
@@ -266,7 +250,8 @@ class App:
         sp = self.spotify()
         action, value = body.get("action"), body.get("value")
         if action == "play":
-            self._play(sp, body.get("context_uri"), body.get("offset_uri"))
+            uris = [uri for uri in body.get("uris") or [] if isinstance(uri, str) and uri.startswith("spotify:")]
+            self._play(sp, body.get("context_uri"), uris, body.get("offset_uri"))
         elif action == "pause":
             sp.pause()
         elif action in ("next", "previous"):
@@ -282,9 +267,9 @@ class App:
         return {"ok": True}
 
     @staticmethod
-    def _play(sp: Spotify, context_uri: str | None, offset_uri: str | None) -> None:
+    def _play(sp: Spotify, context_uri: str | None, uris: list[str], offset_uri: str | None) -> None:
         try:
-            sp.play(context_uri=context_uri, offset_uri=offset_uri)
+            sp.play(context_uri=context_uri, uris=uris, offset_uri=offset_uri)
         except SpotifyError as err:
             if err.status != 404:
                 raise
@@ -293,7 +278,123 @@ class App:
             if not devices:
                 raise UserError("Nenhum Spotify aberto. Abra o app no PC ou no celular e tente de novo.", 409) from None
             device = next((d for d in devices if d.get("type") == "Computer"), devices[0])
-            sp.play(context_uri=context_uri, offset_uri=offset_uri, device_id=device["id"])
+            sp.play(context_uri=context_uri, uris=uris, offset_uri=offset_uri, device_id=device["id"])
+
+    # Sensações e Descobrir
+
+    def sensations(self) -> dict:
+        return {"sensations": load_sensations(), "tempo_ready": tempo.available()}
+
+    def start_hunt(self, body: dict) -> dict:
+        kind = body.get("kind")
+        sp = self.spotify()
+        rng = random.Random()
+        if kind == "sense":
+            spec = next((s for s in load_sensations() if s["name"] == body.get("name")), None)
+            if spec is None:
+                raise UserError("Sensação não encontrada no sensacoes.json.", 404)
+            if not tempo.available():
+                raise UserError("Para medir o BPM, instale o decodificador: pip install miniaudio", 409)
+            hunt = Hunt("sense", spec["name"], color=spec.get("color"))
+            cache = discovery.TempoCache()
+
+            def task() -> None:
+                try:
+                    discovery.sense(hunt, spec, sp, self.deezer, rng, cache)
+                finally:
+                    cache.save()
+        elif kind == "roulette":
+            hunt = Hunt("roulette", "Roleta")
+
+            def task() -> None:
+                discovery.roulette(hunt, sp, self.deezer, rng)
+        elif kind == "rabbit":
+            seed = (body.get("seed") or "").strip()
+            hunt = Hunt("rabbit", "Toca do coelho")
+
+            def task() -> None:
+                seeds = [seed] if seed else self._seed_artists(sp)
+                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds)
+        else:
+            raise UserError("Tipo de descoberta inválido.")
+
+        with self._hunt_lock:
+            if self._hunt:
+                self._hunt.cancelled = True  # a busca anterior para no próximo passo
+            self._hunt = hunt
+        threading.Thread(target=self._run_hunt, args=(hunt, task), daemon=True).start()
+        return hunt.snapshot()
+
+    def current_hunt(self) -> dict | None:
+        return self._hunt.snapshot() if self._hunt else None
+
+    def _run_hunt(self, hunt: Hunt, task) -> None:
+        try:
+            task()
+            hunt.status = "cancelled" if hunt.cancelled else "done"
+        except (SpotifyError, DeezerError) as err:
+            hunt.status = "error"
+            hunt.message = spotify_message(err) if isinstance(err, SpotifyError) else f"O Deezer falhou: {err}"
+        except SystemExit as exc:
+            hunt.status = "error"
+            hunt.message = str(exc.code)
+        except Exception:
+            log.exception("Falha na descoberta")
+            hunt.status = "error"
+            hunt.message = "Erro inesperado. Detalhes em data/assistant.log."
+
+    def _seed_artists(self, sp: Spotify) -> list[str]:
+        """Artistas das suas playlists de música: ponto de partida da toca do coelho."""
+        if not self._seeds:
+            ids = load_state().get("playlists", {})
+            names: dict[str, None] = {}
+            for spec in load_playlists()["playlists"]:
+                if playlist_kind(spec) == "music" and ids.get(spec["name"]):
+                    for item in sp.playlist_items(ids[spec["name"]]):
+                        for artist in item.get("artists", [])[:1]:
+                            if artist["name"] != "Various Artists":
+                                names[artist["name"]] = None
+            self._seeds = list(names)
+        if not self._seeds:
+            raise UserError("Crie suas playlists primeiro ou digite um artista para começar.")
+        return self._seeds
+
+    def save_hunt(self) -> dict:
+        hunt = self._hunt
+        if not hunt or hunt.kind != "sense" or not hunt.finds:
+            raise UserError("Gere uma sensação antes de salvar.")
+        spec = next((s for s in load_sensations() if s["name"] == hunt.label), {})
+        low, high = spec.get("bpm", ("?", "?"))
+        playlist = {
+            "name": f"Sensação: {hunt.label}",
+            "description": f"{spec.get('description', '')} Entre {low} e {high} BPM, medidos pela Sala de escuta.",
+            "public": False,
+        }
+        sp = self.spotify()
+        state = load_state()
+        playlist_id = ensure_playlist(sp, playlist, state, owned_playlists(sp))
+        sp.replace_items(playlist_id, [find.uri for find in hunt.finds])
+        return {"message": f"Salva como {playlist['name']}.", "uri": f"spotify:playlist:{playlist_id}"}
+
+    def keep_finds(self, body: dict) -> dict:
+        uris = [uri for uri in body.get("uris") or [] if isinstance(uri, str) and uri.startswith("spotify:track:")]
+        if not uris:
+            raise UserError("Nada para guardar.")
+        sp = self.spotify()
+        state = load_state()
+        playlist_id = ensure_playlist(sp, FINDS_PLAYLIST, state, owned_playlists(sp))
+        existing = {item["uri"] for item in sp.playlist_items(playlist_id)}
+        fresh = [uri for uri in dict.fromkeys(uris) if uri not in existing]
+        if fresh:
+            sp.add_items(playlist_id, fresh)
+        name = FINDS_PLAYLIST["name"]
+        if not fresh:
+            message = f"Já estava nos {name}."
+        elif len(fresh) == 1:
+            message = f"Guardada nos {name}."
+        else:
+            message = f"{len(fresh)} músicas guardadas nos {name}."
+        return {"message": message}
 
     # Edição
 
@@ -409,6 +510,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._send_json({"error": str(err), "login": err.login}, err.status)
         except SpotifyError as err:
             self._send_json({"error": spotify_message(err)}, 502)
+        except DeezerError as err:
+            self._send_json({"error": f"O Deezer falhou: {err}"}, 502)
         except SystemExit as exc:  # sessão expirou durante a renovação do token
             self.server.app.reset_session()
             self._send_json({"error": str(exc.code), "login": True}, 401)
@@ -430,6 +533,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.start_job(body)
         if method == "GET" and path == "/api/jobs/current":
             return app.current_job()
+        if method == "GET" and path == "/api/sensations":
+            return app.sensations()
+        if method == "POST" and path == "/api/hunts":
+            return app.start_hunt(body)
+        if method == "GET" and path == "/api/hunts/current":
+            return app.current_hunt()
+        if method == "POST" and path == "/api/hunts/save":
+            return app.save_hunt()
+        if method == "POST" and path == "/api/finds/keep":
+            return app.keep_finds(body)
         if match := PLAYLIST_PATH.fullmatch(path):
             name = urllib.parse.unquote(match["name"])
             if method == "GET" and not match["items"]:

@@ -12,6 +12,8 @@ TOKEN_FILE = DATA_DIR / "token.json"
 STATE_FILE = DATA_DIR / "state.json"
 LOG_FILE = DATA_DIR / "assistant.log"
 PLAYLISTS_FILE = ROOT / "playlists.json"
+SENSATIONS_FILE = ROOT / "sensacoes.json"
+TEMPO_CACHE_FILE = DATA_DIR / "tempo-cache.json"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 
@@ -46,6 +48,10 @@ def load_settings() -> Settings:
 
 def load_playlists() -> dict:
     return json.loads(PLAYLISTS_FILE.read_text(encoding="utf-8"))
+
+
+def load_sensations() -> list[dict]:
+    return json.loads(SENSATIONS_FILE.read_text(encoding="utf-8"))["sensacoes"]
 
 
 def save_playlists(config: dict) -> None:
