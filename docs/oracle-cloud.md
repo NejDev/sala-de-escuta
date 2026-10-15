@@ -77,7 +77,7 @@ If you chose a new address instead, set `SALA_PUBLIC_URL` in `~/sala-de-escuta/.
 Keep a daily copy of the room on your PC (a folder per day in `%USERPROFILE%\sala-backup`, the last 14):
 
 ```powershell
-.\scriptsackup-from-server.ps1 -Server ubuntu@<public-ip> -Install   # first copy now, then every day
+.\scripts\backup-from-server.ps1 -Server ubuntu@<public-ip> -Install   # first copy now, then every day
 ```
 
 If the server is lost (for example Oracle reclaims an idle free machine), create a new one (steps 2
