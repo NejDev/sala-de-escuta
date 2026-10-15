@@ -334,6 +334,24 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "reason.rabbit_hop": "Pulo {hop} de {hops} a partir de {seed}.",
         "rabbit.done": "{chains} caminhos, {count} músicas do conhecido ao desconhecido.",
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
+        # Achievements (the medal names come from medal_names.py, merged at the end of this file)
+        "medal.game.how": "Ouviu música de {game}.",
+        "title.marathoner": "Maratonista",
+        "title.alternative": "Mais alternativo",
+        "title.explorer": "Explorador",
+        "title.night-owl": "Coruja",
+        "title.early-bird": "Madrugador",
+        "title.duo": "Dupla do mês",
+        "title.trendsetter": "Lançador de tendência",
+        "title.time-traveler": "Viajante do tempo",
+        "title.marathoner.value": ("{value} música", "{value} músicas"),
+        "title.alternative.value": ("mediana de {value} fã", "mediana de {value} fãs"),
+        "title.explorer.value": ("{value} artista novo", "{value} artistas novos"),
+        "title.night-owl.value": ("{value} música de madrugada", "{value} músicas de madrugada"),
+        "title.early-bird.value": ("{value} música cedinho", "{value} músicas cedinho"),
+        "title.duo.value": ("{value} coincidência", "{value} coincidências"),
+        "title.trendsetter.value": ("{value} artista que alguém pegou de você", "{value} artistas que alguém pegou de você"),
+        "title.time-traveler.value": ("{value} década", "{value} décadas"),
     },
     "en": {
         # Reviews
@@ -593,5 +611,29 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "reason.rabbit_hop": "Hop {hop} of {hops} from {seed}.",
         "rabbit.done": "{chains} paths, {count} songs from the known to the unknown.",
         "rabbit.none": "The hole led nowhere this time. Try again, with another artist or another size.",
+        # Achievements (the medal names come from medal_names.py, merged at the end of this file)
+        "medal.game.how": "Played music from {game}.",
+        "title.marathoner": "Marathoner",
+        "title.alternative": "Most Alternative",
+        "title.explorer": "Explorer",
+        "title.night-owl": "Night Owl",
+        "title.early-bird": "Early Bird",
+        "title.duo": "Duo of the Month",
+        "title.trendsetter": "Trendsetter",
+        "title.time-traveler": "Time Traveler",
+        "title.marathoner.value": ("{value} song", "{value} songs"),
+        "title.alternative.value": ("median of {value} fan", "median of {value} fans"),
+        "title.explorer.value": ("{value} new artist", "{value} new artists"),
+        "title.night-owl.value": ("{value} song after midnight", "{value} songs after midnight"),
+        "title.early-bird.value": ("{value} early song", "{value} early songs"),
+        "title.duo.value": ("{value} match", "{value} matches"),
+        "title.trendsetter.value": ("{value} artist someone picked up from you", "{value} artists someone picked up from you"),
+        "title.time-traveler.value": ("{value} decade", "{value} decades"),
     },
 }
+
+# Medal names and "how" lines live apart: they're spoilers (see medal_names.py).
+from .medal_names import NAMES as _MEDAL_NAMES  # noqa: E402
+
+for _lang in LANGUAGES:
+    MESSAGES[_lang].update(_MEDAL_NAMES[_lang])
