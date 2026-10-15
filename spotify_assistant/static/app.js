@@ -91,7 +91,7 @@ const HUNT_KINDS = { sensations: ["sense"], discover: ["roulette", "rabbit"], ne
 // Artist size is measured in fans: no free API says how many times a song was played.
 const SIZE_MIN = ["", "100", "1000", "10000", "100000", "1000000"];
 const SIZE_MAX = ["", "1000", "10000", "100000", "1000000", "10000000"];
-const PERIODS = ["7", "14", "30", "90"];
+const PERIODS = ["0", "3", "7", "14", "30", "90"];
 const GENRE_SUGGESTIONS = [
   "K-pop", "J-pop", "Funk", "Trap", "Rap", "Drill", "Phonk", "Sertanejo", "Pagode", "Samba", "MPB", "Forró",
   "Piseiro", "Rock", "Indie", "Pop", "Emo", "Metal", "Punk", "genre.electronic", "House", "Techno", "Lo-fi", "Jazz",

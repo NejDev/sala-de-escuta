@@ -450,7 +450,9 @@ class ServerTest(unittest.TestCase):
         # Doesn't run the real search (patching threading.Thread would take down the test server itself).
         with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
             self.assertEqual(start({"kind": "news", "genre": ""}), 400)
-            self.assertEqual(start({"kind": "news", "genre": "k-pop", "days": 3}), 400)
+            self.assertEqual(start({"kind": "news", "genre": "k-pop", "days": 5}), 400)
+            self.assertEqual(start({"kind": "news", "genre": "k-pop", "days": 0}), 200)  # today
+            self.assertEqual(start({"kind": "news", "genre": "k-pop", "days": 3}), 200)
             self.assertEqual(start({"kind": "roulette", "min_fans": 5000, "max_fans": 1000}), 400)
             self.assertEqual(start({"kind": "roulette", "min_fans": "muito"}), 400)
             self.assertEqual(start({"kind": "news", "genre": "gospel"}), 400)

@@ -163,7 +163,7 @@ def localized(spec: dict) -> dict:
     return {**spec, "name": pick(spec.get("name")), "description": pick(spec.get("description", ""))}
 
 
-NEWS_PERIODS = (7, 14, 30, 90)
+NEWS_PERIODS = (0, 3, 7, 14, 30, 90)  # 0 = released today
 GENRE_MAX_CHARS = 40
 
 
@@ -538,7 +538,7 @@ class App:
         elif kind == "news":
             genre = genre_from(body, required=True)
             try:
-                days = int(body.get("days") or 30)
+                days = 30 if body.get("days") in (None, "") else int(body["days"])
             except (TypeError, ValueError):
                 days = 0
             if days not in NEWS_PERIODS:

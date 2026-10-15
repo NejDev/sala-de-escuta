@@ -933,7 +933,7 @@ def news(
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
     if not releases:
-        hunt.message = t("news.none", genre=genre, days=days)
+        hunt.message = t("news.none_today" if days == 0 else "news.none", genre=genre, days=days)
         return
 
     hunt.message = t("news.picking")
@@ -967,7 +967,8 @@ def news(
         if len(hunt.finds) >= NEWS_RESULTS:
             break
     hunt.message = (
-        t("news.done", count=len(hunt.finds), genre=genre, days=days) if hunt.finds else t("news.not_on_spotify")
+        t("news.done_today" if days == 0 else "news.done", count=len(hunt.finds), genre=genre, days=days)
+        if hunt.finds else t("news.not_on_spotify")
     )
 
 

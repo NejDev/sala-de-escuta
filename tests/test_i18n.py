@@ -55,7 +55,7 @@ class CatalogTest(unittest.TestCase):
         used = set(re.findall(r'"([a-z]+(?:\.[a-z0-9_]+)+)"', app))
         # Keys built from a variable.
         used |= {f"hunt.again.{kind}" for kind in ("sense", "roulette", "rabbit", "news")}
-        used |= {f"period.{days}" for days in (7, 14, 30, 90)}
+        used |= {f"period.{days}" for days in (0, 3, 7, 14, 30, 90)}
         used |= {f"player.repeat_{mode}" for mode in ("off", "context", "track")}
         used |= {f"every.{every}" for every in ("daily", "weekly", "monthly")}
         tour = re.search(r"const TOUR = \[(.*?)\];", app, re.S).group(1)

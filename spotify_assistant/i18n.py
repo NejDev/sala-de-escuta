@@ -76,6 +76,9 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # New releases from today
+        "news.none_today": "Nenhum lançamento de {genre} nesse tamanho hoje. Aumente o período ou o tamanho.",
+        "news.done_today": ("1 lançamento de {genre} de hoje.", "{count} lançamentos de {genre} de hoje."),
         # Pinned playlists and the bar
         "fav.hidden": "{name} saiu da barra e não se atualiza mais. Para trazer de volta, use o + da barra.",
         "fav.shown": "{name} voltou para a barra.",
@@ -294,6 +297,9 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # New releases from today
+        "news.none_today": "No {genre} releases of that size today. Widen the period or the size.",
+        "news.done_today": ("1 {genre} release from today.", "{count} {genre} releases from today."),
         # Pinned playlists and the bar
         "fav.hidden": "{name} left the bar and won't update anymore. To bring it back, use the + on the bar.",
         "fav.shown": "{name} is back on the bar.",

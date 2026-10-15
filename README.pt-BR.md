@@ -91,7 +91,7 @@ API gratuita diz quantas vezes uma música foi tocada; o número de fãs do arti
 
 ### Novidades
 
-Escolha um gênero (ex.: K-pop), o tamanho do artista e o período (7, 14, 30 ou 90 dias). A sala
+Escolha um gênero (ex.: K-pop), o tamanho do artista e o período (hoje, ou os últimos 3, 7, 14, 30 ou 90 dias). A sala
 levanta artistas do gênero em playlists, filtra pelos fãs, olha os lançamentos de cada um e mostra a
 faixa principal de cada lançamento, do mais novo para o mais antigo. Versões "clean" do mesmo
 lançamento são juntadas, e em trilhas sonoras vale a faixa do próprio artista.

@@ -91,7 +91,7 @@ API says how many times a song was played; the artist's fan count is the measure
 
 ### New releases
 
-Pick a genre (e.g. K-pop), the artist size and the period (7, 14, 30 or 90 days). The room gathers
+Pick a genre (e.g. K-pop), the artist size and the period (today, or the last 3, 7, 14, 30 or 90 days). The room gathers
 artists of that genre from playlists, filters them by fans, looks at each one's releases and shows the
 main track of each release, newest first. "Clean" versions of the same release are merged, and on
 soundtracks the artist's own track is used.

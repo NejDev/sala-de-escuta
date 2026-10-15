@@ -422,6 +422,12 @@ class NewsTest(FreshMatches):
         self.assertEqual({f.uri for f in hunt.finds}, {"spotify:track:1001", "spotify:track:1022",
                                                        "spotify:track:2001", "spotify:track:3001"})
 
+    def test_today_only_counts_releases_from_today(self):
+        hunt = discovery.Hunt("news", "Novidades: K-pop")
+        discovery.news(hunt, FakeSpotify(), self.deezer(), "k-pop", days=0)  # the newest one came out yesterday
+        self.assertEqual(hunt.finds, [])
+        self.assertEqual(hunt.message, "Nenhum lançamento de k-pop nesse tamanho hoje. Aumente o período ou o tamanho.")
+
     def test_explains_when_nothing_fits(self):
         hunt = discovery.Hunt("news", "Novidades: K-pop")
         discovery.news(hunt, FakeSpotify(), self.deezer(), "k-pop", discovery.FanRange(100_000_000), days=30)
