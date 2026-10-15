@@ -302,6 +302,7 @@ async function logout() {
 /** Opens a playlist by key or one of the VIEWS screens. */
 function go(key) {
   key = VIEW_ALIASES[key] || key;
+  if (key === "friends" && state.overview && !state.overview.friends) key = "home";
   return key in VIEWS ? openView(key) : select(key);
 }
 
@@ -365,7 +366,8 @@ function renderShelf() {
     current: onPlaylist && playlist.key === state.selected,
     number: index + 1,
   }));
-  const room = Object.entries(VIEWS).map(([key, label], index) => item({
+  const views = Object.entries(VIEWS).filter(([key]) => key !== "friends" || state.overview.friends);
+  const room = views.map(([key, label], index) => item({
     key,
     label: t(label),
     explore: true,
@@ -926,7 +928,7 @@ function genreList() {
     GENRE_SUGGESTIONS.map((genre) => h("option", { value: genre.startsWith("genre.") ? t(genre) : genre })));
 }
 
-// ---------- Friends: musical affinity, matches and what everyone is listening to (only who joins)
+// ---------- Friends: musical affinity and matches (only who joins)
 
 function friendsView() {
   const data = state.friends;
@@ -936,7 +938,8 @@ function friendsView() {
   if (!data.sharing) {
     return [head, h("section", { class: "friends-join" },
       h("p", null, t("friends.join_text")),
-      h("button", { class: "play-button", type: "button", onclick: joinFriends }, t("friends.join")))];
+      h("button", { class: "play-button", type: "button", onclick: joinFriends }, t("friends.join"))),
+      accessSection(data.access)];
   }
   const card = (friend) => h("li", { class: "friend-card" },
     h("p", { class: "friend-name" }, friend.name),
@@ -956,7 +959,38 @@ function friendsView() {
     h("p", { class: "meta friends-me" }, t("friends.me", { count: data.me.plays_7d }), " ", t("friends.updates"), " ",
       h("button", { class: "text-button", type: "button", onclick: leaveFriends },
         t(state.confirmLeave ? "friends.leave_confirm" : "friends.leave"))),
+    accessSection(data.access),
   ];
+}
+
+/** Owner only: who may use Friends, one switch per person, and the default for people who join later. */
+function accessSection(access) {
+  if (!access) return null;
+  const toggle = (pressed, label, onclick) => h("button", {
+    class: "who-chip", type: "button", "aria-pressed": String(pressed), onclick,
+  }, label);
+  return h("section", { class: "home-section friends-access" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("friends.access_title"))),
+    h("p", { class: "meta" }, t("friends.access_hint")),
+    access.people.length
+      ? h("ul", { class: "access-list" }, access.people.map((person) => h("li", null,
+        h("span", null, person.name),
+        toggle(person.allowed, t(person.allowed ? "friends.access_allowed" : "friends.access_blocked"),
+          () => saveAccess({ user: person.id, allowed: !person.allowed })))))
+      : h("p", { class: "meta" }, t("friends.access_nobody")),
+    h("label", { class: "access-new" },
+      h("input", { type: "checkbox", checked: access.new, onchange: (event) => saveAccess({ new: event.target.checked }) }),
+      " ", t("friends.access_new")));
+}
+
+async function saveAccess(body) {
+  try {
+    state.friends = await api("/api/friends/access", body);
+    toast(state.friends.message);
+  } catch (error) {
+    toast(error.message, true);
+  }
+  renderIntro();
 }
 
 function gapText(seconds) {
@@ -969,17 +1003,14 @@ function feedList(events) {
   return h("ol", { class: "tracks feed" }, events.map((event) => {
     const track = event.track;
     const artist = track.artists[0]?.name || "";
-    const text = event.kind === "match"
-      ? t("friends.match", { friend: event.friend, title: track.title, artist, gap: gapText(event.gap_s) })
-      : t("friends.played", { friend: event.friend, title: track.title, artist });
-    return h("li", { class: event.kind === "match" ? "track feed-item is-match" : "track feed-item", "data-uri": track.uri },
+    const text = t("friends.match", { friend: event.friend, title: track.title, artist, gap: gapText(event.gap_s) });
+    return h("li", { class: "track feed-item", "data-uri": track.uri },
       h("button", {
         class: "track-button",
         type: "button",
         title: t("action.play_title", { title: track.title }),
         onclick: () => command({ action: "play", uris: [track.uri] }),
       },
-        event.kind === "match" ? h("span", { class: "feed-pill" }, t("friends.match_label")) : h("span"),
         track.image ? h("img", { class: "track-art", src: track.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
         h("span", { class: "track-text" },
           h("span", { class: "feed-text" }, text),

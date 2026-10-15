@@ -28,7 +28,8 @@ Static files are read from disk on each request (images are cached by browsers f
 - `dashboard.py`: HTTP server, routes, per-person state (`Profile`), discoveries, favorites and the scheduler thread.
 - `discovery.py`: Sensations, roulette, rabbit hole, new releases; Deezer → Spotify matching by ISRC.
 - `artists.py` / `musicbrainz.py`: the Artists search (band members and their Spotify profiles from MusicBrainz).
-- `social.py`: Friends (opt-in): recently played history, affinity, matches, feed. Never expose a non-member's data.
+- `social.py`: Friends (opt-in): recently played history, affinity, matches; who may use it (data/room.json).
+  Never expose a non-member's data, and never what a member played alone (only matches show songs).
 - `favorites.py`: `data/users/<id>/favorites.json` (curated, discovery with recipe + frequency, or pinned) and `recent.json`.
 - `api.py`: Spotify client with a request gate and persisted pauses (`data/spotify-pauses.json`).
 - `i18n.py`: server messages; `static/i18n.js`: browser texts (a JSON object after `const STRINGS =`).
@@ -44,8 +45,10 @@ Static files are read from disk on each request (images are cached by browsers f
 - Never mention Deezer in the UI. Never add Spotify logos to the app's branding.
 - Keep the religious-content filter (`RELIGIOUS_WORDS`) and per-person blocked artists working everywhere.
 - Each person's data stays private: friends never see the owner's curation or each other's playlists.
-- Spotify rate limits are serious: a burst of searches once paused search for ~20 hours. Don't run real
-  discoveries in loops while debugging; use the fakes in `tests/` and mocked data in the browser.
+- Spotify rate limits are serious: a burst of searches once paused search for ~20 hours, and one big band
+  in Artists (~36 requests in 9 s) paused `/artists` for ~23 hours. Artists reads only the newest pages
+  per person, keeps them in `data/artists-cache.json` for 3 days, and `/artists` calls go 1.5 s apart.
+  Don't run real discoveries in loops while debugging; use the fakes in `tests/` and mocked data in the browser.
 - Never commit `.env`, `data/` or `playlists.json` (the repo ships `playlists.example.json`). Before a
   commit, check the staged diff for the Client ID, tokens, the Tailscale address and the owner's Spotify id.
 - Commits use the GitHub noreply e-mail already set in the local git config.

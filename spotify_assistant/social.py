@@ -1,6 +1,9 @@
-"""Friends: what each person listens to, musical affinity, matches and a small feed.
+"""Friends: musical affinity and matches (the same song, close in time) among people who join.
 
 Only for people who turn it on (data/users/<id>/social.json); everyone else stays invisible.
+What a friend plays alone is never shown, only the songs you both played.
+The owner decides who may use it at all (data/room.json): per person, plus a default for people
+who join the room later.
 Plays come from Spotify's recently played list (the last 50), read every 15 minutes while the
 panel is open, and are kept for 90 days in plays.json.
 """
@@ -23,7 +26,6 @@ AFFINITY_DAYS = 30
 MIN_PLAYS = 10  # below this an affinity number would be noise
 MATCH_WINDOW_S = 6 * 3600  # same song within 6 hours of each other
 MATCH_DAYS = 7
-FEED_DAYS = 2
 FEED_SIZE = 40
 COLLECT_EVERY_S = 15 * 60
 DAY = 86400
@@ -41,6 +43,56 @@ def _read(path: Path, default):
         return json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         return default
+
+
+# ---------- who may use Friends (the owner decides)
+
+
+def _room_file() -> Path:
+    return config.DATA_DIR / "room.json"
+
+
+def access() -> dict:
+    """{"new": allow people who join later, "people": {user id: allowed}} (the owner is always allowed)."""
+    room = _read(_room_file(), {})
+    return {"new": room.get("friends_new", True), "people": room.get("friends_people", {})}
+
+
+def allowed(user_id: str) -> bool:
+    if user_id == config.owner_id():
+        return True
+    rules = access()
+    return bool(rules["people"].get(user_id, rules["new"]))
+
+
+def _save_access(rules: dict) -> None:
+    room = _read(_room_file(), {})
+    room.update(friends_new=rules["new"], friends_people=rules["people"])
+    config.DATA_DIR.mkdir(exist_ok=True)
+    _room_file().write_text(json.dumps(room, indent=2), encoding="utf-8")
+
+
+def set_allowed(user_id: str, allow: bool) -> None:
+    with _lock:
+        rules = access()
+        rules["people"][user_id] = allow
+        _save_access(rules)
+    if not allow:
+        set_share(user_id, False, forget=True)  # out of Friends: their plays stop showing and are deleted
+
+
+def set_new(allow: bool, current_users: list[str]) -> None:
+    """Changing the default doesn't touch people already in the room: they keep what they had."""
+    with _lock:
+        rules = access()
+        for user_id in current_users:
+            if user_id != config.owner_id():
+                rules["people"].setdefault(user_id, rules["new"])
+        rules["new"] = allow
+        _save_access(rules)
+
+
+# ---------- each person's choice and plays
 
 
 def settings(user_id: str) -> dict:
@@ -156,16 +208,13 @@ def stats(items: list[dict], now: float | None = None) -> dict:
 
 
 def feed(friends: dict[str, list[dict]], names: dict[str, str], me: str, now: float | None = None) -> list[dict]:
-    """Matches between me and each friend, plus what friends played in the last two days, newest first."""
+    """Matches between me and each friend in the last week, newest first."""
     now = time.time() if now is None else now
     events = []
     for friend, items in friends.items():
         if friend == me:
             continue
         for match in matches(friends.get(me, []), items, now):
-            events.append({"kind": "match", "friend": names[friend], "at": match["at"],
-                           "gap_s": match["gap_s"], "track": match["track"]})
-        for play in _recent(items, now, FEED_DAYS):
-            events.append({"kind": "play", "friend": names[friend], "at": play["at"], "track": play})
+            events.append({"friend": names[friend], "at": match["at"], "gap_s": match["gap_s"], "track": match["track"]})
     events.sort(key=lambda event: event["at"], reverse=True)
     return events[:FEED_SIZE]

@@ -40,6 +40,12 @@ class MusicBrainzTest(unittest.TestCase):
         self.assertEqual([(m["name"], m["role"], m["former"]) for m in info["members"]],
                          [("NAYEON", "member", False), ("DAHYUN", "member", True), ("MISAMO", "subgroup", False)])
 
+    def test_one_entry_per_person_even_with_one_relation_per_instrument(self):
+        relation = lambda ended: {"type": "member of band", "direction": "backward", "ended": ended,
+                                  "artist": {"id": "mike", "name": "Mike Shinoda", "sort-name": "Shinoda, Mike"}}
+        info = musicbrainz.parse_artist({"id": "lp", "name": "Linkin Park", "relations": [relation(False), relation(False), relation(True)]})
+        self.assertEqual([(m["name"], m["former"]) for m in info["members"]], [("Mike Shinoda", False)])
+
     def test_latin_names(self):
         self.assertEqual(musicbrainz.latin_name("もも", "MOMO"), "MOMO")
         self.assertEqual(musicbrainz.latin_name("박진영", "Park, Jin Young"), "Jin Young Park")
@@ -68,6 +74,7 @@ def album(album_id, name, date, kind="album", artist="TWICE", images=()):
 class FakeSpotify:
     def __init__(self, albums, search=None):
         self.albums = albums
+        self.pages = []
         self.found = search or {}
         self.searched = []
 
@@ -75,6 +82,7 @@ class FakeSpotify:
         return {"name": {"BAND1": "TWICE"}.get(artist_id, artist_id), "images": [{"url": "pic", "width": 300}]}
 
     def artist_albums(self, artist_id, groups, max_pages=10):
+        self.pages.append((artist_id, groups, max_pages))
         return self.albums.get((artist_id, groups), [])
 
     def search(self, query, kind):
@@ -109,7 +117,12 @@ class DiscographyTest(unittest.TestCase):
     def setUp(self):
         i18n.use("pt")
         self.addCleanup(i18n.use, i18n.DEFAULT)
-        artists._cache.clear()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = mock.patch.object(config, "DATA_DIR", Path(tmp.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        artists._cache = None
 
     def spotify(self):
         return FakeSpotify({
@@ -128,6 +141,19 @@ class DiscographyTest(unittest.TestCase):
             "DAHYUN": [{"id": "DAHYUN1", "name": "DAHYUN"}],
             "MINA": [{"id": "it", "name": "Mina"}, {"id": "kr", "name": "MINA"}],  # ambiguous: left out
         })
+
+    def test_reads_few_pages_and_remembers_them_across_restarts(self):
+        sp = self.spotify()
+        artists.discography(Hunt("artist", "twice"), sp, FakeMusicBrainz(), "twice")
+        self.assertIn(("BAND1", artists.OWN, artists.MAIN_PAGES[artists.OWN]), sp.pages)
+        self.assertIn(("NAYEON1", artists.OWN, artists.MEMBER_PAGES[artists.OWN]), sp.pages)
+        artists._cache = None  # the panel restarted: what was read comes from disk
+        again = self.spotify()
+        artists.discography(Hunt("artist", "twice"), again, FakeMusicBrainz(), "twice")
+        self.assertEqual(again.pages, [])
+        # A member read with fewer pages doesn't count as the full read when searched on their own.
+        artists.releases_of(again, "NAYEON1", artists.OWN, artists.MAIN_PAGES[artists.OWN])
+        self.assertEqual(again.pages, [("NAYEON1", artists.OWN, artists.MAIN_PAGES[artists.OWN])])
 
     def test_band_members_solos_and_features_in_one_list(self):
         hunt = Hunt("artist", "twice")

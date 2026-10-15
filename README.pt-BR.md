@@ -11,7 +11,7 @@ em português ou inglês.
   um artista que você curte para os menos conhecidos.
 - **Novidades**: o que acabou de sair num gênero, só de artistas do tamanho que você escolher.
 - **Artistas**: tudo o que uma banda ou artista lançou, com o trabalho solo de cada integrante e as participações.
-- **Amigos** (para quem ativar): afinidade musical entre amigos, matches quando vocês ouvem a mesma música e um feed.
+- **Amigos** (para quem ativar): afinidade musical entre amigos, e matches quando vocês ouvem a mesma música.
 - **Favoritas que se atualizam sozinhas**: transforme uma seleção numa playlist que ganha músicas
   novas todo dia, toda semana ou todo mês. Só essas playlists especiais ficam na barra do topo.
 - **Início**: uma sugestão para a hora do dia, o que está tocando, suas favoritas, atalhos e achados recentes.
@@ -121,11 +121,15 @@ as músicas recentes de cada participante no Spotify a cada 15 minutos (guardada
 
 - **Afinidade** com cada amigo nos últimos 30 dias (principalmente artistas em comum, um pouco as
   músicas), com os artistas que vocês têm em comum e quanto cada um ouviu na semana.
-- **Matches**: a mesma música ouvida pelos dois com até 6 horas de diferença.
-- **Acontecendo**: os matches e o que os amigos ouviram nos últimos dois dias; tudo toca com um clique.
+- **Matches**: a mesma música ouvida pelos dois com até 6 horas de diferença, na última semana; cada
+  uma toca com um clique. O que um amigo ouve sozinho nunca aparece.
 
 **Sair e apagar meu histórico** remove tudo. Participar pede mais uma permissão da Spotify, então cada
 pessoa autoriza o Spotify de novo uma vez.
+
+O dono decide quem pode usar o Amigos (**Quem pode usar o Amigos**, no fim da página Amigos do dono):
+uma chave por pessoa, e se quem entrar na sala depois já começa com ele. Quem estiver sem Amigos não
+vê a aba, e o histórico dessa pessoa é apagado.
 
 ### Guardar o que gostou
 

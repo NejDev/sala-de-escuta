@@ -76,6 +76,13 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # Friends: who may use it
+        "friends.off": "O Amigos não está disponível para você.",
+        "err.which_person": "Escolha uma pessoa da sala.",
+        "friends.access_on": "{name} pode usar o Amigos.",
+        "friends.access_off": "{name} não usa mais o Amigos; o histórico dessa pessoa foi apagado.",
+        "friends.access_new_on": "Quem entrar na sala daqui para frente já pode usar o Amigos.",
+        "friends.access_new_off": "Quem entrar na sala daqui para frente começa sem o Amigos, até você liberar.",
         # Friends
         "friends.need_auth": "Para participar, autorize o Spotify de novo (só uma vez).",
         "friends.joined": "Pronto! Agora a sala lê o que você ouve a cada 15 minutos.",
@@ -312,6 +319,13 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # Friends: who may use it
+        "friends.off": "Friends isn't available to you.",
+        "err.which_person": "Pick a person in the room.",
+        "friends.access_on": "{name} can use Friends.",
+        "friends.access_off": "{name} no longer uses Friends; their history was deleted.",
+        "friends.access_new_on": "People who join the room from now on can use Friends right away.",
+        "friends.access_new_off": "People who join the room from now on start without Friends until you allow them.",
         # Friends
         "friends.need_auth": "To join, authorize Spotify again (just once).",
         "friends.joined": "Done! The room now reads what you listen to every 15 minutes.",

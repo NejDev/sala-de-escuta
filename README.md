@@ -11,7 +11,7 @@ in Portuguese or English.
   hops from an artist you like toward lesser-known ones.
 - **New releases**: what just came out in a genre, only from artists of the size you choose.
 - **Artists**: everything a band or artist released, with each member's solo work and their features.
-- **Friends** (opt-in): musical affinity between friends, matches when you play the same song, and a feed.
+- **Friends** (opt-in): musical affinity between friends, and matches when you play the same song.
 - **Favorites that update themselves**: turn a selection into a playlist that gets new songs every
   day, week or month. Only these special playlists go on the top bar.
 - **Home**: a suggestion for this time of day, what's playing, your favorites, shortcuts and recent finds.
@@ -120,11 +120,15 @@ The room reads each member's recently played songs on Spotify every 15 minutes (
 
 - **Affinity** with each friend over the last 30 days (mostly shared artists, partly shared songs), with
   the artists you have in common and how much each one listened this week.
-- **Matches**: the same song played by both of you within 6 hours.
-- **Happening**: matches and what friends played in the last two days; anything there plays with a click.
+- **Matches**: the same song played by both of you within 6 hours, over the last week; each one plays
+  with a click. What a friend plays alone is never shown.
 
 **Leave and delete my history** removes everything. Joining needs one more Spotify permission, so
 each person authorizes Spotify again once.
+
+The owner decides who can use Friends (**Who can use Friends**, at the bottom of the owner's Friends
+page): a switch per person, and whether people who join the room later start with it. Someone without
+Friends doesn't see the tab, and their history is deleted.
 
 ### Keeping what you like
 

@@ -534,6 +534,28 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(data["message"], "Você saiu e o seu histórico foi apagado.")
         self.assertEqual(friends("paulo")["friends"], [])
 
+    def test_owner_decides_who_can_use_friends(self):
+        self.post("/api/friends", {"share": True}, as_user="ana")
+        self.assertEqual(self.post("/api/friends/access", {"user": "ana", "allowed": False}, as_user="ana")[0], 404)
+        status, data = self.post("/api/friends/access", {"user": "ana", "allowed": False})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["access"]["people"], [{"id": "ana", "name": "Ana", "allowed": False}])
+        self.assertEqual(self.request("/api/friends", as_user="ana")[0], 403)
+        self.assertEqual(self.post("/api/friends", {"share": True}, as_user="ana")[0], 403)
+        self.assertFalse(json.loads(self.request("/api/overview", as_user="ana")[1])["friends"])
+        self.assertFalse(social.sharing("ana"))  # out, and her history is gone
+        self.assertEqual(social.plays("ana"), [])
+        # People who join later start without Friends; Ana's own choice stays as the owner set it.
+        self.post("/api/friends/access", {"new": False})
+        (self.data / "users" / "newcomer").mkdir()
+        self.assertFalse(social.allowed("newcomer"))
+        self.post("/api/friends/access", {"user": "ana", "allowed": True})
+        self.assertTrue(social.allowed("ana"))
+
+    def test_turning_off_the_default_keeps_people_already_in(self):
+        self.post("/api/friends/access", {"new": False})
+        self.assertTrue(social.allowed("ana"))  # she was already in the room
+
     def test_joining_friends_needs_the_history_permission(self):
         token = {"scope": auth.PLAYER_SCOPES, "access_token": "x", "refresh_token": "y", "expires_at": 4_000_000_000}
         (self.data / "users" / "ana" / "token.json").write_text(json.dumps(token), encoding="utf-8")

@@ -157,5 +157,15 @@ def parse_artist(data: dict) -> dict:
         "name": latin_name(data.get("name", ""), data.get("sort-name", "")),
         "type": data.get("type"),
         "spotify": spotify_id(relations),
-        "members": members,
+        "members": unique_members(members),
     }
+
+
+def unique_members(members: list[dict]) -> list[dict]:
+    """One entry per person: MusicBrainz has one relation per instrument or period (Mike Shinoda x3).
+    Former only when every one of their relations ended."""
+    merged: dict[str, dict] = {}
+    for member in members:
+        entry = merged.setdefault(member["mbid"], dict(member))
+        entry["former"] = entry["former"] and member["former"]
+    return list(merged.values())

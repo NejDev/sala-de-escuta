@@ -285,6 +285,7 @@ class App:
             "playlists": self._shelf(user, library),
             "hidden": [{"id": fav["id"], "name": fav["name"]} for fav in self._favorites(user) if fav.get("hidden")],
             "max_favorites": favorites.MAX_FAVORITES,
+            "friends": social.allowed(user.id),
             "player_ready": not missing_scopes(user.paths.token, PLAYER_SCOPES),
             "search_paused_s": gate.remaining("search"),
         }
@@ -1099,15 +1100,19 @@ class App:
                 log.exception("Scheduled update failed")
             time.sleep(SCHEDULER_TICK_S)
 
-    # Friends: affinity, matches and a feed, only among people who turned it on
+    # Friends: affinity and matches, only among people who turned it on
 
     def friends(self, user: Profile) -> dict:
+        if not social.allowed(user.id):
+            raise UserError(t("friends.off"), 403)
         ready = not missing_scopes(user.paths.token, SOCIAL_SCOPES)
+        owner = {"access": self._friends_access()} if user.is_owner else {}
         if not social.sharing(user.id):
-            return {"sharing": False, "ready": ready}  # nothing about anyone else
+            return {"sharing": False, "ready": ready, **owner}  # nothing about anyone else
         if ready:
             self._collect(user, fresh_s=120)
-        everyone = {uid: social.plays(uid) for uid in config.list_users() if social.sharing(uid)}
+        everyone = {uid: social.plays(uid) for uid in config.list_users()
+                    if social.sharing(uid) and social.allowed(uid)}
         names = {uid: accounts.display_name(uid) for uid in everyone}
         mine = everyone.get(user.id, [])
         friends = []
@@ -1115,13 +1120,39 @@ class App:
             if uid != user.id:
                 numbers = social.stats(items)
                 friends.append({"id": uid, "name": names[uid], "affinity": social.affinity(mine, items),
-                                "plays_7d": numbers["plays_7d"], "last": numbers["last"]})
+                                "plays_7d": numbers["plays_7d"]})  # not what they played: only matches show songs
         friends.sort(key=lambda friend: -(friend["affinity"] or {}).get("percent", -1))
         return {"sharing": True, "ready": ready, "me": social.stats(mine), "friends": friends,
-                "feed": social.feed(everyone, names, user.id)}
+                "feed": social.feed(everyone, names, user.id), **owner}
+
+    @staticmethod
+    def _friends_access() -> dict:
+        owner = config.owner_id()
+        return {
+            "new": social.access()["new"],
+            "people": [{"id": uid, "name": accounts.display_name(uid), "allowed": social.allowed(uid)}
+                       for uid in config.list_users() if uid != owner],
+        }
+
+    def set_friends_access(self, user: Profile, body: dict) -> dict:
+        """Owner only: who may use Friends."""
+        self._require_owner(user)
+        if "new" in body:
+            social.set_new(bool(body["new"]), config.list_users())
+            message = t("friends.access_new_on" if body["new"] else "friends.access_new_off")
+        else:
+            target = str(body.get("user") or "")
+            if target not in config.list_users() or target == user.id:
+                raise UserError(t("err.which_person"))
+            allow = bool(body.get("allowed"))
+            social.set_allowed(target, allow)
+            message = t("friends.access_on" if allow else "friends.access_off", name=accounts.display_name(target))
+        return {**self.friends(user), "message": message}
 
     def set_sharing(self, user: Profile, body: dict) -> dict:
         share, forget = bool(body.get("share")), bool(body.get("forget"))
+        if not social.allowed(user.id):
+            raise UserError(t("friends.off"), 403)
         if share and missing_scopes(user.paths.token, SOCIAL_SCOPES):
             raise UserError(t("friends.need_auth"), 403, scope=True)
         social.set_share(user.id, share, forget=forget)
@@ -1143,7 +1174,7 @@ class App:
         time.sleep(SCHEDULER_FIRST_S)
         while True:
             for user_id in config.list_users():
-                if not social.sharing(user_id):
+                if not social.sharing(user_id) or not social.allowed(user_id):
                     continue
                 try:
                     user = self.profile(user_id)
@@ -1360,6 +1391,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.friends(user)
         if method == "POST" and path == "/api/friends":
             return app.set_sharing(user, body)
+        if method == "POST" and path == "/api/friends/access":
+            return app.set_friends_access(user, body)
         if method == "GET" and path == "/api/recent":
             return app.recent_finds(user)
         if method == "GET" and path == "/api/favorites/extras":

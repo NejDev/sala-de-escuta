@@ -24,6 +24,8 @@ SEARCH_LIMIT = 10
 ITEMS_PER_REQUEST = 100
 # Global brake: at most ~4 requests per second to Spotify, counting everything (player, searches...).
 MIN_INTERVAL_S = 0.25
+# Families Spotify punishes hard for bursts get their own slower lane (seconds between requests).
+SLOW_FAMILIES = {"artists": 1.5}
 
 log = logging.getLogger(__name__)
 
@@ -51,6 +53,7 @@ class _Gate:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._next_slot = 0.0
+        self._family_slots: dict[str, float] = {}
         self._paused: dict[str, float] | None = None  # family -> time (epoch) when it is allowed again
 
     def _load(self) -> dict[str, float]:
@@ -76,11 +79,13 @@ class _Gate:
             config.SPOTIFY_PAUSES_FILE.write_text(json.dumps(paused), encoding="utf-8")
         log.warning("Spotify paused '%s' for %ss", family, seconds)
 
-    def wait_turn(self) -> None:
+    def wait_turn(self, family: str = "") -> None:
         with self._lock:
             now = time.monotonic()
-            slot = max(now, self._next_slot)
+            slot = max(now, self._next_slot, self._family_slots.get(family, 0.0))
             self._next_slot = slot + MIN_INTERVAL_S
+            if family in SLOW_FAMILIES:
+                self._family_slots[family] = slot + SLOW_FAMILIES[family]
         if slot > now:
             time.sleep(slot - now)
 
@@ -166,7 +171,7 @@ class Spotify:
         remaining = gate.remaining(family)
         if remaining:
             raise SpotifyError(429, "paused by Spotify", retry_after=remaining, family=family)
-        gate.wait_turn()
+        gate.wait_turn(family)
         headers = {"Authorization": f"Bearer {self._access_token()}"}
         try:
             return http_request(method, url, headers=headers, params=params, json_body=body)

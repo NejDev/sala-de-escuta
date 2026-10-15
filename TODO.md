@@ -22,6 +22,7 @@ These were built with tests and mocked screens only, because Spotify search was 
 - [ ] Artists: a generic name (e.g. "Andy") shows the "which one?" cards and picking one works.
 - [ ] Friends: two people join (each authorizes Spotify again), plays appear after 15 minutes,
       affinity and a match show up; leaving deletes the history.
+- [ ] Friends: someone new signs in and doesn't see the Friends tab (newcomers start without it).
 - [ ] Home: **For right now** builds the sensation, or plays it when it's already a favorite;
       **Now playing** follows the player; recent finds play.
 

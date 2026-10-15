@@ -49,14 +49,15 @@ class MatchTest(unittest.TestCase):
         found = social.matches(mine, theirs, NOW)
         self.assertEqual([(m["track"]["uri"], m["gap_s"]) for m in found], [("spotify:track:s", 2 * 3600)])
 
-    def test_feed_has_matches_and_friends_plays_newest_first(self):
+    def test_feed_has_only_matches_newest_first(self):
         everyone = {
-            "me": [play("s", "a", NOW - 7200)],
-            "ana": [play("s", "a", NOW - 3600), play("old", "b", NOW - 5 * DAY)],
+            "me": [play("s", "a", NOW - 7200), play("t", "a", NOW - 2 * DAY)],
+            "ana": [play("s", "a", NOW - 3600), play("t", "a", NOW - 2 * DAY + 60), play("alone", "b", NOW - 600)],
         }
         events = social.feed(everyone, {"me": "Eu", "ana": "Ana"}, "me", NOW)
-        self.assertEqual([(e["kind"], e["friend"], e["track"]["uri"]) for e in events],
-                         [("match", "Ana", "spotify:track:s"), ("play", "Ana", "spotify:track:s")])
+        # What Ana played alone ("alone") never shows up.
+        self.assertEqual([(e["friend"], e["track"]["uri"]) for e in events],
+                         [("Ana", "spotify:track:s"), ("Ana", "spotify:track:t")])
 
 
 class FakeSpotify:

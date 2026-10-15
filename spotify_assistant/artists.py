@@ -1,42 +1,87 @@
 """Artists: everything a band or artist released, its members' solo work and their features.
 
 The band and its members (and subunits) come from MusicBrainz, with their Spotify profiles;
-each one's releases come from Spotify: their own (albums, singles and EPs, compilations) and
-the ones they appear on (features, soundtracks). Everything is merged into one list.
+each one's releases come from Spotify: their own (albums, singles and EPs) and the ones they
+appear on (features, soundtracks). Everything is merged into one list.
+
+Spotify punishes bursts on these endpoints hard (one big band once paused them for ~23 hours), so a
+search reads only the newest pages of each person, and what it read is kept on disk for 3 days.
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
+from pathlib import Path
 
-from . import curation
+from . import config, curation
 from .api import Spotify, SpotifyError
 from .discovery import Hunt, is_religious
 from .i18n import t
-from .musicbrainz import MusicBrainz, MusicBrainzError
+from .musicbrainz import MusicBrainz, MusicBrainzError, unique_members
 from .views import pick_image
 
-OWN = "album,single,compilation"
+OWN = "album,single"  # their own compilations only repeat songs from the albums
 FEATURES = "appears_on"
-MAX_PEOPLE = 16  # the artist plus members and subunits read in one search
+# Pages of 10 read per person, newest first: the artist searched, and each member or subunit.
+MAIN_PAGES = {OWN: 5, FEATURES: 3}
+MEMBER_PAGES = {OWN: 2, FEATURES: 1}
+MAX_PEOPLE = 12  # the artist plus members and subunits read in one search
 MAX_CANDIDATES = 8  # "which one?" cards when several artists share a name
-CACHE_TTL_S = 6 * 3600  # releases don't change by the minute; repeated searches cost nothing
+CANDIDATES_WITH_LATEST = 4  # only the first cards ask Spotify for their latest release
+CACHE_TTL_S = 3 * 86400  # releases don't change by the minute; kept on disk so restarts don't ask again
 
 log = logging.getLogger(__name__)
-_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+_cache: dict[str, dict] | None = None  # "kind|id|groups" -> {"at", "value"}; loaded from disk on first use
 _cache_lock = threading.Lock()
 
 
-def releases_of(sp: Spotify, artist_id: str, groups: str) -> list[dict]:
+def _cache_file() -> Path:
+    return config.DATA_DIR / "artists-cache.json"
+
+
+def _remembered(key: str, fresh_enough, load):
+    """The cached value for key when it is recent and fresh_enough(value) holds; otherwise load() and keep it."""
+    global _cache
     with _cache_lock:
-        hit = _cache.get((artist_id, groups))
-    if hit and time.time() - hit[0] < CACHE_TTL_S:
-        return hit[1]
-    albums = sp.artist_albums(artist_id, groups)
+        if _cache is None:
+            try:
+                _cache = json.loads(_cache_file().read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                _cache = {}
+        hit = _cache.get(key)
+    if hit and time.time() - hit["at"] < CACHE_TTL_S and fresh_enough(hit["value"]):
+        return hit["value"]
+    value = load()
     with _cache_lock:
-        _cache[(artist_id, groups)] = (time.time(), albums)
-    return albums
+        now = time.time()
+        _cache = {k: v for k, v in _cache.items() if now - v["at"] < CACHE_TTL_S}
+        _cache[key] = {"at": now, "value": value}
+        config.DATA_DIR.mkdir(exist_ok=True)
+        _cache_file().write_text(json.dumps(_cache, ensure_ascii=False), encoding="utf-8")
+    return value
+
+
+def _slim(album: dict) -> dict:
+    keep = ("id", "uri", "name", "album_type", "release_date", "images", "total_tracks")
+    return {**{key: album.get(key) for key in keep}, "artists": [{"name": a.get("name", "")} for a in album.get("artists", [])]}
+
+
+def releases_of(sp: Spotify, artist_id: str, groups: str, pages: int) -> list[dict]:
+    """The newest `pages` pages of an artist's releases (reuses a read of as many pages or more)."""
+    def load() -> dict:
+        return {"pages": pages, "albums": [_slim(album) for album in sp.artist_albums(artist_id, groups, max_pages=pages)]}
+
+    return _remembered(f"releases|{artist_id}|{groups}", lambda hit: hit["pages"] >= pages, load)["albums"]
+
+
+def profile_of(sp: Spotify, artist_id: str) -> dict:
+    def load() -> dict:
+        profile = sp.artist(artist_id) or {}
+        return {"name": profile.get("name"), "images": profile.get("images") or []}
+
+    return _remembered(f"profile|{artist_id}", lambda hit: True, load)
 
 
 def spotify_artist(sp: Spotify, name: str, unique: bool = False) -> dict | None:
@@ -48,11 +93,11 @@ def spotify_artist(sp: Spotify, name: str, unique: bool = False) -> dict | None:
     return (exact or found or [None])[0]
 
 
-def candidate(sp: Spotify, artist: dict) -> dict:
+def candidate(sp: Spotify, artist: dict, with_latest: bool = True) -> dict:
     """A card for "which one?": photo, genres and their latest release, so the person recognizes them."""
     latest = None
     try:
-        albums = sp.artist_albums(artist["id"], "album,single", max_pages=1)
+        albums = releases_of(sp, artist["id"], OWN, 1) if with_latest else []
         newest = max(albums, key=lambda album: album.get("release_date", ""), default=None)
         if newest:
             latest = {"name": newest.get("name", ""), "year": newest.get("release_date", "")[:4]}
@@ -76,7 +121,7 @@ def resolve(sp: Spotify, mb: MusicBrainz, name: str, spotify_id: str | None = No
         if mbid:
             info = mb.artist(mbid)
             person = person or {"name": info["name"], "spotify": info["spotify"]}
-            for member in info["members"][:MAX_PEOPLE]:
+            for member in unique_members(info["members"])[:MAX_PEOPLE]:  # also what was cached before
                 people.append({**member, "spotify": mb.artist(member["mbid"])["spotify"]})
     except MusicBrainzError as err:
         log.warning("MusicBrainz: %s", err)  # without line-ups, the search still finds the artist
@@ -137,7 +182,8 @@ def discography(hunt: Hunt, sp: Spotify, mb: MusicBrainz, name: str, spotify_id:
             if len(exact) == 1:
                 spotify_id = exact[0]["id"]
             elif found:  # several with this name (or none exactly): the person picks
-                hunt.candidates = [candidate(sp, artist) for artist in (exact or found)[:MAX_CANDIDATES]]
+                hunt.candidates = [candidate(sp, artist, index < CANDIDATES_WITH_LATEST)
+                                   for index, artist in enumerate((exact or found)[:MAX_CANDIDATES])]
                 hunt.message = t("artists.choose", name=name)
                 return
             else:
@@ -149,7 +195,7 @@ def discography(hunt: Hunt, sp: Spotify, mb: MusicBrainz, name: str, spotify_id:
     if not person:
         hunt.message = t("artists.not_found", name=name)
         return
-    profile = sp.artist(person["spotify"]) or {}
+    profile = profile_of(sp, person["spotify"])
     display = profile.get("name") or person["name"]
     hunt.label = display
     everyone = [{"name": display, "spotify": person["spotify"], "role": "main", "former": False}, *people]
@@ -165,8 +211,9 @@ def discography(hunt: Hunt, sp: Spotify, mb: MusicBrainz, name: str, spotify_id:
         if hunt.cancelled:
             return
         hunt.message = t("artists.reading", name=who["name"], progress=index, total=len(everyone))
+        pages = MAIN_PAGES if who["role"] == "main" else MEMBER_PAGES
         for groups, feature in ((OWN, False), (FEATURES, True)):
-            for album in releases_of(sp, who["spotify"], groups):
+            for album in releases_of(sp, who["spotify"], groups, pages[groups]):
                 _add(by_key, album, who, feature)
         hunt.progress = index
         hunt.releases = sorted(by_key.values(), key=lambda release: release["date"], reverse=True)
