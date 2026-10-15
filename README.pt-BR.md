@@ -96,7 +96,7 @@ cada um custa uma busca no Spotify e quase nenhum cabe.
 
 Com uma chave do Last.fm, todas as descobertas também aceitam **ouvintes da música: no máximo**, contados no Last.fm
 (pessoas que registraram a música). Uma música sem registro no Last.fm passa e a carta avisa. Cada música é conferida
-uma vez por mês e fica guardada em `data/lastfm-cache.json`; as que passam do limite saem antes de qualquer busca no
+uma vez por mês (lançamentos, uma vez por dia) e fica guardada em `data/lastfm-cache.json`; as que passam do limite saem antes de qualquer busca no
 Spotify.
 
 ### Novidades

@@ -146,11 +146,12 @@ class ListenerCounts:
             self._data = data if isinstance(data, dict) else {}
         return self._data
 
-    def get(self, artist: str, title: str) -> Listeners:
+    def get(self, artist: str, title: str, fresh_s: float = FRESH_S) -> Listeners:
+        """`fresh_s`: how old a cached count may be (new releases ask for younger ones)."""
         key = cache_key(artist, title)
         with self._lock:
             entry = self._entries().get(key)
-        if entry and self._now() - entry["at"] < FRESH_S:
+        if entry and self._now() - entry["at"] < fresh_s:
             return Listeners(entry["n"], entry["url"])
         found = self.client.track(artist, title)  # errors propagate and nothing is cached
         with self._lock:

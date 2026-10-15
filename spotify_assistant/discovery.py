@@ -22,7 +22,7 @@ import os
 import random
 import threading
 from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, timedelta
 from typing import Callable, Collection, Iterator
 
@@ -50,6 +50,7 @@ NEWS_ARTIST_POOL = 120  # genre artists gathered from playlists, before the fans
 # almost none fits, so a spin would turn into a burst of searches.
 TIGHT_CAP = 1_000
 LISTENER_SCAN_MAX = 240  # Sensations: candidates checked on Last.fm at most, before measuring any BPM
+NEWS_LISTENERS_FRESH_S = 86400  # new releases gain listeners fast: their counts are asked again after a day
 
 # Searches that bring up typical tracks of each genre on Deezer. Edit freely, but leave out the
 # panel's suggestions (GENRE_SUGGESTIONS in app.js): "little-known genre" draws only from here.
@@ -209,7 +210,8 @@ class ListenerCap:
     """Song listeners the person allows at most (counted on Last.fm), and the cached lookup that counts them."""
 
     max: int | None = None
-    lookup: Callable[[str, str], Listeners] | None = None
+    lookup: Callable[..., Listeners] | None = None
+    fresh_s: float | None = None  # how old a cached count may be; None: the cache's default
 
     @property
     def active(self) -> bool:
@@ -219,7 +221,7 @@ class ListenerCap:
         """(fits, what Last.fm said). A track Last.fm has no record of fits; without a cap nothing is asked."""
         if not self.active:
             return True, None
-        found = self.lookup(artist, title)
+        found = self.lookup(artist, title) if self.fresh_s is None else self.lookup(artist, title, fresh_s=self.fresh_s)
         return found.count is None or found.count <= self.max, {"listeners": found.count, "url": found.url}
 
 
@@ -988,6 +990,8 @@ def news(
     blocked: Collection[str] = frozenset(), listeners: ListenerCap = NO_CAP,
 ) -> None:
     """Recent releases from the genre's artists, within the chosen size."""
+    if listeners.active:
+        listeners = replace(listeners, fresh_s=NEWS_LISTENERS_FRESH_S)
     since = date.today() - timedelta(days=days)
     hunt.message = t("news.looking", genre=genre)
     artists = genre_artists(dz, genre, blocked)

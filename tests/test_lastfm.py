@@ -141,6 +141,15 @@ class CacheTest(unittest.TestCase):
         counts.get("Miles Davis", "So What")
         self.assertEqual(len(self.server.urls), 2)
 
+    def test_a_shorter_freshness_asks_again_sooner(self):
+        counts = self.counts()
+        counts.get("Banda", "Lançamento")
+        self.now[0] += 86400
+        counts.get("Banda", "Lançamento")  # still fresh for the default month
+        self.assertEqual(len(self.server.urls), 1)
+        counts.get("Banda", "Lançamento", fresh_s=86400)
+        self.assertEqual(len(self.server.urls), 2)
+
     def test_no_record_is_remembered_across_restarts(self):
         self.server = LastFmServer(({"error": 6}, 200))
         counts = self.counts()

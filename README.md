@@ -95,8 +95,8 @@ available. With a cap of 1,000 fans or less, the roulette skips the barely-playe
 costs a Spotify search and almost none fits.
 
 With a Last.fm key, every discovery also takes **song listeners: at most**, counted on Last.fm (people who scrobbled
-the song). A song Last.fm has no record of passes and says so. Each song is checked once a month and remembered in
-`data/lastfm-cache.json`; songs over the cap are dropped before anything is searched on Spotify.
+the song). A song Last.fm has no record of passes and says so. Each song is checked once a month (new releases once a day) and
+remembered in `data/lastfm-cache.json`; songs over the cap are dropped before anything is searched on Spotify.
 
 ### New releases
 

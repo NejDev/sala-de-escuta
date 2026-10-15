@@ -141,7 +141,7 @@ class FakeCounts:
     def __init__(self):
         self.saved = 0
 
-    def get(self, artist, title):
+    def get(self, artist, title, fresh_s=None):
         return Listeners(None, None)
 
     def save(self):

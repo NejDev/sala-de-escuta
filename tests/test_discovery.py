@@ -562,9 +562,11 @@ class FakeLastFm:
         self.listeners = listeners or {}
         self.error = error
         self.asked = []
+        self.fresh = []  # how old a cached count could be, per lookup (None: the cache's default)
 
-    def __call__(self, artist, title):
+    def __call__(self, artist, title, fresh_s=None):
         self.asked.append((artist, title))
+        self.fresh.append(fresh_s)
         if self.error:
             raise lastfm.LastFmError(self.error)
         if title not in self.listeners:
@@ -682,6 +684,23 @@ class ListenerCapTest(FreshMatches):
                        listeners=discovery.ListenerCap(100, FakeLastFm({"Hit": 80_000, "Lado B": 40})))
         self.assertEqual([(f.uri, f.lastfm["listeners"]) for f in hunt.finds], [("spotify:track:2001", 40)])
         self.assertNotIn(mock.call("isrc:ISRC1001", "track"), sp.search.call_args_list)
+
+    def test_new_releases_ask_for_fresh_counts(self):
+        # A release's listeners grow fastest in its first days: a month-old count would let it through a cap.
+        today = date.today().isoformat()
+        deezer = FakeDeezer(
+            playlists={"k-pop": [{"id": "p", "nb_tracks": 30, "title": "K-pop"}]},
+            tracks={"p": [song(1, "x", 10, "Banda")]},
+            albums={10: [{"id": 100, "title": "Hit", "release_date": today, "record_type": "single"}]},
+            album_songs={100: [song(1001, "Hit", 10, "Banda")]},
+        )
+        fake = FakeLastFm()
+        discovery.news(discovery.Hunt("news", "Novidades"), FakeSpotify(), deezer, "k-pop", days=7,
+                       listeners=discovery.ListenerCap(100, fake))
+        self.assertEqual(fake.fresh, [discovery.NEWS_LISTENERS_FRESH_S])
+        roulette = FakeLastFm()
+        discovery.ListenerCap(100, roulette).check("Banda", "Hit")
+        self.assertEqual(roulette.fresh, [None])  # everywhere else, the cache's month
 
     def test_sense_only_listens_to_tracks_within_the_cap(self):
         deezer = FakeDeezer(

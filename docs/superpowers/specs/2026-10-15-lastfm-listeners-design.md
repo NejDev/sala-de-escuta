@@ -68,6 +68,8 @@ class LastFm:
 
 - `config.LASTFM_CACHE_FILE`. Key: `curation.normalize(f"{artist}|{base_title}")`. Value: `{"n": int | null, "url": str | null, "at": epoch seconds}`.
 - An entry is fresh for 30 days (listener counts grow); "no record" entries are kept and expire the same way.
+  New releases ask for counts younger than a day (`NEWS_LISTENERS_FRESH_S`): a release's listeners grow fastest in
+  its first days, so a month-old count would let it through a cap (decided after the final review).
 - At most 100,000 entries (about 15 MB; Last.fm's terms cap stored data at 100 MB). Past that, the oldest are dropped.
 - Loaded lazily, saved only when something changed, at the end of each discovery and each favorite update (like
   `TempoCache` and `MatchCache`).
