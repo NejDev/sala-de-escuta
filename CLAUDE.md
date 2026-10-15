@@ -49,7 +49,8 @@ Static files are read from disk on each request (images are cached by browsers f
 - New text: add the key to **both** languages in `i18n.py` and/or `static/i18n.js` (keep it valid JSON).
   `tests/test_i18n.py` checks parity, placeholders and that used keys exist; keys built at runtime
   (template strings) must be listed in that test.
-- Never mention Deezer in the UI. Never add Spotify logos to the app's branding.
+- Never mention Deezer in the UI. Never add Spotify logos to the app's branding. Last.fm is credited (text and a link,
+  no logo) wherever its numbers show: its terms require it.
 - Keep the religious-content filter (`RELIGIOUS_WORDS`) and per-person blocked artists working everywhere.
 - Each person's data stays private: friends never see the owner's curation or each other's playlists.
 - Spotify rate limits are serious: a burst of searches once paused search for ~20 hours, and one big band

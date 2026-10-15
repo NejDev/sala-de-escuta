@@ -94,6 +94,11 @@ teto é 200). Nenhuma API gratuita diz quantas vezes uma música foi tocada; o n
 medida disponível. Com teto de 1 mil fãs ou menos, a roleta deixa de lado os álbuns pouco ouvidos:
 cada um custa uma busca no Spotify e quase nenhum cabe.
 
+Com uma chave do Last.fm, todas as descobertas também aceitam **ouvintes da música: no máximo**, contados no Last.fm
+(pessoas que registraram a música). Uma música sem registro no Last.fm passa e a carta avisa. Cada música é conferida
+uma vez por mês e fica guardada em `data/lastfm-cache.json`; as que passam do limite saem antes de qualquer busca no
+Spotify.
+
 ### Novidades
 
 Escolha um gênero (ex.: K-pop), o tamanho do artista e o período (hoje, ou os últimos 3, 7, 14, 30 ou 90 dias). A sala
@@ -237,6 +242,13 @@ python -m spotify_assistant refresh          # atualiza agora as favoritas no pr
 
 O `refresh` só é necessário se você não deixa o painel aberto (o painel faz isso sozinho).
 `SALA_LANG` no `.env` (`en` ou `pt`) define o idioma da linha de comando e das atualizações automáticas.
+
+### Last.fm (opcional)
+
+O filtro de ouvintes precisa de uma chave grátis da API do Last.fm: crie uma conta de API em
+https://www.last.fm/api/account/create (qualquer nome de aplicativo; não precisa de callback), copie a "API key" para
+`LASTFM_API_KEY` no `.env` e reinicie o painel. Sem ela, o filtro não aparece. Os termos do Last.fm pedem crédito,
+então o painel cita o Last.fm e liga cada música à página dela lá.
 
 ## Personalizar
 

@@ -99,6 +99,8 @@ const RELEASE_TYPES = ["album", "single", "feature", "compilation"];
 // Artist size is measured in fans: no free API says how many times a song was played.
 const SIZE_MIN = ["", "100", "1000", "10000", "100000", "1000000"];
 const SIZE_MAX = ["", "200", "500", "1000", "10000", "100000", "1000000", "10000000"];
+// Song listeners are counted on Last.fm, only in rooms that have a Last.fm key.
+const LISTENERS_MAX = ["", "50", "100", "500", "1000", "10000"];
 const PERIODS = ["0", "3", "7", "14", "30", "90"];
 const GENRE_SUGGESTIONS = [
   "K-pop", "J-pop", "Funk", "Trap", "Rap", "Drill", "Phonk", "Sertanejo", "Pagode", "Samba", "MPB", "Forró",
@@ -824,7 +826,8 @@ function senseIntro() {
       h("p", { class: "feeling-hint" }, t("sense.hint"))),
     h("div", { class: "filters" },
       ...sizeFilters(),
-      h("p", { class: "filter-hint" }, t("sense.size_hint"))));
+      h("p", { class: "filter-hint" }, t("sense.size_hint")),
+      listenersHint()));
   const moods = h("div", { class: "sense-moods" },
     h("p", { class: "moods-label" }, t("sense.moods")),
     h("ul", { class: "moods" }, sensations.map((sensation) => h("li", null,
@@ -864,6 +867,7 @@ function discoverIntro() {
         "roulette-genre-list"),
       ...sizeFilters(),
       h("p", { class: "filter-hint" }, t("discover.size_hint")),
+      listenersHint(),
       genreList("roulette-genre-list", [t("genre.rare")])),
     h("div", { class: "paths" },
       h("section", { class: "path path-roulette", style: "--tone: #F2C14E" },
@@ -898,7 +902,9 @@ function saveFilters() {
 }
 
 function sizeBody() {
-  return { min_fans: state.filters.min || null, max_fans: state.filters.max || null };
+  // A cap saved while the room had a Last.fm key is left out once it no longer has one.
+  const listeners = state.overview?.lastfm ? state.filters.listeners || null : null;
+  return { min_fans: state.filters.min || null, max_fans: state.filters.max || null, max_listeners: listeners };
 }
 
 function choice(id, label, options, key) {
@@ -930,7 +936,14 @@ function sizeFilters() {
   return [
     choice("min-fans", t("filter.min"), options(SIZE_MIN, "size.any"), "min"),
     choice("max-fans", t("filter.max"), options(SIZE_MAX, "size.no_cap"), "max"),
+    state.overview?.lastfm && choice("max-listeners", t("filter.listeners"), options(LISTENERS_MAX, "size.no_cap"), "listeners"),
   ];
+}
+
+/** Credit for the listener numbers: Last.fm's terms ask for it wherever they show. */
+function listenersHint() {
+  return state.overview?.lastfm && h("p", { class: "filter-hint" },
+    h("a", { class: "text-button", href: "https://www.last.fm/", target: "_blank", rel: "noopener" }, t("filter.listeners_hint")));
 }
 
 function genreList(id = "genre-list", first = []) {
@@ -1490,6 +1503,7 @@ function newsIntro() {
       ...sizeFilters(),
       choice("news-days", t("news.period"), PERIODS.map((days) => [days, t(`period.${days}`)]), "days"),
       h("button", { class: "play-button", type: "submit" }, t("news.search")),
+      listenersHint(),
       genreList()),
   ];
 }
@@ -1863,6 +1877,14 @@ function findDetails(find) {
   return parts.filter(Boolean).join(" ");
 }
 
+/** "123 listeners on Last.fm", linked to the track's page there (Last.fm's terms ask for the link). */
+function lastfmLine(info) {
+  if (info.listeners == null) return h("span", null, t("find.no_listeners"));
+  const text = t("find.listeners", { count: info.listeners, n: compactNumber.format(info.listeners) });
+  return info.url ? h("a", { class: "text-button", href: info.url, target: "_blank", rel: "noopener" }, text)
+    : h("span", null, text);
+}
+
 function findRow(find, finds, index, isNew) {
   const added = state.added.has(find.uri);
   const details = findDetails(find);
@@ -1903,6 +1925,7 @@ function findRow(find, finds, index, isNew) {
     }, t(added ? "find.added" : "find.add")),
     open && h("div", { class: "find-details" },
       details && h("span", null, details),
+      find.lastfm && lastfmLine(find.lastfm),
       artist && h("button", { class: "text-button", type: "button", onclick: () => setBlocked(artist, true) },
         t("find.block", { artist }))),
   );

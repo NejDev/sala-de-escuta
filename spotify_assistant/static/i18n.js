@@ -273,6 +273,13 @@ const STRINGS = {
     "filter.max": "No máximo",
     "size.any": "Qualquer",
     "size.no_cap": "Sem teto",
+    "filter.listeners": "Ouvintes da música: no máximo",
+    "filter.listeners_hint": "Ouvintes contados no Last.fm.",
+    "find.listeners": [
+      "{n} ouvinte no Last.fm.",
+      "{n} ouvintes no Last.fm."
+    ],
+    "find.no_listeners": "Sem registro no Last.fm.",
     "genre.electronic": "Eletrônica",
     "genre.classical": "Clássica",
     "genre.rare": "Gênero pouco conhecido",
@@ -643,6 +650,13 @@ const STRINGS = {
     "filter.max": "At most",
     "size.any": "Any",
     "size.no_cap": "No limit",
+    "filter.listeners": "Song listeners: at most",
+    "filter.listeners_hint": "Listeners counted on Last.fm.",
+    "find.listeners": [
+      "{n} listener on Last.fm.",
+      "{n} listeners on Last.fm."
+    ],
+    "find.no_listeners": "No record on Last.fm.",
     "genre.electronic": "Electronic",
     "genre.classical": "Classical",
     "genre.rare": "Little-known genre",

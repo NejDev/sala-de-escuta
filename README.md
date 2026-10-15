@@ -94,6 +94,10 @@ smallest cap is 200). No free API says how many times a song was played; the art
 available. With a cap of 1,000 fans or less, the roulette skips the barely-played albums: each one
 costs a Spotify search and almost none fits.
 
+With a Last.fm key, every discovery also takes **song listeners: at most**, counted on Last.fm (people who scrobbled
+the song). A song Last.fm has no record of passes and says so. Each song is checked once a month and remembered in
+`data/lastfm-cache.json`; songs over the cap are dropped before anything is searched on Spotify.
+
 ### New releases
 
 Pick a genre (e.g. K-pop), the artist size and the period (today, or the last 3, 7, 14, 30 or 90 days). The room gathers
@@ -233,6 +237,13 @@ python -m spotify_assistant refresh          # updates now every favorite that i
 
 `refresh` is only needed if you don't keep the panel open (the panel does it by itself).
 `SALA_LANG` in `.env` (`en` or `pt`) sets the language of the command line and of automatic updates.
+
+### Last.fm (optional)
+
+The listener filter needs a free Last.fm API key: create an API account at
+https://www.last.fm/api/account/create (any application name; no callback needed), copy the "API key" into
+`LASTFM_API_KEY` in `.env` and restart the panel. Without it, the filter doesn't show. Last.fm's terms ask for
+credit, so the panel names Last.fm and links each song to its Last.fm page.
 
 ## Customize
 
