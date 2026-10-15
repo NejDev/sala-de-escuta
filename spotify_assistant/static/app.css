@@ -6,6 +6,7 @@
   --velvet: #161F33;
   --velvet-raised: #1D2740;
   --line: #2A3552;
+  --hairline: rgb(238 231 215 / .07);  /* thin light rules between tracks */
   --linen: #EEE7D7;
   --smoke: #939CB0;
   --ink: #0E1525;
@@ -384,6 +385,9 @@ a.brand { color: inherit; text-decoration: none; }
 .track.is-current .track-index { color: var(--mood); }
 
 .tracks-empty { max-width: 52ch; padding: 24px 12px; color: var(--smoke); }
+
+/* Hairlines between tracks, so a long list doesn't float loose. */
+.tracks > li + li { border-top: 1px solid var(--hairline); }
 
 /* ---------- Sensations, Discover and New releases */
 
@@ -1208,6 +1212,12 @@ a.brand { color: inherit; text-decoration: none; }
   animation: rise .25s cubic-bezier(.2, .7, .2, 1);
 }
 .toast.is-error { background: var(--error); }
+.toast.has-action { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; pointer-events: auto; }
+.toast-action { color: var(--ink); font-weight: 800; text-underline-offset: 3px; }
+
+/* The heart beside the song playing: outlined, filled once it's liked. */
+.like-button { flex: none; }
+.like-button[aria-pressed="true"] svg { fill: currentColor; }
 
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 

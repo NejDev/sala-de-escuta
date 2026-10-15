@@ -24,10 +24,9 @@ from .i18n import t
 
 AUTHORIZE_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
-SCOPES = (
-    "playlist-read-private playlist-modify-private playlist-modify-public "
-    "user-read-playback-state user-modify-playback-state user-read-currently-playing"
-)
+PLAYER_SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
+LIBRARY_SCOPES = "user-library-read user-library-modify"  # the heart: Liked Songs and saved episodes
+SCOPES = f"playlist-read-private playlist-modify-private playlist-modify-public {PLAYER_SCOPES} {LIBRARY_SCOPES}"
 LOGIN_TIMEOUT_S = 300
 
 log = logging.getLogger(__name__)
@@ -81,13 +80,13 @@ def login(settings: Settings) -> dict:
     return exchange_code(settings, request, _wait_for_callback(settings.redirect_uri, request.url))
 
 
-def missing_scopes(token_file: Path | None = None) -> set[str]:
-    """Permissions the saved token doesn't have yet (e.g. player control)."""
+def missing_scopes(token_file: Path | None = None, needed: str = SCOPES) -> set[str]:
+    """Permissions (out of `needed`) the saved token doesn't have yet, e.g. player control."""
     try:
         granted = json.loads((token_file or TOKEN_FILE).read_text(encoding="utf-8")).get("scope", "")
     except FileNotFoundError:
         granted = ""
-    return set(SCOPES.split()) - set(granted.split())
+    return set(needed.split()) - set(granted.split())
 
 
 def _wait_for_callback(redirect_uri: str, authorize_url: str) -> dict[str, str]:

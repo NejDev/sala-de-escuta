@@ -222,10 +222,13 @@ function capitalize(text) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function toast(message, isError = false) {
-  const el = h("div", { class: isError ? "toast is-error" : "toast" }, message);
+/** A short notice; with an action (label + link) it stays a little longer and can be clicked. */
+function toast(message, isError = false, action = null) {
+  const classes = ["toast", isError && "is-error", action && "has-action"].filter(Boolean).join(" ");
+  const el = h("div", { class: classes }, message,
+    action && h("a", { class: "toast-action", href: action.href }, action.label));
   $("#toasts").append(el);
-  setTimeout(() => el.remove(), isError ? 6500 : 4000);
+  setTimeout(() => el.remove(), action ? 9000 : isError ? 6500 : 4000);
 }
 
 function showGate(data) {
@@ -1714,6 +1717,12 @@ function renderPlayer() {
     art.hidden = true;
   }
   $("#btn-shuffle").setAttribute("aria-pressed", String(Boolean(player.shuffle)));
+  const like = $("#btn-like");
+  const likeLabel = t(player.liked ? "player.unlike" : "player.like");
+  like.hidden = !item || !/^spotify:(track|episode):/.test(item.uri);
+  like.setAttribute("aria-pressed", String(Boolean(player.liked)));
+  like.setAttribute("aria-label", likeLabel);
+  like.title = likeLabel;
   const repeat = $("#btn-repeat");
   const mode = player.repeat || "off";
   repeat.dataset.mode = mode;
@@ -1790,6 +1799,27 @@ function playFinds(finds, offsetUri) {
   return command({ action: "play", uris: finds.map((find) => find.uri), offset_uri: offsetUri });
 }
 
+/** The heart: saves the song (or episode) playing in the person's Spotify library, or takes it out. */
+async function toggleLike() {
+  const player = state.player;
+  const item = player?.item;
+  if (!item) return;
+  if (!player.library_ready) {
+    toast(t("player.like_authorize"), false, { label: t("player.auth_button"), href: "/login" });
+    return;
+  }
+  const liked = !player.liked;
+  player.liked = liked;
+  renderPlayer();
+  try {
+    toast((await api("/api/player", { action: "like", uri: item.uri, value: liked })).message);
+  } catch (error) {
+    if (state.player?.item?.uri === item.uri) state.player.liked = !liked;
+    renderPlayer();
+    toast(error.message, true);
+  }
+}
+
 function togglePlay() {
   const player = state.player;
   if (player?.is_playing) {
@@ -1804,6 +1834,7 @@ function togglePlay() {
 
 function bindPlayer() {
   $("#btn-play").addEventListener("click", togglePlay);
+  $("#btn-like").addEventListener("click", toggleLike);
   $("#btn-prev").addEventListener("click", () => command({ action: "previous" }));
   $("#btn-next").addEventListener("click", () => command({ action: "next" }));
   $("#btn-shuffle").addEventListener("click", () => {

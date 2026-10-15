@@ -165,7 +165,7 @@ class Spotify:
         # Paused by Spotify: don't even try, so the penalty isn't extended.
         remaining = gate.remaining(family)
         if remaining:
-            raise SpotifyError(429, "pausado pela Spotify", retry_after=remaining, family=family)
+            raise SpotifyError(429, "paused by Spotify", retry_after=remaining, family=family)
         gate.wait_turn()
         headers = {"Authorization": f"Bearer {self._access_token()}"}
         try:
@@ -274,3 +274,14 @@ class Spotify:
     def set_repeat(self, mode: str) -> None:
         """mode: off, context (the whole playlist/album) or track."""
         self._call("PUT", "/me/player/repeat", params={"state": mode})
+
+    # Library (Liked Songs, saved episodes): Spotify URIs in the query string, up to 40 at a time.
+
+    def library_contains(self, uris: list[str]) -> list[bool]:
+        return self._call("GET", "/me/library/contains", params={"uris": ",".join(uris)})
+
+    def save_to_library(self, uris: list[str]) -> None:
+        self._call("PUT", "/me/library", params={"uris": ",".join(uris)})
+
+    def remove_from_library(self, uris: list[str]) -> None:
+        self._call("DELETE", "/me/library", params={"uris": ",".join(uris)})

@@ -25,7 +25,9 @@ from typing import Any, Callable
 
 from . import accounts, config, curation, discovery, favorites, i18n, tempo
 from .api import Spotify, SpotifyError, gate
-from .auth import AuthRequest, TokenManager, exchange_code, missing_scopes, start_authorization
+from .auth import (
+    LIBRARY_SCOPES, PLAYER_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes, start_authorization,
+)
 from .config import (
     Settings, load_blocked, load_playlists, load_sensations, load_state, save_blocked, save_playlists, save_state,
 )
@@ -56,6 +58,7 @@ MAX_BODY_BYTES = 64_000
 COOKIE_NAME = "sala"
 LIBRARY_KEY = re.compile(r"id:(?P<id>[A-Za-z0-9]{1,64})")
 TRACK_URI = re.compile(r"spotify:track:[A-Za-z0-9]{1,64}")
+LIKEABLE = re.compile(r"spotify:(?P<kind>track|episode):[A-Za-z0-9]{1,64}")
 PLAYLIST_NAME_MAX = 100
 SAVE_MAX_TRACKS = 500
 ITEMS_PER_ADD = 100  # Spotify's limit per request
@@ -118,6 +121,7 @@ class Profile:
     hunt: Hunt | None = None
     job: Job | None = None
     seeds: list[str] = field(default_factory=list)
+    liked: dict[str, bool] = field(default_factory=dict)  # heart state per song, so polling doesn't ask again
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -276,7 +280,7 @@ class App:
             "me": {"id": user.id, "name": accounts.display_name(user.id), "is_owner": user.is_owner},
             "playlists": self._shelf(user, library),
             "max_favorites": favorites.MAX_FAVORITES,
-            "player_ready": not missing_scopes(user.paths.token),
+            "player_ready": not missing_scopes(user.paths.token, PLAYER_SCOPES),
             "search_paused_s": gate.remaining("search"),
         }
 
@@ -373,13 +377,17 @@ class App:
     # Player
 
     def player(self, user: Profile) -> dict:
-        if missing_scopes(user.paths.token):
+        if missing_scopes(user.paths.token, PLAYER_SCOPES):
             return {"needs_scope": True}
-        data = self.spotify(user).playback()
+        sp = self.spotify(user)
+        data = sp.playback()
         if not data or not data.get("item"):
             return {"item": None}
         device = data.get("device") or {}
+        library_ready = not missing_scopes(user.paths.token, LIBRARY_SCOPES)
         return {
+            "liked": self._liked(user, sp, data["item"].get("uri", "")) if library_ready else None,
+            "library_ready": library_ready,
             "item": item_row(data["item"], image_size=120),
             "is_playing": data.get("is_playing", False),
             "progress_ms": data.get("progress_ms") or 0,
@@ -389,11 +397,37 @@ class App:
             "device": {"name": device.get("name"), "volume": device.get("volume_percent")},
         }
 
+    @staticmethod
+    def _liked(user: Profile, sp: Spotify, uri: str) -> bool | None:
+        """Whether the song (or episode) playing is in the person's library; asked once per song."""
+        if not LIKEABLE.fullmatch(uri):
+            return None
+        if uri not in user.liked:
+            try:
+                user.liked[uri] = bool(sp.library_contains([uri])[0])
+            except (SpotifyError, IndexError, TypeError):
+                return None  # the heart is an extra: the player keeps working
+        return user.liked[uri]
+
+    def like(self, user: Profile, body: dict) -> dict:
+        match = LIKEABLE.fullmatch(str(body.get("uri") or ""))
+        if not match:
+            raise UserError(t("err.like_what"))
+        if missing_scopes(user.paths.token, LIBRARY_SCOPES):
+            raise UserError(t("liked.need_auth"), 403, scope=True)
+        uri, liked = match[0], bool(body.get("value"))
+        sp = self.spotify(user)
+        (sp.save_to_library if liked else sp.remove_from_library)([uri])
+        user.liked[uri] = liked
+        return {"ok": True, "liked": liked, "message": t(f"liked.{match['kind']}_{'on' if liked else 'off'}")}
+
     def player_action(self, user: Profile, body: dict) -> dict:
-        if missing_scopes(user.paths.token):
+        action, value = body.get("action"), body.get("value")
+        if action == "like":
+            return self.like(user, body)
+        if missing_scopes(user.paths.token, PLAYER_SCOPES):
             raise UserError(t("err.player_scope"), 403)
         sp = self.spotify(user)
-        action, value = body.get("action"), body.get("value")
         if action == "play":
             uris = [uri for uri in body.get("uris") or [] if isinstance(uri, str) and uri.startswith("spotify:")]
             self._play(sp, body.get("context_uri"), uris, body.get("offset_uri"))

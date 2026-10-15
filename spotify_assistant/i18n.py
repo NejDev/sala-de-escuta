@@ -76,6 +76,13 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # The heart (Spotify library)
+        "err.like_what": "Nada para curtir aqui.",
+        "liked.need_auth": "Para curtir por aqui, autorize o Spotify de novo (só uma vez).",
+        "liked.track_on": "Salva nas suas Músicas Curtidas.",
+        "liked.track_off": "Removida das Músicas Curtidas.",
+        "liked.episode_on": "Salvo nos seus episódios.",
+        "liked.episode_off": "Removido dos seus episódios.",
         # Favorites (the bar)
         "every.daily": "todo dia",
         "every.weekly": "toda semana",
@@ -279,6 +286,13 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # The heart (Spotify library)
+        "err.like_what": "Nothing to like here.",
+        "liked.need_auth": "To like songs from here, authorize Spotify again (just once).",
+        "liked.track_on": "Saved to your Liked Songs.",
+        "liked.track_off": "Removed from your Liked Songs.",
+        "liked.episode_on": "Saved to your episodes.",
+        "liked.episode_off": "Removed from your episodes.",
         # Favorites (the bar)
         "every.daily": "every day",
         "every.weekly": "every week",

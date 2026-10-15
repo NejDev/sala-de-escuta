@@ -59,6 +59,12 @@ class FakeSpotify:
     def set_repeat(self, mode):
         self.repeat = mode
 
+    def save_to_library(self, uris):
+        self.library = getattr(self, "library", set()) | set(uris)
+
+    def remove_from_library(self, uris):
+        self.library = getattr(self, "library", set()) - set(uris)
+
     def create_playlist(self, name, description, public):
         self.created.append((name, description))
         number = len(self.created)
@@ -426,6 +432,25 @@ class ServerTest(unittest.TestCase):
     def post(self, path, body, as_user="paulo"):
         status, raw = self.request(path, body, as_user=as_user)
         return status, json.loads(raw)
+
+    def test_heart_saves_to_the_spotify_library(self):
+        status, data = self.post("/api/player", {"action": "like", "uri": "spotify:track:1", "value": True})
+        self.assertEqual((status, data["message"]), (200, "Salva nas suas Músicas Curtidas."))
+        self.assertEqual(self.fake.library, {"spotify:track:1"})
+        status, data = self.post("/api/player", {"action": "like", "uri": "spotify:episode:9", "value": True})
+        self.assertEqual(data["message"], "Salvo nos seus episódios.")
+        self.post("/api/player", {"action": "like", "uri": "spotify:track:1", "value": False})
+        self.assertEqual(self.fake.library, {"spotify:episode:9"})
+        self.assertEqual(self.post("/api/player", {"action": "like", "uri": "spotify:album:2", "value": True})[0], 400)
+
+    def test_player_keeps_working_without_the_library_permission(self):
+        token = {"scope": auth.PLAYER_SCOPES + " playlist-read-private", "access_token": "x", "refresh_token": "y",
+                 "expires_at": 4_000_000_000}
+        (self.data / "users" / "ana" / "token.json").write_text(json.dumps(token), encoding="utf-8")
+        self.assertTrue(json.loads(self.request("/api/overview", as_user="ana")[1])["player_ready"])
+        self.assertEqual(self.post("/api/player", {"action": "repeat", "value": "off"}, as_user="ana")[0], 200)
+        status, data = self.post("/api/player", {"action": "like", "uri": "spotify:track:1", "value": True}, as_user="ana")
+        self.assertEqual((status, data.get("scope")), (403, True))
 
     def test_repeat_takes_only_spotify_modes(self):
         self.assertEqual(self.request("/api/player", {"action": "repeat", "value": "track"})[0], 200)
