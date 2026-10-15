@@ -205,7 +205,9 @@ and blocked artists. Friends don't see each other's playlists or searches. The p
    counting the owner).
 4. Send them the address. The player only works for people with Premium; discovering and saving work for everyone.
 
-The site is only up while the PC is on and the panel is open. To have the panel start on its own,
+To keep the room up without your PC, host it on a free server: [Oracle Cloud guide](docs/oracle-cloud.md).
+
+On the PC, the site is only up while the PC is on and the panel is open. To have the panel start on its own,
 hidden, every time you sign in to Windows:
 
 ```powershell

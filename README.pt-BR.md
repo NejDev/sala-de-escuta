@@ -209,7 +209,9 @@ endereço fixo `https://<pc>.<rede>.ts.net`.
    contando o dono).
 4. Mande o endereço. O player só funciona para quem tem Premium; descobrir e guardar funcionam para todos.
 
-O site só fica no ar com o PC ligado e o painel aberto. Para o painel abrir sozinho, escondido,
+Para a sala ficar no ar sem o seu PC, hospede num servidor grátis: [guia da Oracle Cloud](docs/oracle-cloud.md) (em inglês).
+
+No PC, o site só fica no ar com o PC ligado e o painel aberto. Para o painel abrir sozinho, escondido,
 toda vez que você entra no Windows:
 
 ```powershell
