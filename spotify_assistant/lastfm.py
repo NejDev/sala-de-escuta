@@ -163,6 +163,12 @@ class ListenerCounts:
             self._dirty = True
         return found
 
+    def cached(self, artist: str, title: str) -> Listeners | None:
+        """What the cache holds, however old; None when the track was never asked about. Never asks Last.fm."""
+        with self._lock:
+            entry = self._entries().get(cache_key(artist, title))
+        return Listeners(entry["n"], entry["url"]) if entry else None
+
     def save(self) -> None:
         with self._lock:
             if not self._dirty or self._data is None:

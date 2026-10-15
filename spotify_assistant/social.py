@@ -144,13 +144,20 @@ def _play(item: dict) -> dict | None:
     if not track.get("uri"):
         return None
     when = datetime.fromisoformat(item["played_at"].replace("Z", "+00:00")).timestamp()
+    album = track.get("album") or {}
+    context = item.get("context") or {}
     return {
         "uri": track["uri"],
         "title": track.get("name", ""),
         "artists": [{"id": a.get("id"), "name": a.get("name", "")} for a in track.get("artists", [])],
-        "image": pick_image((track.get("album") or {}).get("images"), 64),
+        "image": pick_image(album.get("images"), 64),
         "duration_ms": track.get("duration_ms") or 0,
         "at": when,
+        # For achievements (already in the answer; older plays don't have them).
+        "album": {"id": album.get("id"), "name": album.get("name", ""), "type": album.get("album_type"),
+                  "release": album.get("release_date"), "tracks": album.get("total_tracks")},
+        "track_number": track.get("track_number"),
+        "context": {"type": context["type"], "uri": context.get("uri")} if context.get("type") else None,
     }
 
 

@@ -141,6 +141,14 @@ class CacheTest(unittest.TestCase):
         counts.get("Miles Davis", "So What")
         self.assertEqual(len(self.server.urls), 2)
 
+    def test_cached_reads_without_asking(self):
+        counts = self.counts()
+        self.assertIsNone(counts.cached("Miles Davis", "So What"))
+        counts.get("Miles Davis", "So What")
+        self.now[0] += lastfm.FRESH_S * 2  # however old
+        self.assertEqual(counts.cached("MILES DAVIS", "So What (Live)"), lastfm.Listeners(1234, PAGE))
+        self.assertEqual(len(self.server.urls), 1)
+
     def test_a_shorter_freshness_asks_again_sooner(self):
         counts = self.counts()
         counts.get("Banda", "Lançamento")

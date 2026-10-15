@@ -166,5 +166,19 @@ class StorageTest(unittest.TestCase):
         self.assertEqual(social.plays("ana"), [])
 
 
+class PlayTest(unittest.TestCase):
+    def test_keeps_what_achievements_need(self):
+        item = {"played_at": "2026-10-15T12:00:00Z", "context": {"type": "album", "uri": "spotify:album:al"},
+                "track": {"uri": "spotify:track:t", "name": "So What", "duration_ms": 562000, "track_number": 1,
+                          "artists": [{"id": "md", "name": "Miles Davis"}],
+                          "album": {"id": "al", "name": "Kind of Blue", "album_type": "album",
+                                    "release_date": "1959-08-17", "total_tracks": 5, "images": []}}}
+        played = social._play(item)
+        self.assertEqual(played["album"], {"id": "al", "name": "Kind of Blue", "type": "album",
+                                           "release": "1959-08-17", "tracks": 5})
+        self.assertEqual((played["track_number"], played["context"]), (1, {"type": "album", "uri": "spotify:album:al"}))
+        self.assertIsNone(social._play({**item, "context": None})["context"])
+
+
 if __name__ == "__main__":
     unittest.main()
