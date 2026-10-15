@@ -13,11 +13,13 @@ are earned once and kept. The owner asked for at least 100 medals and for them t
 - **The catalog is a spoiler.** Medal names and rules live in `2026-10-15-achievements-catalog.md` (next to this file)
   and, in code, in `spotify_assistant/medals.py`. The owner doesn't read either one. This spec, the plan, commit
   messages and conversations with the owner name no medal and describe rules only by family.
-- **Nothing tells how to earn a medal**, before or after: a medal shows its name, the day it was earned and the song
-  that unlocked it (when a song did). There is no description text, anywhere.
-- **The browser never receives a medal nobody in the room has earned.** The API sends the person's own medals, the
-  other participants' medals and two numbers: how many the person has and how many exist. A locked medal can't be
-  found in the page, the network log or the browser's memory.
+- **Only whoever earned a medal learns how.** Their own medal shows its name, the day, the song that unlocked it (when
+  a song did) and a line saying what they did. On someone else's profile the same medal shows only the name, the day
+  and the song.
+- **The browser never receives a medal nobody in the room has earned, nor the "how" of a medal the viewer hasn't
+  earned.** The API sends the person's own medals (with "how"), the other participants' medals (without it) and two
+  numbers: how many the person has and how many exist. A locked medal can't be found in the page, the network log or
+  the browser's memory.
 - The eight monthly titles are not secret (the owner chose them); the race for them is shown openly.
 
 ## Decisions
@@ -28,7 +30,7 @@ are earned once and kept. The owner asked for at least 100 medals and for them t
   because medals come from the plays Friends collects. People already in Friends stay out until they turn it on.
 - **Reciprocity:** someone who doesn't take part sees no one's achievements (like Friends).
 - **Place:** a new tab, "Conquistas" / "Achievements", shown to whoever may use Friends.
-- **Profile highlights:** each participant may highlight up to 3 of their medals; they show on that person's profile
+- **Profile highlights:** each participant may highlight up to 10 of their medals; they show on that person's profile
   card in the tab and next to their name in Friends (there, only to viewers who also take part).
 - **Where the work happens:** in the background, in the loop that already collects plays every 15 minutes (approach
   A). Opening the tab never makes an outside request.
@@ -98,7 +100,7 @@ new month, the previous month is closed and saved in `data/achievements.json`.
 ## Engine: `spotify_assistant/achievements.py`
 
 - **Per person:** `data/users/<id>/achievements.json`: `on`, `joined`, `earned` (medal id → `at`, optional song and
-  Last.fm numbers), `seen` (ids already revealed), `highlights` (up to 3 ids), `stats` (running counters and sets the
+  Last.fm numbers), `seen` (ids already revealed), `highlights` (up to 10 ids), `stats` (running counters and sets the
   rules need) and two cursors: `through` (last play processed) and `rich_through` (last play processed by rules that
   need Last.fm or fans).
 - **Rule kinds:** a single play; an all-time total; a single day; a streak; a run of consecutive plays; a collection
@@ -124,32 +126,37 @@ New tab `#conquistas` (`#achievements`), visible to whoever may use Friends:
 - **Not taking part:** the invitation with the notice (others will see your medals and the songs behind them) and the
   switch. The same switch sits inside Friends.
 - **Taking part:**
-  1. **Reveal:** new medals open one at a time (a card that turns over), then count as seen.
-  2. **Your profile:** name, "N of M medals", the highlights and a way to pick them from the earned medals.
+  1. **Reveal:** new medals open one at a time (a card that turns over, showing the name and how it was earned), then
+     count as seen.
+  2. **Your profile:** name, "N of M medals", the highlights (up to 10) and a way to pick them from the earned medals.
   3. **The month's race:** the eight titles with who leads and their number.
-  4. **Your medals:** newest first; name, date, the song (cover, title, artist) when there is one, "N listeners on
-     Last.fm" with a link when the medal came from Last.fm, and how many participants have it ("only you", "2 of 4").
-  5. **The room:** each participant's profile card (name, highlights, count); opening it shows their medals.
+  4. **Your medals:** newest first; name, how you earned it, date, the song (cover, title, artist) when there is one,
+     "N listeners on Last.fm" with a link when the medal came from Last.fm, and how many participants have it ("only
+     you", "2 of 4").
+  5. **The room:** each participant's profile card (name, highlights, count); opening it shows their medals, without
+     the "how".
   6. **Past months:** the titles of closed months.
   7. **Leave** and **Leave and erase**.
 - **New medal signal:** `/api/overview` carries `achievements: {"on": bool, "new": int}`; the tab shows a dot with the
   number and a toast says there's a new achievement, without naming it.
 - Medals look like badges (a shape and colors from the medal's id); there's no icon that hints at the rule.
-- Every text through `t()` in both languages. Medal names are keys `medal.<id>` kept in their own module
-  (`spotify_assistant/medal_names.py`) and merged into `i18n.MESSAGES`, so the parity test covers them. Game medals use
-  the game's name, which is the same in both languages.
+- Every text through `t()` in both languages. Medal names and "how" lines are keys `medal.<id>` and `medal.<id>.how`
+  kept in their own module (`spotify_assistant/medal_names.py`) and merged into `i18n.MESSAGES`, so the parity test
+  covers them. Game medals use the game's name, which is the same in both languages, and one shared "how" line with
+  the game's name in it.
 
 ## API
 
 - `GET /api/achievements`: the state for the person (as above); never anything for non-participants.
 - `POST /api/achievements`: `{"on": bool, "forget": bool}`.
 - `POST /api/achievements/seen`: `{"ids": [...]}` (only the person's own earned ids are accepted).
-- `POST /api/achievements/highlights`: `{"ids": [...]}` (up to 3, only earned ones).
+- `POST /api/achievements/highlights`: `{"ids": [...]}` (up to 10, only earned ones).
 
 ## Privacy rule (CLAUDE.md)
 
 Add: "Achievements (opt-in inside Friends): participants see each other's medals and the song behind each one;
-nothing for non-participants; a medal nobody has earned never reaches the browser, and no text says how to earn one."
+nothing for non-participants; a medal nobody has earned never reaches the browser, and only whoever earned a medal
+sees how."
 
 ## Testing
 
@@ -158,8 +165,8 @@ Fakes only (no Spotify, Last.fm or Deezer for real), with a fixed clock:
 - Each rule kind on hand-made plays, including the edges (midnight, month change, streak breaks, ties).
 - The catalog: at least 100 medals besides games, unique ids, every id has a name in both languages, every rule names a
   known kind with valid parameters, and Last.fm medals drop out without a key.
-- Privacy: a non-participant gets nothing; the API never sends a medal nobody earned, nor any rule; erase removes the
-  person from files and past titles; leaving Friends erases.
+- Privacy: a non-participant gets nothing; the API never sends a medal nobody earned, nor the "how" of a medal the
+  viewer hasn't earned; erase removes the person from files and past titles; leaving Friends erases.
 - The loop: lookups capped per loop, failures don't block other medals, an unreadable file is left alone.
 - Monthly titles: the race, the minimum plays, ties and closing a month once.
 - Screens: the fake panel in headless Chrome at phone and desktop sizes (invitation, reveal, profile, race, room),
