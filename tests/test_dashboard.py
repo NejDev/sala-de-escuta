@@ -11,6 +11,7 @@ from unittest import mock
 
 from spotify_assistant import auth, config, dashboard, favorites, i18n, social
 from spotify_assistant.config import Settings
+from spotify_assistant.lastfm import LastFmError, Listeners
 
 CONFIG = {
     "market": "BR",
@@ -132,6 +133,19 @@ class PauseMessageTest(unittest.TestCase):
         self.assertIn("pausou as buscas", message)
         self.assertRegex(message, r"Voltam por volta de \d\d:\d\d (hoje|amanhã)\.")
         self.assertIn("esse tipo de pedido", dashboard.spotify_message(SpotifyError(429, "x", family="albums")))
+
+
+class FakeCounts:
+    """Stands in for the cached Last.fm lookups: no request ever goes out."""
+
+    def __init__(self):
+        self.saved = 0
+
+    def get(self, artist, title):
+        return Listeners(None, None)
+
+    def save(self):
+        self.saved += 1
 
 
 class AddToConfigTest(unittest.TestCase):
@@ -519,6 +533,61 @@ class ServerTest(unittest.TestCase):
             # A genre typed by the person wins.
             self.assertEqual(self.request("/api/hunts", {"kind": "roulette", "rare": True, "genre": "fado"})[0], 200)
             self.assertFalse(self.server.app.profile("paulo").hunt.recipe["rare"])
+
+    def test_overview_says_whether_the_room_has_lastfm(self):
+        self.assertFalse(json.loads(self.request("/api/overview")[1])["lastfm"])
+        self.server.app.listener_counts = FakeCounts()
+        self.assertTrue(json.loads(self.request("/api/overview")[1])["lastfm"])
+
+    def test_listener_cap_is_validated(self):
+        def start(body):
+            return self.request("/api/hunts", {"kind": "roulette", **body})
+
+        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
+            status, body = start({"max_listeners": 100})
+            self.assertEqual(status, 400)
+            self.assertIn("chave do Last.fm", json.loads(body)["error"])  # this room has no key
+            self.server.app.listener_counts = FakeCounts()
+            self.assertEqual(start({"max_listeners": "muitos"})[0], 400)
+            self.assertEqual(start({"max_listeners": -1})[0], 400)
+            self.assertEqual(start({"max_listeners": "0"})[0], 200)
+            self.assertEqual(start({"max_listeners": 100})[0], 200)
+            self.assertEqual(self.server.app.profile("paulo").hunt.recipe["max_listeners"], 100)
+            self.assertEqual(start({})[0], 200)
+            self.assertIsNone(self.server.app.profile("paulo").hunt.recipe["max_listeners"])
+
+    def test_discovery_with_a_cap_saves_the_lastfm_cache(self):
+        counts = self.server.app.listener_counts = FakeCounts()
+        user = self.server.app.profile("paulo")
+        seen = []
+        with mock.patch.object(dashboard.discovery, "roulette", lambda *args, **kwargs: seen.append(kwargs["listeners"])):
+            hunt, task = self.server.app._hunt_task(user, self.fake, {"kind": "roulette", "max_listeners": 50}, None)
+            task()
+        self.assertEqual((seen[0].max, counts.saved), (50, 1))
+
+    def test_lastfm_failures_end_the_discovery_with_a_message(self):
+        from spotify_assistant.discovery import Hunt
+
+        def fails():
+            raise LastFmError("key")
+
+        self.addCleanup(i18n.use, i18n.DEFAULT)  # _run_hunt sets this thread's language
+        hunt = Hunt("roulette", "Roleta")
+        dashboard.App._run_hunt(hunt, fails, "pt")
+        self.assertEqual((hunt.status, hunt.message), ("error", i18n.MESSAGES["pt"]["lastfm.key"]))
+
+    def test_favorite_with_a_listener_cap_and_no_key_keeps_its_songs(self):
+        self.addCleanup(i18n.use, i18n.DEFAULT)  # run_due switches to the favorite's language
+        self.make_favorite()
+        favorites.change("ana", lambda items: items[0].update(last_run=1, recipe={**items[0]["recipe"], "max_listeners": 100}))
+        self.fake.replaced.clear()
+        # Refused before any search: if the roulette ever ran here, it would reach the real Deezer.
+        with mock.patch.object(dashboard.discovery, "roulette", side_effect=AssertionError("the roulette ran")):
+            self.server.app.run_due()
+        fav = favorites.load("ana")[0]
+        # The favorite was made from a Portuguese panel, so its updates speak Portuguese.
+        self.assertEqual((fav["status"], fav["message"]), ("error", i18n.MESSAGES["pt"]["lastfm.no_key"]))
+        self.assertEqual(self.fake.replaced, [])
 
     def test_discoveries_refuse_right_away_while_search_is_paused(self):
         with mock.patch.object(dashboard.gate, "remaining", return_value=3600):

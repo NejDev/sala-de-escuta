@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import accounts, artists, config, curation, discovery, favorites, i18n, reviews, social, tempo
+from . import accounts, artists, config, curation, discovery, favorites, i18n, lastfm, reviews, social, tempo
 from .api import Spotify, SpotifyError, gate
 from .auth import (
     LIBRARY_SCOPES, PLAYER_SCOPES, SOCIAL_SCOPES, TASTE_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes,
@@ -36,6 +36,7 @@ from .config import (
 from .deezer import Deezer, DeezerError
 from .discovery import Hunt
 from .i18n import t
+from .lastfm import LastFmError
 from .musicbrainz import MusicBrainz
 from .playlists import owned_playlists, run
 from .views import album_view, item_row, pick_image
@@ -193,6 +194,22 @@ def fan_range(body: dict) -> discovery.FanRange:
     return discovery.FanRange(low, high)
 
 
+def listener_cap(body: dict, counts: lastfm.ListenerCounts | None) -> discovery.ListenerCap:
+    """Song listeners asked for in the panel ("max_listeners"; empty = no cap), counted on Last.fm."""
+    raw = body.get("max_listeners")
+    if raw in (None, ""):
+        return discovery.NO_CAP
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise UserError(t("err.listeners_invalid")) from None
+    if value < 0:
+        raise UserError(t("err.listeners_invalid"))
+    if counts is None:
+        raise UserError(t("lastfm.no_key"))
+    return discovery.ListenerCap(value, counts.get)
+
+
 def genre_from(body: dict, required: bool = False) -> str | None:
     genre = " ".join(str(body.get("genre") or "").split())[:GENRE_MAX_CHARS]
     if not genre:
@@ -232,6 +249,9 @@ class App:
         self.sessions = accounts.Sessions()
         self.deezer = Deezer()
         self.musicbrainz = MusicBrainz()
+        # Song listeners for the discoveries' filter: only when the room has a Last.fm key.
+        self.listener_counts = (lastfm.ListenerCounts(lastfm.LastFm(settings.lastfm_key))
+                                if settings.lastfm_key else None)
         self._profiles: dict[str, Profile] = {}
         self._profiles_lock = threading.Lock()
         self._pending: dict[str, AuthRequest] = {}
@@ -291,6 +311,7 @@ class App:
             "friends": social.allowed(user.id),
             "player_ready": not missing_scopes(user.paths.token, PLAYER_SCOPES),
             "search_paused_s": gate.remaining("search"),
+            "lastfm": self.listener_counts is not None,
         }
 
     def _shelf(self, user: Profile, library: list[dict]) -> list[dict]:
@@ -513,7 +534,8 @@ class App:
         """Checks what the panel (or a favorite's recipe) asked for and prepares the discovery."""
         kind = body.get("kind")
         size = fan_range(body)
-        recipe = {"kind": kind, "min_fans": size.min or None, "max_fans": size.max}
+        listeners = listener_cap(body, self.listener_counts)
+        recipe = {"kind": kind, "min_fans": size.min or None, "max_fans": size.max, "max_listeners": listeners.max}
         if kind == "sense":
             text = " ".join((body.get("text") or "").split())
             if len(text) > FEELING_MAX_CHARS:
@@ -527,7 +549,8 @@ class App:
 
             def task() -> None:
                 try:
-                    discovery.sense(hunt, spec, sp, self.deezer, rng, cache, blocked=user.blocked, size=size)
+                    discovery.sense(hunt, spec, sp, self.deezer, rng, cache, blocked=user.blocked, size=size,
+                                    listeners=listeners)
                 finally:
                     cache.save()
         elif kind == "roulette":
@@ -538,7 +561,8 @@ class App:
             hunt = Hunt("roulette", t("label.roulette_rare") if rare else label)
 
             def task() -> None:
-                discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked, genre=genre, size=size, rare=rare)
+                discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked, genre=genre, size=size, rare=rare,
+                                   listeners=listeners)
         elif kind == "rabbit":
             seed = (body.get("seed") or "").strip()
             recipe["seed"] = seed
@@ -546,7 +570,8 @@ class App:
 
             def task() -> None:
                 seeds = [seed] if seed else self._seed_artists(user, sp)
-                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=user.blocked, size=size)
+                discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=user.blocked, size=size,
+                                      listeners=listeners)
         elif kind == "news":
             genre = genre_from(body, required=True)
             try:
@@ -559,7 +584,7 @@ class App:
             hunt = Hunt("news", t("label.news", genre=genre))
 
             def task() -> None:
-                discovery.news(hunt, sp, self.deezer, genre, size, days, blocked=user.blocked)
+                discovery.news(hunt, sp, self.deezer, genre, size, days, blocked=user.blocked, listeners=listeners)
         elif kind == "artist":
             name = " ".join(str(body.get("name") or "").split())
             if not name:
@@ -576,6 +601,14 @@ class App:
                 artists.discography(hunt, sp, self.musicbrainz, name, spotify_id)
         else:
             raise UserError(t("err.hunt_kind"))
+        if listeners.active:
+            run = task
+
+            def task() -> None:  # the counts learned along the way survive a restart
+                try:
+                    run()
+                finally:
+                    self.listener_counts.save()
         hunt.recipe = recipe
         return hunt, task
 
@@ -606,6 +639,11 @@ class App:
             hunt.message = (
                 spotify_message(err) if isinstance(err, SpotifyError) else t("err.discovery_failed", error=err)
             )
+        except LastFmError as err:
+            kind = err.kind
+            log.warning("Discovery stopped by Last.fm: %s", kind)
+            hunt.status = "error"
+            hunt.message = t(f"lastfm.{kind}")
         except UserError as err:
             hunt.status = "error"
             hunt.message = str(err)
@@ -1052,8 +1090,13 @@ class App:
             except SpotifyError as err:
                 status = {429: "paused", 404: "missing"}.get(err.status, "error")
                 message = t("fav.missing") if status == "missing" else spotify_message(err)
-            except (DeezerError, UserError) as err:
+            except DeezerError as err:
                 status, message = "error", t("err.discovery_failed", error=err)
+            except UserError as err:  # e.g. a listener cap in a room that no longer has a Last.fm key
+                status, message = "error", str(err)
+            except LastFmError as err:
+                kind = err.kind
+                status, message = "error", t(f"lastfm.{kind}")
             except SystemExit as exc:
                 status, message = "error", str(exc.code)
             self._mark_run(user.id, lambda item: item["id"] == fav_id, status, message)

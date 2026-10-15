@@ -33,6 +33,7 @@ class Settings:
     client_id: str
     redirect_uri: str  # login callback when the panel is opened on the host PC itself
     public_url: str = ""  # public address (tunnel) that friends use to get in, no trailing slash
+    lastfm_key: str = ""  # optional: song listeners for the discoveries' filter
 
 
 @dataclass(frozen=True)
@@ -137,6 +138,7 @@ def load_settings() -> Settings:
         client_id,
         os.environ.get("SPOTIFY_REDIRECT_URI") or DEFAULT_REDIRECT_URI,
         os.environ.get("SALA_PUBLIC_URL", "").strip().rstrip("/"),
+        os.environ.get("LASTFM_API_KEY", "").strip(),
     )
 
 

@@ -1,12 +1,13 @@
 import io
 import json
+import os
 import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import lastfm
+from spotify_assistant import config, lastfm
 
 
 class LastFmServer:
@@ -163,6 +164,15 @@ class CacheTest(unittest.TestCase):
     def test_save_only_writes_when_something_changed(self):
         self.counts().save()
         self.assertFalse(self.file.exists())
+
+
+class SettingsTest(unittest.TestCase):
+    def test_the_key_comes_from_env(self):
+        with mock.patch.object(config, "load_env"), \
+                mock.patch.dict(os.environ, {"SPOTIFY_CLIENT_ID": "x", "LASTFM_API_KEY": " chave "}):
+            self.assertEqual(config.load_settings().lastfm_key, "chave")
+        with mock.patch.object(config, "load_env"), mock.patch.dict(os.environ, {"SPOTIFY_CLIENT_ID": "x"}, clear=True):
+            self.assertEqual(config.load_settings().lastfm_key, "")
 
 
 if __name__ == "__main__":
