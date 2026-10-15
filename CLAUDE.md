@@ -20,9 +20,10 @@ python -m spotify_assistant refresh        # rebuild favorites that are due (the
 
 The owner's room runs on a Linux server (Oracle Cloud, `docs/oracle-cloud.md`) as the systemd service
 `sala-de-escuta`, published with Tailscale Funnel; the PC's scheduled task `Sala de escuta - painel` is
-disabled and the PC's `data/` is only an old copy. After pushing, update the server over SSH with
+disabled and the PC has no `data/` (the task `Sala de escuta - backup` copies the server's into
+`%USERPROFILE%\sala-backup` daily). After pushing, update the server over SSH with
 `bash ~/sala-de-escuta/scripts/install-linux.sh` (pulls and restarts). Never run the panel on the PC
-with that copy while the server is up: both would refresh the same Spotify tokens.
+with a copy of the server's `data/` while the server is up: both would refresh the same Spotify tokens.
 Static files are read from disk on each request (images are cached by browsers for 7 days; bump the
 `?v=` on image URLs when an image changes).
 
