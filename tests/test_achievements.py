@@ -157,6 +157,12 @@ class ViewTest(Room):
         self.assertEqual(achievements.highlights_of("paulo", False), [{"id": "saudade", "name": i18n.t("medal.saudade")}])
         self.assertEqual(achievements.summary("paulo", False), {"on": True, "new": 0})
 
+    def test_revoked_friends_access_drops_the_person(self):
+        (self.data / "room.json").write_text(json.dumps({"friends_new": True, "friends_people": {"ana": False}}),
+                                             encoding="utf-8")
+        self.assertEqual(self.view("ana"), {"sharing": True, "on": False})
+        self.assertNotIn("ana", [person["id"] for person in self.view("paulo")["people"]])
+
     def test_people_who_leave_disappear(self):
         achievements.set_on("paulo", False)
         self.assertEqual(self.view("ana")["people"], [])

@@ -314,12 +314,12 @@ def _medal_view(medal_id: str, got: dict, holders: int, own: bool) -> dict:
 
 
 def view(viewer: str, lastfm: bool, fans, now: float | None = None) -> dict:
-    """What the tab shows `viewer` (someone allowed in Friends). Only participants get more than the switch.
+    """What the tab shows `viewer`. Only participants (on, sharing and allowed in Friends) get more than the switch.
     `fans(name)` gives cached artist fans (the month's race needs them)."""
     now = time.time() if now is None else now
     mine = load(viewer)
     sharing = social.sharing(viewer)
-    if not (mine["on"] and sharing):
+    if not (mine["on"] and sharing and social.allowed(viewer)):
         return {"sharing": sharing, "on": False}
     datas = {}
     for user_id in participants():
