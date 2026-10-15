@@ -214,6 +214,17 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.request("/../dashboard.py")[0], 404)
         self.assertEqual(self.request("/%2e%2e/dashboard.py")[0], 404)
 
+    def test_restart_takes_the_port_back_right_away(self):
+        # Connections the panel closed linger in TIME_WAIT for about a minute; on Linux they used to keep
+        # a restarted panel off its port ("already in use") until they expired.
+        for _ in range(5):
+            self.request("/", as_user=None)
+        port = self.server.server_address[1]
+        self.server.shutdown()
+        self.server.server_close()
+        again = dashboard.DashboardServer(("127.0.0.1", port), self.server.app)
+        again.server_close()
+
     def test_phones_get_a_manifest_with_sharp_icons(self):
         # Browsers fetch the manifest without cookies.
         status, body = self.request("/manifest.webmanifest", as_user=None)

@@ -12,6 +12,7 @@ import http.cookies
 import http.server
 import json
 import logging
+import os
 import random
 import re
 import threading
@@ -1592,8 +1593,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 class DashboardServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
-    # On Windows, SO_REUSEADDR would let two panels listen on the same port.
-    allow_reuse_address = False
+    # On Windows, SO_REUSEADDR would let two panels listen on the same port. Elsewhere it only lets a
+    # restarted panel take its port back while the old connections still linger in TIME_WAIT.
+    allow_reuse_address = os.name != "nt"
 
     def __init__(self, address: tuple[str, int], app: App):
         super().__init__(address, Handler)
