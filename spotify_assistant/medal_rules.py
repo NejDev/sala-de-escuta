@@ -233,22 +233,26 @@ def _runs(stats: dict, play: dict) -> None:
 
 
 def _album(stats: dict, play: dict) -> None:
-    """Tracks 1..N of one album, one after another, N being the album's total."""
+    """Tracks of one album in order, disc after disc (track numbers restart on each disc), N being the album's
+    total: a whole album is N plays in a row, disc 1 track 1 first."""
     album = play.get("album") or {}
     number, total = play.get("track_number"), album.get("tracks")
+    disc = play.get("disc_number") or 1
     state = stats["album"]
     if not album.get("id") or not number or not total:
         state.clear()
         return
-    if number == 1:
+    same_album = state.get("id") == album["id"]
+    if number == 1 and disc == 1:
         state.clear()
-        state.update(id=album["id"], next=2)
-    elif state.get("id") == album["id"] and state.get("next") == number:
-        state["next"] = number + 1
+        state.update(id=album["id"], disc=1, number=1, count=1)
+    elif same_album and ((disc == state["disc"] and number == state["number"] + 1)
+                         or (disc == state["disc"] + 1 and number == 1)):
+        state.update(disc=disc, number=number, count=state["count"] + 1)
     else:
         state.clear()
         return
-    if state["next"] == total + 1:
+    if state["count"] == total:
         if total >= 6:
             stats["albums"][album["id"]] = 1
             if total >= 15:

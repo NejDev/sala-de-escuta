@@ -157,6 +157,7 @@ def _play(item: dict) -> dict | None:
         "album": {"id": album.get("id"), "name": album.get("name", ""), "type": album.get("album_type"),
                   "release": album.get("release_date"), "tracks": album.get("total_tracks")},
         "track_number": track.get("track_number"),
+        "disc_number": track.get("disc_number"),
         "context": {"type": context["type"], "uri": context.get("uri")} if context.get("type") else None,
     }
 

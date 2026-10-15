@@ -154,11 +154,11 @@ Names and "how" lines show as written; the "how" line only ever reaches the pers
 ### Runs, albums and lengths (17)
 
 A run is consecutive plays in time order. "Nonstop" means each play starts within 5 minutes after the previous one
-ends (gap between `at`s ≤ the later play's duration + 5 min).
+ends: the gap between their `at`s is ≤ the longer of the two songs + 5 min.
 
 | id | rule | pt | en | how pt | how en |
 |---|---|---|---|---|---|
-| album-full | a whole album in order: plays of tracks 1..N of one album, consecutive, N = the album's total and N ≥ 6 | Lado A, lado B | Side A, Side B | Ouviu um álbum inteiro, do começo ao fim, na ordem. | Played a whole album, start to finish, in order. |
+| album-full | a whole album in order: plays of tracks in order, disc after disc, of one album, consecutive, N = the album's total and N ≥ 6 | Lado A, lado B | Side A, Side B | Ouviu um álbum inteiro, do começo ao fim, na ordem. | Played a whole album, start to finish, in order. |
 | album-full-5 | 5 different whole albums | Ouvinte de álbum | Album Listener | Ouviu 5 álbuns inteiros, na ordem. | Played 5 whole albums in order. |
 | album-full-long | a whole album with 15 or more tracks | Álbum duplo | Double Album | Ouviu inteiro, na ordem, um álbum com 15 faixas ou mais. | Played an album of 15 or more tracks whole, in order. |
 | same-artist-10 | 10 plays in a row with the same first artist | Fã de carteirinha | Card-Carrying Fan | Ouviu 10 músicas seguidas do mesmo artista. | Played 10 songs in a row by the same artist. |

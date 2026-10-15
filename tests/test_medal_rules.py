@@ -12,12 +12,12 @@ def at(year=2026, month=10, day=14, hour=12, minute=0, second=0):
 
 
 def play(uri="t", title="Song", artists=("Artist",), when=None, ms=200_000, release="2020-01-01",
-         album_name="Album", album_id="al", album_type="album", tracks=10, number=None, context=None):
+         album_name="Album", album_id="al", album_type="album", tracks=10, number=None, context=None, disc=None):
     return {"uri": f"spotify:track:{uri}", "title": title,
             "artists": [{"id": name.lower().replace(" ", "-"), "name": name} for name in artists],
             "image": None, "duration_ms": ms, "at": at() if when is None else when,
             "album": {"id": album_id, "name": album_name, "type": album_type, "release": release, "tracks": tracks},
-            "track_number": number, "context": context}
+            "track_number": number, "disc_number": disc, "context": context}
 
 
 def earn(plays, ctx=Context(), phase="play", stats=None):
@@ -162,6 +162,15 @@ class RunTest(unittest.TestCase):
         self.assertNotIn("album-full", earn(five))
         long = [play(uri=f"l{n}", number=n, tracks=15, album_id="dbl", when=at() + n * 300) for n in range(1, 16)]
         self.assertIn("album-full-long", earn(long))
+        discs = [play(uri=f"d{d}{n}", number=n, disc=d, tracks=16, album_id="2disc", when=at() + (d * 10 + n) * 300)
+                 for d in (1, 2) for n in range(1, 9)]
+        self.assertIn("album-full", earn(discs))
+        self.assertIn("album-full-long", earn(discs))
+        restart = [play(uri=f"r{d}{n}", number=n, disc=d, tracks=16, album_id="2disc", when=at() + (d * 10 + n) * 300)
+                   for d in (1, 2) for n in range(1, 9)]
+        restart = restart[:8] + restart[9:]  # disc 2 now starts at track 2
+        self.assertNotIn("album-full", earn(restart))
+        self.assertNotIn("album-full-long", earn(restart))
 
     def test_the_panels_own_finds_and_playlists(self):
         ctx = Context(finds=frozenset({"spotify:track:found"}), playlists=frozenset({"spotify:playlist:fav"}))
