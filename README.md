@@ -11,6 +11,7 @@ in Portuguese or English.
   hops from an artist you like toward lesser-known ones.
 - **New releases**: what just came out in a genre, only from artists of the size you choose.
 - **Artists**: everything a band or artist released, with each member's solo work and their features.
+- **Friends** (opt-in): musical affinity between friends, matches when you play the same song, and a feed.
 - **Favorites that update themselves**: turn a selection into a playlist that gets new songs every
   day, week or month. Only these special playlists go on the top bar.
 - **Home**: a suggestion for this time of day, what's playing, your favorites, shortcuts and recent finds.
@@ -104,10 +105,26 @@ they released: albums, singles and EPs, features on other artists' songs, compil
 plus the solo work and features of each member and subunit (former members included). Filter by
 person and by type, and sort newest or oldest first. A feature plays from the track where they appear.
 
+When several artists share the name ("Andy"), the room asks which one, showing each one's photo,
+genres and latest release.
+
 Who is in a band comes from [MusicBrainz](https://musicbrainz.org) (open data, no key; one request per
 second, kept for a month in `data/musicbrainz-cache.json`), which also links each person to their
 Spotify profile. Members without that link are looked up by name, and left out when the name is
 ambiguous. This search barely uses Spotify search, so it keeps working while search is paused.
+
+### Friends
+
+Only for people who join, and only among them: whoever doesn't join sees nothing and doesn't show up.
+The room reads each member's recently played songs on Spotify every 15 minutes (kept for 90 days) and shows:
+
+- **Affinity** with each friend over the last 30 days (mostly shared artists, partly shared songs), with
+  the artists you have in common and how much each one listened this week.
+- **Matches**: the same song played by both of you within 6 hours.
+- **Happening**: matches and what friends played in the last two days; anything there plays with a click.
+
+**Leave and delete my history** removes everything. Joining needs one more Spotify permission, so
+each person authorizes Spotify again once.
 
 ### Keeping what you like
 
@@ -218,6 +235,7 @@ Interface texts are in `spotify_assistant/static/i18n.js` (browser) and `spotify
 - `users/<id>/token.json`: each person's access token. Don't share it.
 - `users/<id>/state.json`, `blocked.json`, `profile.json`: playlist IDs, blocked artists and display name.
 - `users/<id>/favorites.json`, `recent.json`: favorites (recipe, frequency, last update) and recent finds.
+- `users/<id>/social.json`, `plays.json`: whether the person joined Friends, and their plays (90 days).
 - `owner.txt`, `sessions.json`: who owns the room and the browser sessions.
 - `tempo-cache.json`, `spotify-matches.json`, `spotify-pauses.json`: measured BPMs, tracks already
   located on Spotify and Spotify's request pauses.

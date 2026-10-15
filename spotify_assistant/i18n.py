@@ -76,6 +76,11 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # Friends
+        "friends.need_auth": "Para participar, autorize o Spotify de novo (só uma vez).",
+        "friends.joined": "Pronto! Agora a sala lê o que você ouve a cada 15 minutos.",
+        "friends.left": "Você saiu. Ninguém vê mais o que você ouve.",
+        "friends.forgot": "Você saiu e o seu histórico foi apagado.",
         "artists.choose": "Tem mais de um artista chamado “{name}”. Qual é o seu?",
         # Artists search
         "err.artist_name": "Digite o nome de um artista ou banda.",
@@ -307,6 +312,11 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # Friends
+        "friends.need_auth": "To join, authorize Spotify again (just once).",
+        "friends.joined": "Done! The room now reads what you listen to every 15 minutes.",
+        "friends.left": "You left. Nobody sees what you listen to anymore.",
+        "friends.forgot": "You left and your history was deleted.",
         "artists.choose": "There's more than one artist called “{name}”. Which one?",
         # Artists search
         "err.artist_name": "Type the name of an artist or band.",

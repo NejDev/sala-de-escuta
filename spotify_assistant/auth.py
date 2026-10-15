@@ -26,7 +26,11 @@ AUTHORIZE_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 PLAYER_SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
 LIBRARY_SCOPES = "user-library-read user-library-modify"  # the heart: Liked Songs and saved episodes
-SCOPES = f"playlist-read-private playlist-modify-private playlist-modify-public {PLAYER_SCOPES} {LIBRARY_SCOPES}"
+SOCIAL_SCOPES = "user-read-recently-played"  # Friends: what each person listened to (only if they join)
+SCOPES = (
+    f"playlist-read-private playlist-modify-private playlist-modify-public "
+    f"{PLAYER_SCOPES} {LIBRARY_SCOPES} {SOCIAL_SCOPES}"
+)
 LOGIN_TIMEOUT_S = 300
 
 log = logging.getLogger(__name__)

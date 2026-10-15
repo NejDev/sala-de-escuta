@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import auth, config, dashboard, favorites, i18n
+from spotify_assistant import auth, config, dashboard, favorites, i18n, social
 from spotify_assistant.config import Settings
 
 CONFIG = {
@@ -58,6 +58,9 @@ class FakeSpotify:
 
     def set_repeat(self, mode):
         self.repeat = mode
+
+    def recently_played(self, after=None):
+        return []
 
     def album_tracks(self, album_id):
         return [{"uri": "spotify:track:a", "artists": [{"id": "someone"}]},
@@ -517,6 +520,26 @@ class ServerTest(unittest.TestCase):
         self.assertEqual((status, data["uri"]), (200, "spotify:track:b"))
         self.assertEqual(self.post("/api/artists/track", {"album": "abc123", "artists": ["nobody"]})[0], 404)
         self.assertEqual(self.post("/api/artists/track", {"album": "../x", "artists": ["nayeon"]})[0], 400)
+
+    def test_friends_only_see_each_other_when_both_join(self):
+        friends = lambda who: json.loads(self.request("/api/friends", as_user=who)[1])
+        self.assertEqual(friends("ana"), {"sharing": False, "ready": True})  # nothing about anyone
+        self.assertEqual(self.post("/api/friends", {"share": True})[0], 200)  # the owner joins
+        self.assertEqual(friends("ana"), {"sharing": False, "ready": True})  # still nothing for her
+        self.assertEqual(friends("paulo")["friends"], [])  # she hasn't joined: invisible
+        status, data = self.post("/api/friends", {"share": True}, as_user="ana")
+        self.assertEqual((status, data["message"]), (200, "Pronto! Agora a sala lê o que você ouve a cada 15 minutos."))
+        self.assertEqual([f["name"] for f in friends("paulo")["friends"]], ["Ana"])
+        status, data = self.post("/api/friends", {"share": False, "forget": True}, as_user="ana")
+        self.assertEqual(data["message"], "Você saiu e o seu histórico foi apagado.")
+        self.assertEqual(friends("paulo")["friends"], [])
+
+    def test_joining_friends_needs_the_history_permission(self):
+        token = {"scope": auth.PLAYER_SCOPES, "access_token": "x", "refresh_token": "y", "expires_at": 4_000_000_000}
+        (self.data / "users" / "ana" / "token.json").write_text(json.dumps(token), encoding="utf-8")
+        status, data = self.post("/api/friends", {"share": True}, as_user="ana")
+        self.assertEqual((status, data.get("scope")), (403, True))
+        self.assertFalse(social.sharing("ana"))
 
     def test_repeat_takes_only_spotify_modes(self):
         self.assertEqual(self.request("/api/player", {"action": "repeat", "value": "track"})[0], 200)

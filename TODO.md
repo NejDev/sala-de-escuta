@@ -19,6 +19,9 @@ These were built with tests and mocked screens only, because Spotify search was 
       heart shows the link), then likes and unlikes a song and a podcast episode; check Liked Songs.
 - [ ] Artists: a K-pop group (members without a MusicBrainz link need Spotify search), a solo artist,
       a rock band with former members; play a feature from its track.
+- [ ] Artists: a generic name (e.g. "Andy") shows the "which one?" cards and picking one works.
+- [ ] Friends: two people join (each authorizes Spotify again), plays appear after 15 minutes,
+      affinity and a match show up; leaving deletes the history.
 - [ ] Home: **For right now** builds the sensation, or plays it when it's already a favorite;
       **Now playing** follows the player; recent finds play.
 

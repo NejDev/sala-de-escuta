@@ -60,6 +60,40 @@ const STRINGS = {
     "view.discover": "Descobrir",
     "view.news": "Novidades",
     "view.artists": "Artistas",
+    "view.friends": "Amigos",
+    "friends.description": "Afinidade musical, matches quando vocês ouvem a mesma música e o que cada um anda ouvindo. Só entre quem participa.",
+    "friends.join_text": "Ao participar, a sala passa a ler o que você ouve no Spotify, a cada 15 minutos, e mostra para os amigos que também participam: a afinidade entre vocês, os matches e o que você andou ouvindo. Quem não participa não vê nada e não aparece. Você pode sair e apagar seu histórico quando quiser.",
+    "friends.join": "Participar",
+    "friends.join_authorize": "Para participar, autorize o Spotify de novo (só uma vez).",
+    "friends.affinity": "Afinidade",
+    "friends.percent_label": "de afinidade",
+    "friends.little": "pouco histórico ainda",
+    "friends.shared": "Em comum: {names}",
+    "friends.week": [
+      "1 música nesta semana",
+      "{count} músicas nesta semana"
+    ],
+    "friends.alone": "Nenhum amigo participando ainda. Chame a galera para ativar aqui em Amigos.",
+    "friends.feed": "Acontecendo",
+    "friends.feed_empty": "Nada por aqui ainda. Os matches e o que seus amigos ouvem aparecem aqui.",
+    "friends.match_label": "Match",
+    "friends.match": "Você e {friend} ouviram “{title}”, de {artist}, com {gap} de diferença.",
+    "friends.played": "{friend} ouviu “{title}”, de {artist}.",
+    "friends.gap_min": [
+      "1 minuto",
+      "{count} minutos"
+    ],
+    "friends.gap_h": [
+      "1 hora",
+      "{count} horas"
+    ],
+    "friends.me": [
+      "Você ouviu 1 música nesta semana.",
+      "Você ouviu {count} músicas nesta semana."
+    ],
+    "friends.updates": "Atualiza a cada 15 minutos.",
+    "friends.leave": "Sair e apagar meu histórico",
+    "friends.leave_confirm": "Sair mesmo? Seu histórico é apagado",
     "artists.description": "Digite um artista ou uma banda de qualquer gênero e veja tudo o que lançou: álbuns, singles, o trabalho solo de cada integrante e as participações em músicas de outros artistas.",
     "artists.label": "Artista ou banda",
     "artists.placeholder": "Ex.: Racionais MC's, TWICE, Coldplay",
@@ -348,6 +382,40 @@ const STRINGS = {
     "view.discover": "Discover",
     "view.news": "New releases",
     "view.artists": "Artists",
+    "view.friends": "Friends",
+    "friends.description": "Musical affinity, matches when you play the same song, and what everyone is listening to. Only among people who join.",
+    "friends.join_text": "When you join, the room reads what you listen to on Spotify every 15 minutes and shows it to the friends who also joined: your affinity, your matches and what you've been listening to. People who don't join see nothing and don't show up. You can leave and delete your history any time.",
+    "friends.join": "Join",
+    "friends.join_authorize": "To join, authorize Spotify again (just once).",
+    "friends.affinity": "Affinity",
+    "friends.percent_label": "affinity",
+    "friends.little": "not enough history yet",
+    "friends.shared": "In common: {names}",
+    "friends.week": [
+      "1 song this week",
+      "{count} songs this week"
+    ],
+    "friends.alone": "No friends have joined yet. Ask them to turn it on here in Friends.",
+    "friends.feed": "Happening",
+    "friends.feed_empty": "Nothing here yet. Matches and what your friends play show up here.",
+    "friends.match_label": "Match",
+    "friends.match": "You and {friend} played “{title}” by {artist}, {gap} apart.",
+    "friends.played": "{friend} played “{title}” by {artist}.",
+    "friends.gap_min": [
+      "1 minute",
+      "{count} minutes"
+    ],
+    "friends.gap_h": [
+      "1 hour",
+      "{count} hours"
+    ],
+    "friends.me": [
+      "You played 1 song this week.",
+      "You played {count} songs this week."
+    ],
+    "friends.updates": "Updates every 15 minutes.",
+    "friends.leave": "Leave and delete my history",
+    "friends.leave_confirm": "Leave? Your history gets deleted",
     "artists.description": "Type an artist or band of any genre and see everything they released: albums, singles, each member's solo work and features on other artists' songs.",
     "artists.label": "Artist or band",
     "artists.placeholder": "E.g. Racionais MC's, TWICE, Coldplay",

@@ -23,10 +23,11 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import accounts, artists, config, curation, discovery, favorites, i18n, tempo
+from . import accounts, artists, config, curation, discovery, favorites, i18n, social, tempo
 from .api import Spotify, SpotifyError, gate
 from .auth import (
-    LIBRARY_SCOPES, PLAYER_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes, start_authorization,
+    LIBRARY_SCOPES, PLAYER_SCOPES, SOCIAL_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes,
+    start_authorization,
 )
 from .config import (
     Settings, load_blocked, load_playlists, load_sensations, load_state, save_blocked, save_playlists, save_state,
@@ -1098,6 +1099,62 @@ class App:
                 log.exception("Scheduled update failed")
             time.sleep(SCHEDULER_TICK_S)
 
+    # Friends: affinity, matches and a feed, only among people who turned it on
+
+    def friends(self, user: Profile) -> dict:
+        ready = not missing_scopes(user.paths.token, SOCIAL_SCOPES)
+        if not social.sharing(user.id):
+            return {"sharing": False, "ready": ready}  # nothing about anyone else
+        if ready:
+            self._collect(user, fresh_s=120)
+        everyone = {uid: social.plays(uid) for uid in config.list_users() if social.sharing(uid)}
+        names = {uid: accounts.display_name(uid) for uid in everyone}
+        mine = everyone.get(user.id, [])
+        friends = []
+        for uid, items in everyone.items():
+            if uid != user.id:
+                numbers = social.stats(items)
+                friends.append({"id": uid, "name": names[uid], "affinity": social.affinity(mine, items),
+                                "plays_7d": numbers["plays_7d"], "last": numbers["last"]})
+        friends.sort(key=lambda friend: -(friend["affinity"] or {}).get("percent", -1))
+        return {"sharing": True, "ready": ready, "me": social.stats(mine), "friends": friends,
+                "feed": social.feed(everyone, names, user.id)}
+
+    def set_sharing(self, user: Profile, body: dict) -> dict:
+        share, forget = bool(body.get("share")), bool(body.get("forget"))
+        if share and missing_scopes(user.paths.token, SOCIAL_SCOPES):
+            raise UserError(t("friends.need_auth"), 403, scope=True)
+        social.set_share(user.id, share, forget=forget)
+        if share:
+            self._collect(user)
+        message = t("friends.joined") if share else t("friends.forgot" if forget else "friends.left")
+        return {**self.friends(user), "message": message}
+
+    def _collect(self, user: Profile, fresh_s: float = 0) -> None:
+        if fresh_s and time.time() - social.settings(user.id).get("collected", 0) < fresh_s:
+            return
+        try:
+            social.collect(self.spotify(user), user.id)
+        except SpotifyError as err:
+            log.warning("Couldn't read %s's recent plays: %s", user.id, err)
+
+    def collector(self) -> None:
+        """While the panel is open, reads what the people who joined Friends listened to."""
+        time.sleep(SCHEDULER_FIRST_S)
+        while True:
+            for user_id in config.list_users():
+                if not social.sharing(user_id):
+                    continue
+                try:
+                    user = self.profile(user_id)
+                    if not missing_scopes(user.paths.token, SOCIAL_SCOPES):
+                        self._collect(user)
+                except UserError:
+                    continue  # signed out
+                except Exception:
+                    log.exception("Reading recent plays failed")
+            time.sleep(social.COLLECT_EVERY_S)
+
     @staticmethod
     def recent_finds(user: Profile) -> dict:
         return {"finds": favorites.recent(user.id)}
@@ -1299,6 +1356,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.set_blocked(user, body)
         if method == "POST" and path == "/api/artists/track":
             return app.feature_track(user, body)
+        if method == "GET" and path == "/api/friends":
+            return app.friends(user)
+        if method == "POST" and path == "/api/friends":
+            return app.set_sharing(user, body)
         if method == "GET" and path == "/api/recent":
             return app.recent_finds(user)
         if method == "GET" and path == "/api/favorites/extras":
@@ -1444,6 +1505,7 @@ def serve(settings: Settings, open_browser: bool = True) -> None:
             webbrowser.open(url)
         return
     threading.Thread(target=app.scheduler, daemon=True).start()
+    threading.Thread(target=app.collector, daemon=True).start()
     log.info("Panel open at %s  (Ctrl+C or close this window to stop)", url)
     if settings.public_url:
         log.info("Address for friends: %s", settings.public_url)

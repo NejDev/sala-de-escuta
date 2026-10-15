@@ -11,6 +11,7 @@ em português ou inglês.
   um artista que você curte para os menos conhecidos.
 - **Novidades**: o que acabou de sair num gênero, só de artistas do tamanho que você escolher.
 - **Artistas**: tudo o que uma banda ou artista lançou, com o trabalho solo de cada integrante e as participações.
+- **Amigos** (para quem ativar): afinidade musical entre amigos, matches quando vocês ouvem a mesma música e um feed.
 - **Favoritas que se atualizam sozinhas**: transforme uma seleção numa playlist que ganha músicas
   novas todo dia, toda semana ou todo mês. Só essas playlists especiais ficam na barra do topo.
 - **Início**: uma sugestão para a hora do dia, o que está tocando, suas favoritas, atalhos e achados recentes.
@@ -105,10 +106,26 @@ mais o trabalho solo e as participações de cada integrante e subunidade (inclu
 Filtre por pessoa e por tipo, e ordene dos mais recentes ou dos mais antigos. Uma participação toca a
 partir da faixa em que a pessoa aparece.
 
+Quando vários artistas têm o mesmo nome ("Andy"), a sala pergunta qual é, mostrando a foto, os
+gêneros e o lançamento mais recente de cada um.
+
 Quem faz parte de uma banda vem do [MusicBrainz](https://musicbrainz.org) (dados abertos, sem chave; um
 pedido por segundo, guardado por um mês em `data/musicbrainz-cache.json`), que também liga cada pessoa
 ao perfil dela no Spotify. Integrantes sem esse link são procurados pelo nome, e ficam de fora quando o
 nome é ambíguo. Essa busca quase não usa a busca da Spotify, então funciona mesmo com a busca pausada.
+
+### Amigos
+
+Só para quem ativar, e só entre essas pessoas: quem não participa não vê nada e não aparece. A sala lê
+as músicas recentes de cada participante no Spotify a cada 15 minutos (guardadas por 90 dias) e mostra:
+
+- **Afinidade** com cada amigo nos últimos 30 dias (principalmente artistas em comum, um pouco as
+  músicas), com os artistas que vocês têm em comum e quanto cada um ouviu na semana.
+- **Matches**: a mesma música ouvida pelos dois com até 6 horas de diferença.
+- **Acontecendo**: os matches e o que os amigos ouviram nos últimos dois dias; tudo toca com um clique.
+
+**Sair e apagar meu histórico** remove tudo. Participar pede mais uma permissão da Spotify, então cada
+pessoa autoriza o Spotify de novo uma vez.
 
 ### Guardar o que gostou
 
@@ -222,6 +239,7 @@ Os textos da interface ficam em `spotify_assistant/static/i18n.js` (navegador) e
 - `users/<id>/token.json`: o token de acesso de cada pessoa. Não compartilhe.
 - `users/<id>/state.json`, `blocked.json`, `profile.json`: IDs das playlists, artistas bloqueados e nome.
 - `users/<id>/favorites.json`, `recent.json`: favoritas (receita, frequência, última atualização) e achados recentes.
+- `users/<id>/social.json`, `plays.json`: se a pessoa participa do Amigos, e o que ela ouviu (90 dias).
 - `owner.txt`, `sessions.json`: quem é o dono da sala e as sessões dos navegadores.
 - `tempo-cache.json`, `spotify-matches.json`, `spotify-pauses.json`: BPMs medidos, faixas já
   localizadas no Spotify e as pausas de pedidos da Spotify.

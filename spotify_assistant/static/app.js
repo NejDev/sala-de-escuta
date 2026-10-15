@@ -83,8 +83,11 @@ function langOptions() {
 // Screens that aren't playlists: the key becomes the URL #.
 const VIEWS = {
   home: "view.home", sensations: "view.sensations", discover: "view.discover", news: "view.news", artists: "view.artists",
+  friends: "view.friends",
 };
-const VIEW_ALIASES = { inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news", artistas: "artists" };
+const VIEW_ALIASES = {
+  inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news", artistas: "artists", amigos: "friends",
+};
 const EVERY = ["daily", "weekly", "monthly"];
 // Home: the ready-made sensation suggested for each time of day (hour it starts -> preset id).
 const MOMENTS = [[5, "work-groove"], [9, "deep-focus"], [12, "work-groove"], [14, "deep-focus"], [18, "workout"], [21, "wind-down"]];
@@ -115,6 +118,8 @@ const state = {
   lastHunt: null,
   seed: "",
   artistName: "",
+  friends: null,
+  confirmLeave: false,
   artistFilters: { who: "", type: "", order: "new" },
   filters: { rouletteGenre: "", newsGenre: "", min: "", max: "", days: "30", ...savedFilters() },
   added: new Set(),
@@ -694,6 +699,7 @@ async function openView(key) {
   scrollToTop();
   renderShelf();
   if (key === "home") loadRecent();
+  if (key === "friends") loadFriends();
   if ((key === "sensations" || key === "home") && !state.sensations) {
     try {
       state.sensations = await api("/api/sensations");
@@ -707,6 +713,15 @@ async function openView(key) {
   renderIntro();
   renderHunt();
   if (key !== "home") loadBlocked();
+}
+
+async function loadFriends() {
+  try {
+    state.friends = await api("/api/friends");
+  } catch (error) {
+    state.friends = { error: error.message };
+  }
+  if (state.view === "friends") renderIntro();
 }
 
 async function loadRecent() {
@@ -739,7 +754,9 @@ function renderIntro() {
   sleeve.className = "sleeve is-plain";
   const moment = state.view === "home" ? momentPreset() : null;
   setMood(huntHere()?.color || moment?.color || ROOM_LIGHT);
-  const intro = { home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro, artists: artistsIntro }[state.view];
+  const intro = {
+    home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro, artists: artistsIntro, friends: friendsView,
+  }[state.view];
   sleeve.replaceChildren(...intro());
 }
 
@@ -907,6 +924,98 @@ function sizeFilters() {
 function genreList() {
   return h("datalist", { id: "genre-list" },
     GENRE_SUGGESTIONS.map((genre) => h("option", { value: genre.startsWith("genre.") ? t(genre) : genre })));
+}
+
+// ---------- Friends: musical affinity, matches and what everyone is listening to (only who joins)
+
+function friendsView() {
+  const data = state.friends;
+  const head = viewHead("hero", t("view.friends"), t("friends.description"));
+  if (!data) return [head, h("p", { class: "meta" }, t("common.loading"))];
+  if (data.error) return [head, h("p", { class: "meta is-warning" }, data.error)];
+  if (!data.sharing) {
+    return [head, h("section", { class: "friends-join" },
+      h("p", null, t("friends.join_text")),
+      h("button", { class: "play-button", type: "button", onclick: joinFriends }, t("friends.join")))];
+  }
+  const card = (friend) => h("li", { class: "friend-card" },
+    h("p", { class: "friend-name" }, friend.name),
+    friend.affinity
+      ? h("p", { class: "friend-percent" }, `${friend.affinity.percent}%`, h("small", null, t("friends.percent_label")))
+      : h("p", { class: "friend-percent is-empty" }, "—", h("small", null, t("friends.little"))),
+    friend.affinity?.shared.length > 0 && h("p", { class: "meta" }, t("friends.shared", { names: listFormat.format(friend.affinity.shared) })),
+    h("p", { class: "meta" }, t("friends.week", { count: friend.plays_7d })));
+  return [
+    head,
+    h("section", { class: "home-section" },
+      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("friends.affinity"))),
+      data.friends.length ? h("ul", { class: "friend-grid" }, data.friends.map(card)) : h("p", { class: "meta" }, t("friends.alone"))),
+    h("section", { class: "home-section" },
+      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("friends.feed"))),
+      feedList(data.feed)),
+    h("p", { class: "meta friends-me" }, t("friends.me", { count: data.me.plays_7d }), " ", t("friends.updates"), " ",
+      h("button", { class: "text-button", type: "button", onclick: leaveFriends },
+        t(state.confirmLeave ? "friends.leave_confirm" : "friends.leave"))),
+  ];
+}
+
+function gapText(seconds) {
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  return minutes < 60 ? t("friends.gap_min", { count: minutes }) : t("friends.gap_h", { count: Math.round(minutes / 60) });
+}
+
+function feedList(events) {
+  if (!events.length) return h("p", { class: "meta" }, t("friends.feed_empty"));
+  return h("ol", { class: "tracks feed" }, events.map((event) => {
+    const track = event.track;
+    const artist = track.artists[0]?.name || "";
+    const text = event.kind === "match"
+      ? t("friends.match", { friend: event.friend, title: track.title, artist, gap: gapText(event.gap_s) })
+      : t("friends.played", { friend: event.friend, title: track.title, artist });
+    return h("li", { class: event.kind === "match" ? "track feed-item is-match" : "track feed-item", "data-uri": track.uri },
+      h("button", {
+        class: "track-button",
+        type: "button",
+        title: t("action.play_title", { title: track.title }),
+        onclick: () => command({ action: "play", uris: [track.uri] }),
+      },
+        event.kind === "match" ? h("span", { class: "feed-pill" }, t("friends.match_label")) : h("span"),
+        track.image ? h("img", { class: "track-art", src: track.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
+        h("span", { class: "track-text" },
+          h("span", { class: "feed-text" }, text),
+          h("span", { class: "track-sub" }, whenText(event.at * 1000, false)))));
+  }));
+}
+
+async function joinFriends() {
+  if (state.friends && !state.friends.ready) {
+    toast(t("friends.join_authorize"), false, { label: t("player.auth_button"), href: "/login" });
+    return;
+  }
+  try {
+    state.friends = await api("/api/friends", { share: true });
+    toast(state.friends.message);
+  } catch (error) {
+    toast(error.message, true);
+  }
+  renderIntro();
+}
+
+/** Two clicks: the first asks, the second leaves and deletes the history. */
+async function leaveFriends() {
+  if (!state.confirmLeave) {
+    state.confirmLeave = true;
+    renderIntro();
+    return;
+  }
+  state.confirmLeave = false;
+  try {
+    state.friends = await api("/api/friends", { share: false, forget: true });
+    toast(state.friends.message);
+  } catch (error) {
+    toast(error.message, true);
+  }
+  renderIntro();
 }
 
 // ---------- Artists: a band's or artist's releases, with members' solo work and features

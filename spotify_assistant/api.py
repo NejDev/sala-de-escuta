@@ -185,6 +185,12 @@ class Spotify:
         data = self._call("GET", "/search", params=params)
         return [item for item in data[f"{kind}s"]["items"] if item]
 
+    def recently_played(self, after: int | None = None) -> list[dict]:
+        """The last songs played (up to 50); `after` is a Unix time in milliseconds."""
+        params = {"limit": 50, **({"after": after} if after else {})}
+        data = self._call("GET", "/me/player/recently-played", params=params) or {}
+        return [item for item in data.get("items", []) if item]
+
     def artist(self, artist_id: str) -> dict:
         return self._call("GET", f"/artists/{artist_id}")
 
