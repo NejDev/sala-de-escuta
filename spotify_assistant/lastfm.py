@@ -5,6 +5,7 @@ data/lastfm-cache.json. Last.fm's terms ask for credit wherever its numbers show
 """
 from __future__ import annotations
 
+import http.client
 import json
 import threading
 import time
@@ -79,7 +80,7 @@ class LastFm:
                 data = json.loads(response.read())
         except urllib.error.HTTPError as err:  # Last.fm sends its errors as JSON with a 4xx status
             data = _error_body(err)
-        except (urllib.error.URLError, TimeoutError, ValueError) as err:
+        except (OSError, http.client.HTTPException, ValueError) as err:  # URLError, timeouts, resets, cut answers
             raise LastFmError("down") from err
         if not isinstance(data, dict):
             raise LastFmError("down")

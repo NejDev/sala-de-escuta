@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import os
@@ -85,6 +86,20 @@ class ClientTest(unittest.TestCase):
         with self.assertRaises(lastfm.LastFmError) as caught:
             client(offline).track("X", "Y")
         self.assertEqual(caught.exception.kind, "down")
+
+    def test_broken_connections_are_down(self):
+        class Truncated(io.BytesIO):
+            def read(self, *args):
+                raise http.client.IncompleteRead(b"{\"track\"")
+
+        failures = [ConnectionResetError("reset by peer"), http.client.RemoteDisconnected("closed"),
+                    TimeoutError("timed out")]
+        openers = [lambda request, timeout, failure=failure: (_ for _ in ()).throw(failure) for failure in failures]
+        openers.append(lambda request, timeout: Truncated())
+        for opener in openers:
+            with self.subTest(opener=opener), self.assertRaises(lastfm.LastFmError) as caught:
+                client(opener).track("X", "Y")
+            self.assertEqual(caught.exception.kind, "down")
 
     def test_rate_limit_pauses_ten_minutes_without_asking(self):
         clock = Clock()
