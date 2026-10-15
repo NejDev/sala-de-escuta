@@ -29,6 +29,7 @@ from typing import Callable, Collection, Iterator
 from . import config, curation, i18n, tempo
 from .api import Spotify, SpotifyError
 from .deezer import Deezer, DeezerError
+from .lastfm import Listeners
 from .i18n import t
 from .views import pick_image
 
@@ -48,6 +49,7 @@ NEWS_ARTIST_POOL = 120  # genre artists gathered from playlists, before the fans
 # With a cap this small, the roulette skips barely-played albums: each costs a Spotify search and
 # almost none fits, so a spin would turn into a burst of searches.
 TIGHT_CAP = 1_000
+LISTENER_SCAN_MAX = 240  # Sensations: candidates checked on Last.fm at most, before measuring any BPM
 
 # Searches that bring up typical tracks of each genre on Deezer. Edit freely, but leave out the
 # panel's suggestions (GENRE_SUGGESTIONS in app.js): "little-known genre" draws only from here.
@@ -180,6 +182,7 @@ class Find:
     artists: list[str] = field(default_factory=list)  # for "don't show this artist again"
     released: str | None = None  # release date (New releases)
     fans: int | None = None  # the artist's fans, when we know them
+    lastfm: dict | None = None  # {"listeners": int | None, "url": str | None} when checked on Last.fm
 
 
 @dataclass(frozen=True)
@@ -199,6 +202,28 @@ class FanRange:
 
 
 ANY_SIZE = FanRange()
+
+
+@dataclass(frozen=True)
+class ListenerCap:
+    """Song listeners the person allows at most (counted on Last.fm), and the cached lookup that counts them."""
+
+    max: int | None = None
+    lookup: Callable[[str, str], Listeners] | None = None
+
+    @property
+    def active(self) -> bool:
+        return self.max is not None
+
+    def check(self, artist: str, title: str) -> tuple[bool, dict | None]:
+        """(fits, what Last.fm said). A track Last.fm has no record of fits; without a cap nothing is asked."""
+        if not self.active:
+            return True, None
+        found = self.lookup(artist, title)
+        return found.count is None or found.count <= self.max, {"listeners": found.count, "url": found.url}
+
+
+NO_CAP = ListenerCap()
 
 
 class FanCounts:
@@ -556,7 +581,8 @@ def to_spotify(sp: Spotify, track: dict) -> dict | None:
 
 
 def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: float | None = None,
-              image: str | None = None, tag: str = "", released: str | None = None, fans: int | None = None) -> Find:
+              image: str | None = None, tag: str = "", released: str | None = None, fans: int | None = None,
+              lastfm: dict | None = None) -> Find:
     return Find(
         uri=track["uri"],
         title=track["name"],
@@ -570,6 +596,7 @@ def find_from(track: dict, reason: str = "", bpm: float | None = None, energy: f
         artists=[artist["name"] for artist in track.get("artists", [])],
         released=released,
         fans=fans,
+        lastfm=lastfm,
     )
 
 
@@ -621,6 +648,26 @@ def within_size(
     return kept[:want]
 
 
+def within_listeners(
+    tracks: list[dict], listeners: ListenerCap, want: int, hunt: Hunt | None = None,
+) -> list[dict]:
+    """The first `want` tracks within the listener cap, asking Last.fm about LISTENER_SCAN_MAX of them at most."""
+    if not listeners.active:
+        return tracks[:want]
+    kept: list[dict] = []
+    for track in tracks[:LISTENER_SCAN_MAX]:
+        if hunt and hunt.cancelled:
+            break
+        fits, heard = listeners.check(track["artist"]["name"], track["title"])
+        if fits:
+            kept.append({**track, "lastfm": heard})
+            if hunt:
+                hunt.message = t("sense.checking_listeners", count=len(kept))
+            if len(kept) >= want:
+                break
+    return kept
+
+
 def listen(
     dz: Deezer,
     tracks: list[dict],
@@ -661,6 +708,7 @@ def sense(
     measure: Callable[[bytes], tempo.Analysis | None] = measure_in_process,
     blocked: Collection[str] = frozenset(),
     size: FanRange = ANY_SIZE,
+    listeners: ListenerCap = NO_CAP,
 ) -> None:
     hunt.message = t("sense.looking")
     candidates = gather_candidates(dz, spec["sources"], rng, blocked)
@@ -668,11 +716,19 @@ def sense(
         hunt.message = t("sense.no_playlists", name=spec["name"])
         return
     by_consensus = spec.get("bpm") is None
-    candidates = within_size(dz, candidates, size, CONSENSUS_LISTEN if by_consensus else SENSE_MAX_LISTEN, hunt)
+    want = CONSENSUS_LISTEN if by_consensus else SENSE_MAX_LISTEN
+    # With a listener cap, more right-sized candidates are gathered: Last.fm turns some of them down.
+    candidates = within_size(dz, candidates, size, LISTENER_SCAN_MAX if listeners.active else want, hunt)
     if hunt.cancelled:
         return
     if not candidates:
         hunt.message = t("sense.no_size", name=spec["name"])
+        return
+    candidates = within_listeners(candidates, listeners, want, hunt)
+    if hunt.cancelled:
+        return
+    if not candidates:
+        hunt.message = t("sense.no_listeners", name=spec["name"])
         return
     if by_consensus:
         _sense_by_consensus(hunt, spec, sp, dz, candidates, cache, measure, blocked)
@@ -708,7 +764,7 @@ def _add_find(
     if key not in seen:
         seen.add(key)
         fans = fan_counts.known((track.get("artist") or {}).get("id"))
-        hunt.finds.append(find_from(match, bpm=bpm, energy=analysis.energy, fans=fans))
+        hunt.finds.append(find_from(match, bpm=bpm, energy=analysis.energy, fans=fans, lastfm=track.get("lastfm")))
 
 
 def _sense_by_consensus(
@@ -759,7 +815,7 @@ def _sense_by_consensus(
 
 def obscure_album_pick(
     sp: Spotify, rng: random.Random, blocked: Collection[str] = frozenset(),
-    dz: Deezer | None = None, size: FanRange = ANY_SIZE,
+    dz: Deezer | None = None, size: FanRange = ANY_SIZE, listeners: ListenerCap = NO_CAP,
 ) -> Find | None:
     year = rng.randint(1955, date.today().year)
     albums = [
@@ -782,18 +838,24 @@ def obscure_album_pick(
         fans = fan_counts.by_name(dz, first_artist) if first_artist else None
         if fans is None or not size.ok(fans):
             return None
-    return find_from(
-        rng.choice(secular),
-        reason=t("reason.obscure_album", year=year),
-        image=pick_image(album.get("images"), 64),
-        tag=str(year),
-        fans=fans,
-    )
+    rng.shuffle(secular)
+    for pick in secular[:6]:  # with a listener cap, the album's quieter tracks get their turn
+        fits, heard = listeners.check(pick["artists"][0]["name"], pick["name"])
+        if fits:
+            return find_from(
+                pick,
+                reason=t("reason.obscure_album", year=year),
+                image=pick_image(album.get("images"), 64),
+                tag=str(year),
+                fans=fans,
+                lastfm=heard,
+            )
+    return None
 
 
 def world_genre_pick(
     sp: Spotify, dz: Deezer, rng: random.Random, blocked: Collection[str] = frozenset(),
-    genre: str | None = None, size: FanRange = ANY_SIZE,
+    genre: str | None = None, size: FanRange = ANY_SIZE, listeners: ListenerCap = NO_CAP,
 ) -> Find | None:
     """A track from a playlist named after the genre (searching tracks would only match titles)."""
     genre = genre or rng.choice(WORLD_GENRES)
@@ -807,38 +869,43 @@ def world_genre_pick(
     tracks = [track for track in listed if usable(track, blocked)]
     if not tracks:
         return None
-    # With no size chosen, lean toward the less popular side; with a size, the filter decides.
-    pool = lesser_known(tracks) if not size.active else tracks
+    # With no filter, lean toward the less popular side; with a size or a listener cap, the filters decide.
+    pool = tracks if size.active or listeners.active else lesser_known(tracks)
     rng.shuffle(pool)
     for track in pool[:6]:
         fans = fan_counts.by_id(dz, track["artist"]["id"]) if size.active else None
         if size.active and not size.ok(fans):
             continue
+        fits, heard = listeners.check(track["artist"]["name"], track["title"])
+        if not fits:
+            continue
         match = to_spotify(sp, track)
         if match and not blocked_track(match, blocked):
-            return find_from(match, reason=t("reason.genre_playlist", genre=genre), tag=genre.capitalize(), fans=fans)
+            return find_from(match, reason=t("reason.genre_playlist", genre=genre), tag=genre.capitalize(),
+                             fans=fans, lastfm=heard)
     return None
 
 
 def roulette(
     hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int = ROULETTE_COUNT,
     blocked: Collection[str] = frozenset(), genre: str | None = None, size: FanRange = ANY_SIZE,
-    rare: bool = False,
+    rare: bool = False, listeners: ListenerCap = NO_CAP,
 ) -> None:
     """Without a genre, alternates genre playlists with lost albums from any year; `rare` keeps only
     the playlists, drawing a different little-known genre on each attempt."""
     hunt.total = count
     hunt.message = t("roulette.spinning")
     attempts = 0
-    budget = count * (6 if genre or rare or size.active else 4)  # filters throw away more attempts
-    playlists_only = bool(genre) or rare or (size.max is not None and size.max <= TIGHT_CAP)
+    budget = count * (6 if genre or rare or size.active or listeners.active else 4)  # filters throw away more attempts
+    tight = any(cap is not None and cap <= TIGHT_CAP for cap in (size.max, listeners.max))
+    playlists_only = bool(genre) or rare or tight
     while len(hunt.finds) < count and attempts < budget and not hunt.cancelled:
         attempts += 1
         try:
             if playlists_only or attempts % 2 == 0:
-                find = world_genre_pick(sp, dz, rng, blocked, genre=genre, size=size)
+                find = world_genre_pick(sp, dz, rng, blocked, genre=genre, size=size, listeners=listeners)
             else:
-                find = obscure_album_pick(sp, rng, blocked, dz=dz, size=size)
+                find = obscure_album_pick(sp, rng, blocked, dz=dz, size=size, listeners=listeners)
         except (SpotifyError, DeezerError) as err:
             if isinstance(err, SpotifyError) and err.status == 429:
                 raise  # Spotify pause: insisting only makes it longer
@@ -908,7 +975,7 @@ def _is_edit(title: str) -> bool:
 
 def news(
     hunt: Hunt, sp: Spotify, dz: Deezer, genre: str, size: FanRange = ANY_SIZE, days: int = 30,
-    blocked: Collection[str] = frozenset(),
+    blocked: Collection[str] = frozenset(), listeners: ListenerCap = NO_CAP,
 ) -> None:
     """Recent releases from the genre's artists, within the chosen size."""
     since = date.today() - timedelta(days=days)
@@ -963,6 +1030,9 @@ def news(
         track = focus_track(album, dz.album_tracks(album["id"]), artist["id"])
         if track is None or religious_track(track) or blocked_track(track, blocked):
             continue
+        fits, heard = listeners.check(artist["name"], track["title"])
+        if not fits:
+            continue
         match = to_spotify(sp, track)
         if not match or blocked_track(match, blocked) or any(found.uri == match["uri"] for found in hunt.finds):
             continue
@@ -975,6 +1045,7 @@ def news(
             reason=t("reason.release", kind=kind, who=who, date=i18n.long_date(released)),
             released=album["release_date"],
             fans=fans,
+            lastfm=heard,
             tag=i18n.short_date(released),
         ))
         if len(hunt.finds) >= NEWS_RESULTS:
@@ -1007,20 +1078,24 @@ def walk(
 
 def artist_picks(
     sp: Spotify, dz: Deezer, artist: dict, wanted: int, reason: str, taken: set[str],
-    blocked: Collection[str] = frozenset(),
+    blocked: Collection[str] = frozenset(), listeners: ListenerCap = NO_CAP,
 ) -> list[Find]:
     """The artist's most-played tracks that exist on Spotify (without repeating the same song)."""
     picks: list[Find] = []
-    for top in dz.top_tracks(artist["id"]):
+    # With a listener cap the artist's biggest hits often don't fit: look further down the list.
+    for top in dz.top_tracks(artist["id"], limit=10 if listeners.active else 5):
         title = curation.normalize(curation.base_title(top.get("title", "")))
         if title and title in taken:  # the same song in another recording
             continue
         if religious_track(top):
             continue
+        fits, heard = listeners.check(artist["name"], top.get("title", ""))
+        if not fits:
+            continue
         match = to_spotify(sp, dz.track(top["id"]))  # the "top" entry has no ISRC
         if match and match["uri"] not in taken and not religious_track(match) and not blocked_track(match, blocked):
             taken.update({title, match["uri"]})
-            picks.append(find_from(match, reason=reason, fans=artist.get("nb_fan")))
+            picks.append(find_from(match, reason=reason, fans=artist.get("nb_fan"), lastfm=heard))
         if len(picks) == wanted:
             break
     return picks
@@ -1035,6 +1110,7 @@ def rabbit_hole(
     walks: int = RABBIT_WALKS,
     blocked: Collection[str] = frozenset(),
     size: FanRange = ANY_SIZE,
+    listeners: ListenerCap = NO_CAP,
 ) -> None:
     """Each path becomes a trip: one track from each artist along the way and two from the last."""
     hunt.total = walks
@@ -1054,7 +1130,8 @@ def rabbit_hole(
                     t("reason.rabbit_end", hops=number, seed=seed) if last
                     else t("reason.rabbit_hop", hop=number, hops=len(steps), seed=seed)
                 )
-                finds.extend(artist_picks(sp, dz, artist, RABBIT_TRACKS if last else 1, reason, taken, blocked))
+                finds.extend(artist_picks(sp, dz, artist, RABBIT_TRACKS if last else 1, reason, taken, blocked,
+                                          listeners))
         except (SpotifyError, DeezerError) as err:
             if isinstance(err, SpotifyError) and err.status == 429:
                 raise  # Spotify pause: insisting only makes it longer

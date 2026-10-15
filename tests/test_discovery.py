@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import config, discovery, i18n
+from spotify_assistant import config, discovery, i18n, lastfm
 from spotify_assistant.api import SpotifyError
 from spotify_assistant.tempo import Analysis
 
@@ -408,6 +408,10 @@ class FiltersTest(FreshMatches):
         _, searched = self.spin(size=discovery.FanRange(0, 10_000))
         self.assertTrue(any(query.startswith("tag:hipster") for query in searched))
 
+    def test_tight_listener_cap_skips_barely_played_albums(self):
+        _, searched = self.spin(listeners=discovery.ListenerCap(500, FakeLastFm()))
+        self.assertTrue(all(query.startswith("isrc:") for query in searched))
+
 
 class NewsTest(FreshMatches):
     def setUp(self):
@@ -547,6 +551,148 @@ class TempoCacheTest(unittest.TestCase):
                 self.assertEqual(again.get("1"), (True, Analysis(128.0, 0.5, 0.7)))
                 self.assertEqual(again.get("2"), (True, None))
                 self.assertEqual(again.get("3"), (False, None))
+
+
+class FakeLastFm:
+    """Listeners by title; titles it doesn't know have no record. Remembers who was asked about."""
+
+    def __init__(self, listeners=None, error=None):
+        self.listeners = listeners or {}
+        self.error = error
+        self.asked = []
+
+    def __call__(self, artist, title):
+        self.asked.append((artist, title))
+        if self.error:
+            raise lastfm.LastFmError(self.error)
+        if title not in self.listeners:
+            return lastfm.Listeners(None, None)
+        return lastfm.Listeners(self.listeners[title], f"https://www.last.fm/_/{title}")
+
+
+class HipsterSpotify(FakeSpotify):
+    """One barely-played album with a well-known track and a hidden one."""
+
+    def search(self, query, kind, offset=0):
+        if query.startswith("tag:hipster"):
+            return [{"id": "al", "name": "Disco", "album_type": "album", "artists": [{"name": "Banda"}], "images": []}]
+        return super().search(query, kind, offset)
+
+    def album_tracks(self, album_id):
+        return [{"uri": "spotify:track:h1", "name": "Famosa", "artists": [{"name": "Banda"}], "duration_ms": 1},
+                {"uri": "spotify:track:h2", "name": "Escondida", "artists": [{"name": "Banda"}], "duration_ms": 1}]
+
+
+class ListenerCapTest(FreshMatches):
+    def setUp(self):
+        super().setUp()
+        discovery.fan_counts = discovery.FanCounts()
+
+    def test_check(self):
+        fake = FakeLastFm({"Pequena": 50, "Grande": 500})
+        cap = discovery.ListenerCap(100, fake)
+        self.assertEqual(cap.check("A", "Pequena"), (True, {"listeners": 50, "url": "https://www.last.fm/_/Pequena"}))
+        self.assertEqual(cap.check("A", "Grande")[0], False)
+        self.assertEqual(cap.check("A", "Sumida"), (True, {"listeners": None, "url": None}))  # no record fits
+        self.assertEqual(discovery.ListenerCap(0, fake).check("A", "Pequena")[0], False)
+        self.assertEqual(discovery.NO_CAP.check("A", "Pequena"), (True, None))
+        self.assertEqual(len(fake.asked), 4)  # NO_CAP asked nothing
+
+    def test_genre_pick_skips_tracks_over_the_cap_before_spotify(self):
+        deezer = FakeDeezer(
+            playlists={"fado": [{"id": "p", "nb_tracks": 30, "title": "Fado"}]},
+            tracks={"p": [dz_track(1, 120, title="Grande"), dz_track(2, 120, title="Pequena")]},
+        )
+        sp = FakeSpotify()
+        sp.search = mock.Mock(wraps=sp.search)
+        cap = discovery.ListenerCap(100, FakeLastFm({"Grande": 5000, "Pequena": 30}))
+        find = discovery.world_genre_pick(sp, deezer, random.Random(1), genre="fado", listeners=cap)
+        self.assertEqual(find.uri, "spotify:track:2")
+        self.assertEqual(find.lastfm, {"listeners": 30, "url": "https://www.last.fm/_/Pequena"})
+        self.assertNotIn(mock.call("isrc:ISRC1", "track"), sp.search.call_args_list)
+
+    def test_barely_played_album_offers_its_hidden_track(self):
+        cap = discovery.ListenerCap(100, FakeLastFm({"Famosa": 9000, "Escondida": 10}))
+        for seed in range(6):
+            find = discovery.obscure_album_pick(HipsterSpotify(), random.Random(seed), listeners=cap)
+            self.assertEqual((find.uri, find.lastfm["listeners"]), ("spotify:track:h2", 10))
+
+    def test_rabbit_hole_keeps_the_artists_tracks_under_the_cap(self):
+        deezer = FakeDeezer(
+            artists={"Chet Baker": {"id": 1, "name": "Chet Baker", "nb_fan": 500000}},
+            related={1: [{"id": 2, "name": "Sonny Clark", "nb_fan": 3800}],
+                     2: [{"id": 3, "name": "Tina Brooks", "nb_fan": 644}]},
+            tops={2: [{"id": 21, "title": "Cool Struttin'"}],
+                  3: [{"id": 31, "title": "Eu e a Brisa"}, {"id": 32, "title": "Rapaz de Bem"}, {"id": 33, "title": "Mar Aberto"}]},
+        )
+        fake = FakeLastFm({"Eu e a Brisa": 900, "Rapaz de Bem": 12})
+        sp = FakeSpotify()
+        sp.search = mock.Mock(wraps=sp.search)
+        hunt = discovery.Hunt("rabbit", "Toca do coelho")
+        discovery.rabbit_hole(hunt, sp, deezer, random.Random(), ["Chet Baker"], walks=1,
+                              listeners=discovery.ListenerCap(100, fake))
+        self.assertEqual([f.uri for f in hunt.finds], ["spotify:track:21", "spotify:track:32", "spotify:track:33"])
+        self.assertIn(("Tina Brooks", "Eu e a Brisa"), fake.asked)  # asked with the hop's artist
+        self.assertNotIn(mock.call("isrc:ISRC31", "track"), sp.search.call_args_list)
+
+    def test_news_checks_each_release_before_spotify(self):
+        today = date.today()
+        deezer = FakeDeezer(
+            playlists={"k-pop": [{"id": "p", "nb_tracks": 30, "title": "K-pop"}]},
+            tracks={"p": [song(1, "x", 10, "Banda"), song(2, "x", 20, "Outra")]},
+            albums={10: [{"id": 100, "title": "Hit", "release_date": today.isoformat(), "record_type": "single"}],
+                    20: [{"id": 200, "title": "Lado B", "release_date": today.isoformat(), "record_type": "single"}]},
+            album_songs={100: [song(1001, "Hit", 10, "Banda")], 200: [song(2001, "Lado B", 20, "Outra")]},
+        )
+        sp = FakeSpotify()
+        sp.search = mock.Mock(wraps=sp.search)
+        hunt = discovery.Hunt("news", "Novidades: K-pop")
+        discovery.news(hunt, sp, deezer, "k-pop", days=7,
+                       listeners=discovery.ListenerCap(100, FakeLastFm({"Hit": 80_000, "Lado B": 40})))
+        self.assertEqual([(f.uri, f.lastfm["listeners"]) for f in hunt.finds], [("spotify:track:2001", 40)])
+        self.assertNotIn(mock.call("isrc:ISRC1001", "track"), sp.search.call_args_list)
+
+    def test_sense_only_listens_to_tracks_within_the_cap(self):
+        deezer = FakeDeezer(
+            playlists={"treino": [{"id": "p", "nb_tracks": 50}]},
+            tracks={"p": [dz_track(1, 128), dz_track(2, 130), dz_track(3, 140)]},
+        )
+        cap = discovery.ListenerCap(100, FakeLastFm({"Faixa 1": 900, "Faixa 2": 10}))
+        hunt = discovery.Hunt("sense", "Treino pesado")
+        discovery.sense(hunt, {**SPEC, "sources": ["treino"]}, FakeSpotify(), deezer, random.Random(1), MemoryCache(),
+                        fake_measure, listeners=cap)
+        self.assertEqual(sorted((f.uri, f.lastfm["listeners"]) for f in hunt.finds),
+                         [("spotify:track:2", 10), ("spotify:track:3", None)])
+        self.assertEqual(hunt.progress, 2)  # Faixa 1's preview was never measured
+
+    def test_sense_says_when_nothing_is_within_the_cap(self):
+        deezer = FakeDeezer(playlists={"treino": [{"id": "p", "nb_tracks": 50}]}, tracks={"p": [dz_track(1, 128)]})
+        hunt = discovery.Hunt("sense", "Treino pesado")
+        discovery.sense(hunt, {**SPEC, "sources": ["treino"]}, FakeSpotify(), deezer, random.Random(1), MemoryCache(),
+                        fake_measure, listeners=discovery.ListenerCap(100, FakeLastFm({"Faixa 1": 900})))
+        self.assertEqual(hunt.finds, [])
+        self.assertIn("limite de ouvintes", hunt.message)
+
+    def test_within_listeners_stops_scanning(self):
+        fake = FakeLastFm({f"Faixa {n}": 900 for n in range(5)})
+        tracks = [dz_track(n, 120) for n in range(5)]
+        with mock.patch.object(discovery, "LISTENER_SCAN_MAX", 3):
+            self.assertEqual(discovery.within_listeners(tracks, discovery.ListenerCap(100, fake), want=2), [])
+        self.assertEqual(len(fake.asked), 3)
+        kept = discovery.within_listeners(tracks, discovery.ListenerCap(1000, FakeLastFm({})), want=2)
+        self.assertEqual([(t["id"], t["lastfm"]) for t in kept], [(0, {"listeners": None, "url": None}),
+                                                                 (1, {"listeners": None, "url": None})])
+        self.assertEqual(discovery.within_listeners(tracks, discovery.NO_CAP, want=2), tracks[:2])
+
+    def test_lastfm_failures_stop_the_roulette(self):
+        deezer = FakeDeezer(
+            playlists={"fado": [{"id": "p", "nb_tracks": 30, "title": "Fado"}]},
+            tracks={"p": [dz_track(1, 120)]},
+        )
+        hunt = discovery.Hunt("roulette", "Roleta")
+        with self.assertRaises(lastfm.LastFmError):
+            discovery.roulette(hunt, FakeSpotify(), deezer, random.Random(1), genre="fado",
+                               listeners=discovery.ListenerCap(100, FakeLastFm(error="down")))
 
 
 if __name__ == "__main__":
