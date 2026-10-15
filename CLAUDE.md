@@ -46,8 +46,9 @@ Static files are read from disk on each request (images are cached by browsers f
 - Keep the religious-content filter (`RELIGIOUS_WORDS`) and per-person blocked artists working everywhere.
 - Each person's data stays private: friends never see the owner's curation or each other's playlists.
 - Spotify rate limits are serious: a burst of searches once paused search for ~20 hours, and one big band
-  in Artists (~36 requests in 9 s) paused `/artists` for ~23 hours. Artists reads only the newest pages
-  per person, keeps them in `data/artists-cache.json` for 3 days, and `/artists` calls go 1.5 s apart.
+  in Artists (~36 requests in 9 s) paused `/artists` for ~23 hours. Artists still reads everything (every
+  old release and feature), but `/artists` calls go 2 s apart and each list is saved page by page in
+  `data/artists-cache.json`: a pause resumes where it stopped, and later searches only read what's new.
   Don't run real discoveries in loops while debugging; use the fakes in `tests/` and mocked data in the browser.
 - Never commit `.env`, `data/` or `playlists.json` (the repo ships `playlists.example.json`). Before a
   commit, check the staged diff for the Client ID, tokens, the Tailscale address and the owner's Spotify id.

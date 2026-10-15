@@ -25,7 +25,7 @@ ITEMS_PER_REQUEST = 100
 # Global brake: at most ~4 requests per second to Spotify, counting everything (player, searches...).
 MIN_INTERVAL_S = 0.25
 # Families Spotify punishes hard for bursts get their own slower lane (seconds between requests).
-SLOW_FAMILIES = {"artists": 1.5}
+SLOW_FAMILIES = {"artists": 2.0}
 
 log = logging.getLogger(__name__)
 
@@ -199,17 +199,12 @@ class Spotify:
     def artist(self, artist_id: str) -> dict:
         return self._call("GET", f"/artists/{artist_id}")
 
-    def artist_albums(self, artist_id: str, groups: str, max_pages: int = 10) -> list[dict]:
-        """An artist's releases (include_groups: album, single, compilation, appears_on), 10 per page."""
-        params = {"include_groups": groups, "limit": 10, "market": self.market}
+    def artist_albums_page(self, artist_id: str, groups: str, offset: int = 0) -> tuple[list[dict], bool]:
+        """One page of an artist's releases (include_groups: album, single, compilation, appears_on),
+        newest first, 10 per page (the most allowed), and whether there are more."""
+        params = {"include_groups": groups, "limit": 10, "offset": offset, "market": self.market}
         page = self._call("GET", f"/artists/{artist_id}/albums", params=params)
-        albums: list[dict] = []
-        for _ in range(max_pages):
-            albums.extend(album for album in page.get("items", []) if album)
-            if not page.get("next"):
-                break
-            page = self._call("GET", page["next"])
-        return albums
+        return [album for album in page.get("items", []) if album], bool(page.get("next"))
 
     def album_tracks(self, album_id: str) -> list[dict]:
         data = self._call("GET", f"/albums/{album_id}/tracks", params={"limit": 50, "market": self.market})

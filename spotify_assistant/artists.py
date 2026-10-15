@@ -4,8 +4,9 @@ The band and its members (and subunits) come from MusicBrainz, with their Spotif
 each one's releases come from Spotify: their own (albums, singles and EPs) and the ones they
 appear on (features, soundtracks). Everything is merged into one list.
 
-Spotify punishes bursts on these endpoints hard (one big band once paused them for ~23 hours), so a
-search reads only the newest pages of each person, and what it read is kept on disk for 3 days.
+Spotify punishes bursts on these endpoints hard (one big band once paused them for ~23 hours), so
+requests go out slowly (api.SLOW_FAMILIES) and everything read is kept on disk: the first search of a
+big band takes a couple of minutes, and the next ones only ask for what came out since.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import json
 import logging
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from . import config, curation
@@ -22,18 +24,19 @@ from .i18n import t
 from .musicbrainz import MusicBrainz, MusicBrainzError, unique_members
 from .views import pick_image
 
-OWN = "album,single"  # their own compilations only repeat songs from the albums
-FEATURES = "appears_on"
-# Pages of 10 read per person, newest first: the artist searched, and each member or subunit.
-MAIN_PAGES = {OWN: 5, FEATURES: 3}
-MEMBER_PAGES = {OWN: 2, FEATURES: 1}
-MAX_PEOPLE = 12  # the artist plus members and subunits read in one search
+# Each list is read on its own, newest first, so a later search can stop as soon as it reaches what it knows.
+GROUPS = (("album", False), ("single", False), ("compilation", False), ("appears_on", True))
+LATEST_GROUPS = "album,single"  # one page is enough for the "which one?" cards
+PAGE = 10  # the most Spotify gives per page for an artist's releases in Development Mode
+MAX_PEOPLE = 16  # the artist plus members and subunits read in one search
 MAX_CANDIDATES = 8  # "which one?" cards when several artists share a name
 CANDIDATES_WITH_LATEST = 4  # only the first cards ask Spotify for their latest release
-CACHE_TTL_S = 3 * 86400  # releases don't change by the minute; kept on disk so restarts don't ask again
+RECHECK_S = 86400  # a complete list is trusted for a day; then a search only reads what came out since
+REREAD_S = 30 * 86400  # once a month a list is read again from scratch (Spotify fixes old entries)
+PROFILE_TTL_S = 7 * 86400
 
 log = logging.getLogger(__name__)
-_cache: dict[str, dict] | None = None  # "kind|id|groups" -> {"at", "value"}; loaded from disk on first use
+_cache: dict[str, dict] | None = None  # key -> {"at", "value"}; loaded from disk on first use
 _cache_lock = threading.Lock()
 
 
@@ -41,25 +44,38 @@ def _cache_file() -> Path:
     return config.DATA_DIR / "artists-cache.json"
 
 
-def _remembered(key: str, fresh_enough, load):
-    """The cached value for key when it is recent and fresh_enough(value) holds; otherwise load() and keep it."""
+def _entries() -> dict[str, dict]:
+    """The cache (call with the lock held)."""
+    global _cache
+    if _cache is None:
+        try:
+            _cache = json.loads(_cache_file().read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            _cache = {}
+    return _cache
+
+
+def _get(key: str) -> dict | None:
+    with _cache_lock:
+        return _entries().get(key)
+
+
+def _put(key: str, value) -> None:
     global _cache
     with _cache_lock:
-        if _cache is None:
-            try:
-                _cache = json.loads(_cache_file().read_text(encoding="utf-8"))
-            except (FileNotFoundError, ValueError):
-                _cache = {}
-        hit = _cache.get(key)
-    if hit and time.time() - hit["at"] < CACHE_TTL_S and fresh_enough(hit["value"]):
-        return hit["value"]
-    value = load()
-    with _cache_lock:
         now = time.time()
-        _cache = {k: v for k, v in _cache.items() if now - v["at"] < CACHE_TTL_S}
+        _cache = {k: v for k, v in _entries().items() if now - v["at"] < REREAD_S}
         _cache[key] = {"at": now, "value": value}
         config.DATA_DIR.mkdir(exist_ok=True)
         _cache_file().write_text(json.dumps(_cache, ensure_ascii=False), encoding="utf-8")
+
+
+def _remembered(key: str, ttl_s: float, load):
+    hit = _get(key)
+    if hit and time.time() - hit["at"] < ttl_s:
+        return hit["value"]
+    value = load()
+    _put(key, value)
     return value
 
 
@@ -68,12 +84,45 @@ def _slim(album: dict) -> dict:
     return {**{key: album.get(key) for key in keep}, "artists": [{"name": a.get("name", "")} for a in album.get("artists", [])]}
 
 
-def releases_of(sp: Spotify, artist_id: str, groups: str, pages: int) -> list[dict]:
-    """The newest `pages` pages of an artist's releases (reuses a read of as many pages or more)."""
-    def load() -> dict:
-        return {"pages": pages, "albums": [_slim(album) for album in sp.artist_albums(artist_id, groups, max_pages=pages)]}
+def releases(sp: Spotify, artist_id: str, group: str, cancelled=lambda: False) -> Iterator[list[dict]]:
+    """Every release in one of an artist's lists (album, single, compilation, appears_on), in batches.
 
-    return _remembered(f"releases|{artist_id}|{groups}", lambda hit: hit["pages"] >= pages, load)["albums"]
+    The first read goes page by page, saved after each page, so a pause from Spotify or a cancel
+    picks up where it stopped. A complete list is trusted for a day; after that only the newest
+    pages are read, until one has something already known.
+    """
+    key = f"releases|{artist_id}|{group}"
+    hit = _get(key)
+    now = time.time()
+    state = hit["value"] if hit and now - hit["value"]["read_at"] < REREAD_S else None
+    state = state or {"albums": [], "offset": 0, "complete": False, "read_at": now}
+    if state["albums"]:
+        yield state["albums"]
+    if state["complete"]:
+        if now - hit["at"] < RECHECK_S:
+            return
+        known, new, offset = {album["id"] for album in state["albums"]}, [], 0
+        while not cancelled():
+            items, more = sp.artist_albums_page(artist_id, group, offset)
+            fresh = [_slim(album) for album in items if album["id"] not in known]
+            new += fresh
+            if len(fresh) < len(items) or not more:  # reached what was already there
+                if new:
+                    yield new
+                _put(key, {**state, "albums": new + state["albums"]})
+                return
+            offset += PAGE
+        return  # cancelled halfway: nothing saved, the next search checks again
+    while not cancelled():
+        items, more = sp.artist_albums_page(artist_id, group, state["offset"])
+        known = {album["id"] for album in state["albums"]}
+        batch = [_slim(album) for album in items if album["id"] not in known]
+        state = {**state, "albums": state["albums"] + batch, "offset": state["offset"] + PAGE, "complete": not more}
+        _put(key, state)
+        if batch:
+            yield batch
+        if not more:
+            return
 
 
 def profile_of(sp: Spotify, artist_id: str) -> dict:
@@ -81,7 +130,7 @@ def profile_of(sp: Spotify, artist_id: str) -> dict:
         profile = sp.artist(artist_id) or {}
         return {"name": profile.get("name"), "images": profile.get("images") or []}
 
-    return _remembered(f"profile|{artist_id}", lambda hit: True, load)
+    return _remembered(f"profile|{artist_id}", PROFILE_TTL_S, load)
 
 
 def spotify_artist(sp: Spotify, name: str, unique: bool = False) -> dict | None:
@@ -97,7 +146,8 @@ def candidate(sp: Spotify, artist: dict, with_latest: bool = True) -> dict:
     """A card for "which one?": photo, genres and their latest release, so the person recognizes them."""
     latest = None
     try:
-        albums = releases_of(sp, artist["id"], OWN, 1) if with_latest else []
+        albums = _remembered(f"latest|{artist['id']}", PROFILE_TTL_S, lambda: [
+            _slim(album) for album in sp.artist_albums_page(artist["id"], LATEST_GROUPS)[0]]) if with_latest else []
         newest = max(albums, key=lambda album: album.get("release_date", ""), default=None)
         if newest:
             latest = {"name": newest.get("name", ""), "year": newest.get("release_date", "")[:4]}
@@ -210,13 +260,18 @@ def discography(hunt: Hunt, sp: Spotify, mb: MusicBrainz, name: str, spotify_id:
     for index, who in enumerate(everyone, start=1):
         if hunt.cancelled:
             return
-        hunt.message = t("artists.reading", name=who["name"], progress=index, total=len(everyone))
-        pages = MAIN_PAGES if who["role"] == "main" else MEMBER_PAGES
-        for groups, feature in ((OWN, False), (FEATURES, True)):
-            for album in releases_of(sp, who["spotify"], groups, pages[groups]):
-                _add(by_key, album, who, feature)
+        for group, feature in GROUPS:
+            hunt.message = t("artists.reading", name=who["name"], progress=index, total=len(everyone),
+                             count=len(by_key))
+            for batch in releases(sp, who["spotify"], group, lambda: hunt.cancelled):
+                for album in batch:
+                    _add(by_key, album, who, feature)
+                hunt.releases = sorted(by_key.values(), key=lambda release: release["date"], reverse=True)
+                hunt.message = t("artists.reading", name=who["name"], progress=index, total=len(everyone),
+                                 count=len(by_key))
+            if hunt.cancelled:
+                return
         hunt.progress = index
-        hunt.releases = sorted(by_key.values(), key=lambda release: release["date"], reverse=True)
     count = len(hunt.releases)
     if not count:
         hunt.message = t("artists.none", name=display)

@@ -92,7 +92,7 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         # Artists search
         "err.artist_name": "Digite o nome de um artista ou banda.",
         "artists.looking": "Procurando {name} e quem faz parte…",
-        "artists.reading": "Lendo os lançamentos de {name} ({progress} de {total})…",
+        "artists.reading": "Lendo tudo de {name} ({progress} de {total}), devagar para o Spotify não pausar… {count} até agora.",
         "artists.not_found": "Não achei “{name}”. Confira o nome do artista ou da banda.",
         "artists.none": "Nenhum lançamento de {name} no Spotify.",
         "artists.done": ("1 lançamento de {name}.", "{count} lançamentos de {name}."),
@@ -335,7 +335,7 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         # Artists search
         "err.artist_name": "Type the name of an artist or band.",
         "artists.looking": "Looking up {name} and who's part of it…",
-        "artists.reading": "Reading {name}'s releases ({progress} of {total})…",
+        "artists.reading": "Reading everything by {name} ({progress} of {total}), slowly so Spotify doesn't pause… {count} so far.",
         "artists.not_found": "Couldn't find “{name}”. Check the artist or band name.",
         "artists.none": "No releases by {name} on Spotify.",
         "artists.done": ("1 release by {name}.", "{count} releases by {name}."),
