@@ -14,16 +14,23 @@ import json
 import logging
 import threading
 import time
+import unicodedata
 from collections import Counter
 from pathlib import Path
+from typing import Callable
 
 from . import accounts, config, curation, favorites, medal_rules, reviews, social
+from .deezer import Deezer, DeezerError
 from .i18n import t
-from .lastfm import ListenerCounts
+from .lastfm import LastFmError, ListenerCounts
 from .medal_rules import Context, first_artist
 from .medals import BY_ID, GAMES_BY_SLUG, MEDALS, Medal
 
 MAX_HIGHLIGHTS = 10
+LOOKUPS_PER_LOOP = 300  # Last.fm and fans lookups of each kind per person per loop; the rest wait for the next one
+FANS_FILE = "fans-cache.json"
+FANS_FRESH_S = 30 * 86400
+FANS_MAX_ENTRIES = 100_000
 
 log = logging.getLogger(__name__)
 _lock = threading.RLock()
@@ -220,6 +227,127 @@ def process(user_id: str, plays: list[dict], ctx: Context, lastfm: bool) -> list
             new += _award_due(data, pending, item, ctx, item["at"])
         data["through"] = fresh[-1]["at"]
         _write(_file(user_id), data)
+        return new
+
+
+class ArtistFans:
+    """Fans per artist name, looked up in the background and kept 30 days in data/fans-cache.json."""
+
+    def __init__(self, path: Path | None = None, now: Callable[[], float] = time.time) -> None:
+        self._path, self._now = path, now
+        self._lock = threading.Lock()
+        self._data: dict[str, dict] | None = None
+        self._dirty = False
+
+    @staticmethod
+    def key(name: str) -> str:
+        return " ".join(unicodedata.normalize("NFKC", name).casefold().split())
+
+    def _file(self) -> Path:
+        return self._path or config.DATA_DIR / FANS_FILE
+
+    def _entries(self) -> dict[str, dict]:
+        """Called with the lock held."""
+        if self._data is None:
+            try:
+                data = json.loads(self._file().read_text(encoding="utf-8"))
+            except (FileNotFoundError, ValueError):
+                data = {}
+            self._data = data if isinstance(data, dict) else {}
+        return self._data
+
+    def known(self, name: str) -> bool:
+        with self._lock:
+            return self.key(name) in self._entries()
+
+    def cached(self, name: str) -> int | None:
+        with self._lock:
+            entry = self._entries().get(self.key(name))
+        return entry["n"] if entry else None
+
+    def get(self, dz: Deezer, name: str) -> int | None:
+        with self._lock:
+            entry = self._entries().get(self.key(name))
+        if entry and self._now() - entry["at"] < FANS_FRESH_S:
+            return entry["n"]
+        found = dz.search_artist(name)  # errors propagate and nothing is cached
+        fans = found.get("nb_fan") if found else None
+        with self._lock:
+            entries = self._entries()
+            entries[self.key(name)] = {"n": fans, "at": self._now()}
+            if len(entries) > FANS_MAX_ENTRIES:  # keep the newest 90%
+                newest = sorted(entries, key=lambda key: entries[key]["at"], reverse=True)[: int(FANS_MAX_ENTRIES * 0.9)]
+                self._data = {key: entries[key] for key in newest}
+            self._dirty = True
+        return fans
+
+    def save(self) -> None:
+        with self._lock:
+            if not self._dirty or self._data is None:
+                return
+            path = self._file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(self._data, ensure_ascii=False), encoding="utf-8")
+            self._dirty = False
+
+
+def enrich(plays: list[dict], after: float, counts: ListenerCounts | None, fans: ArtistFans, dz: Deezer,
+           budget: int = LOOKUPS_PER_LOOP) -> None:
+    """Looks up what the rich medals need for plays after `after`: at most `budget` Last.fm and `budget` fans
+    lookups; a failure stops that kind until the next loop (and is logged)."""
+    asked = {"lastfm": 0, "fans": 0}
+    going = {"lastfm": counts is not None, "fans": True}
+    for item in plays:
+        if item["at"] <= after:
+            continue
+        name = _artist_name(item)
+        if not name:
+            continue
+        if going["lastfm"] and counts.cached(name, item["title"]) is None:
+            if asked["lastfm"] >= budget:
+                going["lastfm"] = False
+            else:
+                asked["lastfm"] += 1
+                try:
+                    counts.get(name, item["title"])
+                except LastFmError as err:
+                    log.warning("Achievements: Last.fm lookups wait for the next loop (%s)", err.kind)
+                    going["lastfm"] = False
+        if going["fans"] and not fans.known(name):
+            if asked["fans"] >= budget:
+                going["fans"] = False
+            else:
+                asked["fans"] += 1
+                try:
+                    fans.get(dz, name)
+                except DeezerError as err:
+                    log.warning("Achievements: fans lookups wait for the next loop (%s)", err)
+                    going["fans"] = False
+        if not any(going.values()):
+            break
+
+
+def rich_pass(user_id: str, plays: list[dict], ctx: Context, lastfm: bool, counts: ListenerCounts | None,
+              fans: ArtistFans) -> list[str]:
+    """Plays whose numbers are known, in order, into the "rich" medals; stops at the first play still waiting."""
+    with _lock:
+        data = load(user_id)
+        if not data["on"]:
+            return []
+        pending = _pending(data, "rich", lastfm)
+        new, last = [], None
+        for item in sorted(plays, key=lambda item: item["at"]):
+            if item["at"] <= data["rich_through"]:
+                continue
+            name = _artist_name(item)
+            if name and ((counts is not None and counts.cached(name, item["title"]) is None) or not fans.known(name)):
+                break  # its numbers aren't known yet: the next loop picks up from here
+            medal_rules.rich_update(data["stats"], item, ctx)
+            new += _award_due(data, pending, item, ctx, item["at"])
+            last = item["at"]
+        if last is not None:
+            data["rich_through"] = last
+            _write(_file(user_id), data)
         return new
 
 

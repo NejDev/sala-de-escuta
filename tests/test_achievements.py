@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest import mock
 
 from spotify_assistant import achievements, config, i18n, medals, reviews, social
+from spotify_assistant.deezer import DeezerError
+from spotify_assistant.lastfm import LastFmError, Listeners
 from spotify_assistant.medal_rules import Context
 from tests.test_medal_rules import at, play
 
@@ -168,6 +170,98 @@ class ViewTest(Room):
         self.assertEqual(self.view("ana")["people"], [])
         self.assertEqual(achievements.highlights_of("paulo", False), [])
         self.assertEqual(achievements.summary("paulo", False), {"on": False, "new": 0})
+
+
+class FakeCounts:
+    """Last.fm with a cache: titles it knows have listeners, others no record."""
+
+    def __init__(self, listeners=None, error=None):
+        self.listeners, self.error, self.asked, self.known = listeners or {}, error, [], {}
+
+    def cached(self, artist, title):
+        return self.known.get((artist, title))
+
+    def get(self, artist, title, fresh_s=None):
+        self.asked.append((artist, title))
+        if self.error:
+            raise LastFmError(self.error)
+        self.known[(artist, title)] = Listeners(self.listeners.get(title), None)
+        return self.known[(artist, title)]
+
+
+class FakeDeezer:
+    def __init__(self, fans=None, error=False):
+        self.fans, self.error, self.asked = fans or {}, error, []
+
+    def search_artist(self, name):
+        self.asked.append(name)
+        if self.error:
+            raise DeezerError("down")
+        return {"nb_fan": self.fans[name]} if name in self.fans else None
+
+
+class LookupTest(Room):
+    def fans(self):
+        return achievements.ArtistFans(path=self.data / "fans.json")
+
+    def plays(self, count):
+        return [play(uri=f"s{n}", title=f"Song {n}", artists=(f"A{n}",), when=at() + n) for n in range(count)]
+
+    def test_artist_fans_are_asked_once_and_kept(self):
+        dz, fans = FakeDeezer({"Banda": 500}), self.fans()
+        self.assertFalse(fans.known("Banda"))
+        self.assertEqual((fans.get(dz, "Banda"), fans.get(dz, "BANDA "), fans.get(dz, "Ninguém")), (500, 500, None))
+        fans.save()
+        again = self.fans()
+        self.assertTrue(again.known("Ninguém"))
+        self.assertEqual((again.cached("Ninguém"), again.cached("banda")), (None, 500))
+        self.assertEqual(dz.asked, ["Banda", "Ninguém"])
+
+    def test_lookups_are_capped_per_loop(self):
+        counts, dz, fans = FakeCounts(), FakeDeezer(), self.fans()
+        achievements.enrich(self.plays(5), 0, counts, fans, dz, budget=3)
+        self.assertEqual((len(counts.asked), len(dz.asked)), (3, 3))
+        achievements.enrich(self.plays(5), 0, counts, fans, dz, budget=3)
+        self.assertEqual((len(counts.asked), len(dz.asked)), (5, 5))  # the next loop goes on from there
+
+    def test_a_failure_stops_only_that_kind_of_lookup(self):
+        counts, dz = FakeCounts(error="down"), FakeDeezer()
+        achievements.enrich(self.plays(5), 0, counts, self.fans(), dz)
+        self.assertEqual((len(counts.asked), len(dz.asked)), (1, 5))
+        counts, dz = FakeCounts(), FakeDeezer(error=True)
+        achievements.enrich(self.plays(5), 0, counts, self.fans(), dz)
+        self.assertEqual((len(counts.asked), len(dz.asked)), (5, 1))
+
+    def test_rich_medals_wait_for_their_numbers(self):
+        self.join("paulo")
+        plays = [play(uri="a", title="Rara", artists=("Pequena",), when=at()),
+                 play(uri="b", title="Outra", artists=("Grande",), when=at() + 300)]
+        counts, dz, fans = FakeCounts({"Rara": 30, "Outra": 5000}), FakeDeezer({"Pequena": 50, "Grande": 20_000_000}), self.fans()
+        ctx = achievements.context("paulo", counts, fans)
+        achievements.enrich(plays, 0, counts, fans, dz, budget=1)  # only the first play's numbers
+        new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans)
+        self.assertIn("rare-50", new)
+        self.assertNotIn("giant", new)
+        data = achievements.load("paulo")
+        self.assertEqual(data["rich_through"], plays[0]["at"])
+        self.assertEqual(data["earned"]["rare-50"]["lastfm"], {"listeners": 30, "url": None})
+        self.assertEqual(data["earned"]["rare-50"]["song"]["title"], "Rara")
+        achievements.enrich(plays, data["rich_through"], counts, fans, dz)
+        self.assertIn("giant", achievements.rich_pass("paulo", plays, ctx, True, counts, fans))
+
+    def test_without_a_key_there_are_no_rare_medals(self):
+        self.join("paulo")
+        dz, fans = FakeDeezer({"Pequena": 50}), self.fans()
+        plays = [play(artists=("Pequena",))]
+        achievements.enrich(plays, 0, None, fans, dz)
+        new = achievements.rich_pass("paulo", plays, achievements.context("paulo", None, fans), False, None, fans)
+        self.assertIn("fans-100", new)
+        self.assertFalse(any(medal_id.startswith("rare") for medal_id in new))
+
+    def test_a_blank_credit_is_not_looked_up(self):
+        counts, dz = FakeCounts(), FakeDeezer()
+        achievements.enrich([play(artists=("\xa0, \xa0",))], 0, counts, self.fans(), dz)
+        self.assertEqual((counts.asked, dz.asked), ([], []))
 
 
 if __name__ == "__main__":
