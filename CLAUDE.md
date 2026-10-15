@@ -18,10 +18,13 @@ python -m spotify_assistant ui             # the panel at http://127.0.0.1:8888
 python -m spotify_assistant refresh        # rebuild favorites that are due (the panel does it by itself)
 ```
 
-On the owner's PC the panel runs hidden as the scheduled task `Sala de escuta - painel`
-(`scripts/start-with-windows.ps1`). After Python changes, restart it:
-`Stop-ScheduledTask -TaskName 'Sala de escuta - painel'; Start-ScheduledTask -TaskName 'Sala de escuta - painel'`.
-Static files are read from disk on each request (images are cached by browsers for 7 days).
+The owner's room runs on a Linux server (Oracle Cloud, `docs/oracle-cloud.md`) as the systemd service
+`sala-de-escuta`, published with Tailscale Funnel; the PC's scheduled task `Sala de escuta - painel` is
+disabled and the PC's `data/` is only an old copy. After pushing, update the server over SSH with
+`bash ~/sala-de-escuta/scripts/install-linux.sh` (pulls and restarts). Never run the panel on the PC
+with that copy while the server is up: both would refresh the same Spotify tokens.
+Static files are read from disk on each request (images are cached by browsers for 7 days; bump the
+`?v=` on image URLs when an image changes).
 
 ## Map
 
@@ -59,8 +62,10 @@ Static files are read from disk on each request (images are cached by browsers f
 
 Headless Chrome through the DevTools Protocol (Node script, not in the repo): emulate desktop and
 phone sizes, set the `sala` session cookie and `localStorage` (`lang`, `tour-seen`), take screenshots,
-and collect console errors. Create the session with `accounts.Sessions().create(config.owner_id())`
-**before** restarting the panel (sessions are loaded at startup) and end it afterwards. Mock discoveries
+and collect console errors. Reach the server's panel through an SSH tunnel
+(`ssh -L 8888:127.0.0.1:8888 <server>`, then use http://127.0.0.1:8888). Create the session on the
+server with `accounts.Sessions().create(config.owner_id())` (run with `~/sala-de-escuta/.venv/bin/python`)
+**before** `sudo systemctl restart sala-de-escuta` (sessions are loaded at startup) and end it afterwards. Mock discoveries
 by setting `state.hunt` with `Runtime.evaluate` and calling `renderHunt()`; never click buttons that
 create or change playlists on the real account.
 
