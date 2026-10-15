@@ -85,11 +85,14 @@ para não ouvir a mesma prévia duas vezes.
 - **Roleta**: o mascote revira um caixote de discos enquanto sorteia álbuns pouco ouvidos de um ano
   qualquer e faixas menos populares de playlists de gêneros do mundo todo (zamrock, enka, huayno,
   ethio jazz...). A lista de gêneros é `WORLD_GENRES`, em `spotify_assistant/discovery.py`.
+  Escolha **Gênero pouco conhecido** para sortear só dessa lista, um gênero diferente em cada carta.
 - **Toca do coelho**: parte de um artista (digitado ou sorteado das suas playlists) e pula 4 vezes
   para artistas relacionados, sempre entre os menos conhecidos. Mostra o caminho todo e o número de fãs.
 
-As duas aceitam um gênero opcional (roleta) e o tamanho do artista em fãs (mínimo e máximo). Nenhuma
-API gratuita diz quantas vezes uma música foi tocada; o número de fãs do artista é a medida disponível.
+As duas aceitam um gênero opcional (roleta) e o tamanho do artista em fãs (mínimo e máximo; o menor
+teto é 200). Nenhuma API gratuita diz quantas vezes uma música foi tocada; o número de fãs do artista é a
+medida disponível. Com teto de 1 mil fãs ou menos, a roleta deixa de lado os álbuns pouco ouvidos:
+cada um custa uma busca no Spotify e quase nenhum cabe.
 
 ### Novidades
 

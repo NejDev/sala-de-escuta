@@ -1,4 +1,5 @@
 import json
+import struct
 import tempfile
 import threading
 import unittest
@@ -212,6 +213,21 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.request("/app.js", as_user=None)[0], 200)
         self.assertEqual(self.request("/../dashboard.py")[0], 404)
         self.assertEqual(self.request("/%2e%2e/dashboard.py")[0], 404)
+
+    def test_phones_get_a_manifest_with_sharp_icons(self):
+        # Browsers fetch the manifest without cookies.
+        status, body = self.request("/manifest.webmanifest", as_user=None)
+        self.assertEqual(status, 200)
+        manifest = json.loads(body)
+        self.assertEqual(manifest["background_color"], "#0E1525")
+        purposes = {icon.get("purpose", "any") for icon in manifest["icons"]}
+        self.assertEqual(purposes, {"any", "maskable"})
+        for icon in manifest["icons"]:
+            status, image = self.request(icon["src"], as_user=None)
+            self.assertEqual(status, 200, icon["src"])
+            width, height = struct.unpack(">II", image[16:24])  # PNG header
+            self.assertEqual(f"{width}x{height}", icon["sizes"], icon["src"])
+        self.assertIn(b'rel="manifest"', self.request("/", as_user=None)[1])
 
     def test_api_requires_login(self):
         status, body = self.request("/api/overview", as_user=None)
@@ -482,6 +498,16 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(start({"kind": "roulette", "genre": "k-pop", "max_fans": 100000}), 200)
         hunt = self.server.app.profile("paulo").hunt
         self.assertEqual(hunt.label, "Roleta: k-pop")
+
+    def test_roulette_of_little_known_genres_is_kept_in_the_recipe(self):
+        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
+            self.assertEqual(self.request("/api/hunts", {"kind": "roulette", "rare": True})[0], 200)
+            hunt = self.server.app.profile("paulo").hunt
+            self.assertEqual(hunt.label, "Roleta: gênero pouco conhecido")
+            self.assertTrue(hunt.recipe["rare"])
+            # A genre typed by the person wins.
+            self.assertEqual(self.request("/api/hunts", {"kind": "roulette", "rare": True, "genre": "fado"})[0], 200)
+            self.assertFalse(self.server.app.profile("paulo").hunt.recipe["rare"])
 
     def test_discoveries_refuse_right_away_while_search_is_paused(self):
         with mock.patch.object(dashboard.gate, "remaining", return_value=3600):

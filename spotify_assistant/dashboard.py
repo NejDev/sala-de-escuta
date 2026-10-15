@@ -47,6 +47,7 @@ CONTENT_TYPES = {
     ".svg": "image/svg+xml",
     ".webp": "image/webp",
     ".png": "image/png",
+    ".webmanifest": "application/manifest+json",  # name, colors and icons when the panel is added to a phone
 }
 IMAGE_SUFFIXES = {".svg", ".webp", ".png"}  # the mascot never changes: the browser may keep it
 PLAYLIST_PATH = re.compile(r"/api/playlists/(?P<name>[^/]+)(?P<items>/items)?")
@@ -530,11 +531,13 @@ class App:
                     cache.save()
         elif kind == "roulette":
             genre = genre_from(body)
-            recipe["genre"] = genre
-            hunt = Hunt("roulette", t("label.roulette_genre", genre=genre) if genre else t("label.roulette"))
+            rare = not genre and bool(body.get("rare"))  # a typed genre wins over "little-known genre"
+            recipe.update(genre=genre, rare=rare)
+            label = t("label.roulette_genre", genre=genre) if genre else t("label.roulette")
+            hunt = Hunt("roulette", t("label.roulette_rare") if rare else label)
 
             def task() -> None:
-                discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked, genre=genre, size=size)
+                discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked, genre=genre, size=size, rare=rare)
         elif kind == "rabbit":
             seed = (body.get("seed") or "").strip()
             recipe["seed"] = seed

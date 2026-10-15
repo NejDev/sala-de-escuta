@@ -1,0 +1,15 @@
+{
+  "name": "Sala de escuta",
+  "short_name": "Sala de escuta",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0E1525",
+  "theme_color": "#0E1525",
+  "icons": [
+    { "src": "/icon-192.png?v=1", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png?v=1", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-maskable-192.png?v=1", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-maskable-512.png?v=1", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

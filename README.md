@@ -85,11 +85,14 @@ range from 0 to 1, color and the searches used as sources). Measurements are cac
 - **Roulette**: the mascot digs through a crate of records while drawing barely-played albums from
   a random year and less popular tracks from playlists of genres from all over the world (zamrock,
   enka, huayno, ethio jazz...). The genre list is `WORLD_GENRES`, in `spotify_assistant/discovery.py`.
+  Pick **Little-known genre** to draw only from that list, a different genre on each card.
 - **Rabbit hole**: starts from an artist (typed in or drawn from your playlists) and hops 4 times to
   related artists, always among the lesser-known ones. Shows the whole path and the number of fans.
 
-Both take an optional genre (roulette) and the artist's size in fans (minimum and maximum). No free
-API says how many times a song was played; the artist's fan count is the measure available.
+Both take an optional genre (roulette) and the artist's size in fans (minimum and maximum; the
+smallest cap is 200). No free API says how many times a song was played; the artist's fan count is the measure
+available. With a cap of 1,000 fans or less, the roulette skips the barely-played albums: each one
+costs a Spotify search and almost none fits.
 
 ### New releases
 

@@ -277,6 +277,7 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         # Discoveries: labels
         "label.roulette": "Roleta",
         "label.roulette_genre": "Roleta: {genre}",
+        "label.roulette_rare": "Roleta: gênero pouco conhecido",
         "label.rabbit": "Toca do coelho",
         "label.news": "Novidades: {genre}",
         # Sensations
@@ -528,6 +529,7 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         # Discoveries: labels
         "label.roulette": "Roulette",
         "label.roulette_genre": "Roulette: {genre}",
+        "label.roulette_rare": "Roulette: little-known genre",
         "label.rabbit": "Rabbit hole",
         "label.news": "New releases: {genre}",
         # Sensations

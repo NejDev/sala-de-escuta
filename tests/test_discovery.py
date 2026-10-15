@@ -1,4 +1,5 @@
 import random
+import re
 from datetime import date, timedelta
 import tempfile
 import unittest
@@ -171,6 +172,12 @@ class ReligiousFilterTest(unittest.TestCase):
 
     def test_devotional_genres_are_not_in_the_roulette(self):
         self.assertFalse({"qawwali", "gnawa", "carnatic"} & set(discovery.WORLD_GENRES))
+
+    def test_little_known_genres_stay_away_from_the_suggestions(self):
+        app = (Path(discovery.__file__).parent / "static" / "app.js").read_text(encoding="utf-8")
+        listed = re.search(r"const GENRE_SUGGESTIONS = \[(.*?)\];", app, re.S).group(1)
+        suggested = {name.lower() for name in re.findall(r'"([^"]+)"', listed)}
+        self.assertEqual(suggested & set(discovery.WORLD_GENRES), set())
 
 
 class BlockedArtistsTest(FreshMatches):
@@ -369,6 +376,37 @@ class FiltersTest(FreshMatches):
         find = discovery.world_genre_pick(FakeSpotify(), deezer, random.Random(1), genre="k-pop",
                                           size=discovery.FanRange(1000, 100_000))
         self.assertEqual((find.uri, find.fans, find.tag), ("spotify:track:2", 3_000, "K-pop"))
+
+    def every_genre_deezer(self):
+        """A playlist for each little-known genre, each with its own track and a 300-fan artist."""
+        genres = discovery.WORLD_GENRES
+        return FakeDeezer(
+            playlists={genre: [{"id": genre, "nb_tracks": 30, "title": genre}] for genre in genres},
+            tracks={genre: [{**song(number, genre, number, f"Artista {number}"), "preview": "120:0.8"}]
+                    for number, genre in enumerate(genres)},
+            fans={number: 300 for number in range(len(genres))},
+        )
+
+    def spin(self, **options):
+        sp = FakeSpotify()
+        sp.search = mock.Mock(wraps=sp.search)
+        hunt = discovery.Hunt("roulette", "Roleta")
+        discovery.roulette(hunt, sp, self.every_genre_deezer(), random.Random(3), count=4, **options)
+        searched = [call.args[0] for call in sp.search.call_args_list]
+        return hunt, searched
+
+    def test_little_known_roulette_mixes_genres_from_playlists_only(self):
+        hunt, searched = self.spin(rare=True)
+        self.assertEqual(len(hunt.finds), 4)
+        self.assertEqual(len({find.tag for find in hunt.finds}), 4)  # one genre per card
+        self.assertTrue(all(query.startswith("isrc:") for query in searched))  # no barely-played albums
+
+    def test_tight_cap_skips_barely_played_albums(self):
+        # Each album attempt costs a Spotify search and rarely fits a small cap: a spin would become a burst.
+        _, searched = self.spin(size=discovery.FanRange(0, 500))
+        self.assertTrue(all(query.startswith("isrc:") for query in searched))
+        _, searched = self.spin(size=discovery.FanRange(0, 10_000))
+        self.assertTrue(any(query.startswith("tag:hipster") for query in searched))
 
 
 class NewsTest(FreshMatches):

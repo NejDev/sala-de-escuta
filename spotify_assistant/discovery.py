@@ -45,10 +45,14 @@ SIZE_BATCH = 24  # tracks whose artist's fans are checked at once (Sensations)
 NEWS_RESULTS = 24
 NEWS_MAX_ARTISTS = 45  # right-sized artists whose releases we look at
 NEWS_ARTIST_POOL = 120  # genre artists gathered from playlists, before the fans filter
+# With a cap this small, the roulette skips barely-played albums: each costs a Spotify search and
+# almost none fits, so a spin would turn into a burst of searches.
+TIGHT_CAP = 1_000
 
-# Searches that bring up typical tracks of each genre on Deezer. Edit freely.
+# Searches that bring up typical tracks of each genre on Deezer. Edit freely, but leave out the
+# panel's suggestions (GENRE_SUGGESTIONS in app.js): "little-known genre" draws only from here.
 WORLD_GENRES = (
-    "zamrock", "ethio jazz", "afrobeat", "highlife", "city pop", "enka", "rebetiko", "fado",
+    "zamrock", "ethio jazz", "afrobeat", "highlife", "enka", "rebetiko", "fado",
     "chamamé", "cumbia psicodélica", "chicha peruana", "tropicália", "baião", "frevo", "carimbó",
     "lambada", "kizomba", "semba", "mbalax", "soukous", "raï", "dangdut",
     "kroncong", "j-jazz", "shibuya-kei", "anatolian rock", "arabesk", "klezmer", "balkan brass",
@@ -57,9 +61,9 @@ WORLD_GENRES = (
     "northern soul", "yacht rock", "krautrock", "italo disco", "chanson", "yé-yé", "schlager",
     "joik", "sea shanty", "irish trad", "flamenco", "rumba catalana", "huayno", "forró pé de serra",
     "samba rock", "choro", "maracatu", "brega", "tecnobrega", "manguebeat", "sertanejo raiz",
-    "jovem guarda", "exotica", "space age pop", "library music", "vaporwave", "shoegaze",
+    "jovem guarda", "exotica", "space age pop", "library music", "vaporwave",
     "dream pop", "math rock", "post-rock", "midwest emo", "trip hop", "jungle", "uk garage",
-    "footwork", "amapiano", "gqom", "kuduro", "grime", "zouk", "gamelan", "throat singing",
+    "footwork", "gqom", "kuduro", "grime", "zouk", "gamelan", "throat singing",
     "hawaiian slack key", "bossa nova japonesa", "turkish psych", "persian pop",
 )
 
@@ -819,16 +823,19 @@ def world_genre_pick(
 def roulette(
     hunt: Hunt, sp: Spotify, dz: Deezer, rng: random.Random, count: int = ROULETTE_COUNT,
     blocked: Collection[str] = frozenset(), genre: str | None = None, size: FanRange = ANY_SIZE,
+    rare: bool = False,
 ) -> None:
+    """Without a genre, alternates genre playlists with lost albums from any year; `rare` keeps only
+    the playlists, drawing a different little-known genre on each attempt."""
     hunt.total = count
     hunt.message = t("roulette.spinning")
     attempts = 0
-    budget = count * (6 if genre or size.active else 4)  # filters throw away more attempts
+    budget = count * (6 if genre or rare or size.active else 4)  # filters throw away more attempts
+    playlists_only = bool(genre) or rare or (size.max is not None and size.max <= TIGHT_CAP)
     while len(hunt.finds) < count and attempts < budget and not hunt.cancelled:
         attempts += 1
         try:
-            # With a genre, only that genre's playlists; without one, alternate with lost albums from any year.
-            if genre or attempts % 2 == 0:
+            if playlists_only or attempts % 2 == 0:
                 find = world_genre_pick(sp, dz, rng, blocked, genre=genre, size=size)
             else:
                 find = obscure_album_pick(sp, rng, blocked, dz=dz, size=size)

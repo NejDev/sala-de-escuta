@@ -98,7 +98,7 @@ const RELEASE_TYPES = ["album", "single", "feature", "compilation"];
 
 // Artist size is measured in fans: no free API says how many times a song was played.
 const SIZE_MIN = ["", "100", "1000", "10000", "100000", "1000000"];
-const SIZE_MAX = ["", "1000", "10000", "100000", "1000000", "10000000"];
+const SIZE_MAX = ["", "200", "500", "1000", "10000", "100000", "1000000", "10000000"];
 const PERIODS = ["0", "3", "7", "14", "30", "90"];
 const GENRE_SUGGESTIONS = [
   "K-pop", "J-pop", "Funk", "Trap", "Rap", "Drill", "Phonk", "Sertanejo", "Pagode", "Samba", "MPB", "Forró",
@@ -843,6 +843,7 @@ function senseIntro() {
 }
 
 function discoverIntro() {
+  if (rouletteGenre().rare) state.filters.rouletteGenre = t("genre.rare");  // in the current language
   const seed = h("input", {
     class: "adder-input",
     id: "seed-input",
@@ -859,10 +860,11 @@ function discoverIntro() {
   return [
     viewHead("roulette", t("view.discover"), t("discover.description"), pauseNotice()),
     h("div", { class: "filters" },
-      genreField("roulette-genre", "rouletteGenre", t("discover.genre_label"), t("discover.genre_any")),
+      genreField("roulette-genre", "rouletteGenre", t("discover.genre_label"), t("discover.genre_any"), false,
+        "roulette-genre-list"),
       ...sizeFilters(),
       h("p", { class: "filter-hint" }, t("discover.size_hint")),
-      genreList()),
+      genreList("roulette-genre-list", [t("genre.rare")])),
     h("div", { class: "paths" },
       h("section", { class: "path path-roulette", style: "--tone: #F2C14E" },
         h("h2", { class: "path-name" }, t("discover.roulette")),
@@ -870,7 +872,7 @@ function discoverIntro() {
         h("button", {
           class: "play-button",
           type: "button",
-          onclick: () => startHunt({ kind: "roulette", genre: state.filters.rouletteGenre, ...sizeBody() }),
+          onclick: () => startHunt({ kind: "roulette", ...rouletteGenre(), ...sizeBody() }),
         }, t("discover.spin")),
         digger()),
       h("section", { class: "path", style: "--tone: #9DB4E6" },
@@ -906,12 +908,12 @@ function choice(id, label, options, key) {
   return h("label", { class: "filter", for: id }, h("span", { class: "filter-label" }, label), control);
 }
 
-function genreField(id, key, label, placeholder, required = false) {
+function genreField(id, key, label, placeholder, required = false, list = "genre-list") {
   const input = h("input", {
     class: "filter-control filter-genre",
     id,
     type: "text",
-    list: "genre-list",
+    list,
     maxlength: "40",
     autocomplete: "off",
     spellcheck: "false",
@@ -931,9 +933,16 @@ function sizeFilters() {
   ];
 }
 
-function genreList() {
-  return h("datalist", { id: "genre-list" },
-    GENRE_SUGGESTIONS.map((genre) => h("option", { value: genre.startsWith("genre.") ? t(genre) : genre })));
+function genreList(id = "genre-list", first = []) {
+  const genres = GENRE_SUGGESTIONS.map((genre) => (genre.startsWith("genre.") ? t(genre) : genre));
+  return h("datalist", { id }, [...first, ...genres].map((genre) => h("option", { value: genre })));
+}
+
+/** The roulette's genre, or "little-known genre" (matched in either language, so a saved choice survives a switch). */
+function rouletteGenre() {
+  const typed = (state.filters.rouletteGenre || "").trim();
+  const rare = LANGS.some((lang) => STRINGS[lang]["genre.rare"].toLowerCase() === typed.toLowerCase());
+  return rare ? { rare: true } : { genre: typed };
 }
 
 // ---------- Friends: musical affinity and matches (only who joins)
@@ -1609,7 +1618,7 @@ function shortcutCards() {
   const startIn = (view, body) => () => go(view).then(() => startHunt({ ...body, ...sizeBody() }));
   return h("div", { class: "shortcuts" },
     card("#F2C14E", t("discover.roulette"), t("home.roulette_text"), t("discover.spin"),
-      startIn("discover", { kind: "roulette", genre: state.filters.rouletteGenre })),
+      startIn("discover", { kind: "roulette", ...rouletteGenre() })),
     card("#9DB4E6", t("discover.rabbit"), t("home.rabbit_text"), t("discover.enter"),
       startIn("discover", { kind: "rabbit", seed: "" })),
     genre
