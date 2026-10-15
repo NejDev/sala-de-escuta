@@ -23,6 +23,7 @@ BLOCKED_FILE = ROOT / "bloqueados.json"  # legacy single-user file, moved on sta
 TEMPO_CACHE_FILE = DATA_DIR / "tempo-cache.json"
 MATCH_CACHE_FILE = DATA_DIR / "spotify-matches.json"
 SPOTIFY_PAUSES_FILE = DATA_DIR / "spotify-pauses.json"
+MUSICBRAINZ_CACHE_FILE = DATA_DIR / "musicbrainz-cache.json"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8888/callback"
 
 

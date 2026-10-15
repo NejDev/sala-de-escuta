@@ -58,6 +58,9 @@ class CatalogTest(unittest.TestCase):
         used |= {f"period.{days}" for days in (0, 3, 7, 14, 30, 90)}
         used |= {f"player.repeat_{mode}" for mode in ("off", "context", "track")}
         used |= {f"every.{every}" for every in ("daily", "weekly", "monthly")}
+        kinds = ("album", "single", "feature", "compilation")
+        used |= {f"artists.{part}.{kind}" for part in ("type", "badge", "count") for kind in kinds}
+        used |= {f"artists.order.{order}" for order in ("new", "old")} | {"hunt.again.artist"}
         tour = re.search(r"const TOUR = \[(.*?)\];", app, re.S).group(1)
         used |= {f"tour.{key}.{part}" for key in re.findall(r'key: "(\w+)"', tour) for part in ("title", "text")}
         page = (STATIC / "index.html").read_text(encoding="utf-8")

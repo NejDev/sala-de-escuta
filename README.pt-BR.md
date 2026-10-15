@@ -10,6 +10,7 @@ em português ou inglês.
 - **Descobrir**: uma roleta de discos pouco ouvidos do mundo todo e uma toca do coelho que pula de
   um artista que você curte para os menos conhecidos.
 - **Novidades**: o que acabou de sair num gênero, só de artistas do tamanho que você escolher.
+- **Artistas**: tudo o que uma banda ou artista lançou, com o trabalho solo de cada integrante e as participações.
 - **Favoritas que se atualizam sozinhas**: transforme uma seleção numa playlist que ganha músicas
   novas todo dia, toda semana ou todo mês. Só essas playlists especiais ficam na barra do topo.
 - **Início**: uma sugestão para a hora do dia, o que está tocando, suas favoritas, atalhos e achados recentes.
@@ -95,6 +96,19 @@ Escolha um gênero (ex.: K-pop), o tamanho do artista e o período (hoje, ou os 
 levanta artistas do gênero em playlists, filtra pelos fãs, olha os lançamentos de cada um e mostra a
 faixa principal de cada lançamento, do mais novo para o mais antigo. Versões "clean" do mesmo
 lançamento são juntadas, e em trilhas sonoras vale a faixa do próprio artista.
+
+### Artistas
+
+Digite uma banda ou um artista, de qualquer gênero (ex.: Racionais MC's, TWICE, Coldplay), e veja tudo
+o que lançou: álbuns, singles e EPs, participações em músicas de outros artistas, coletâneas e trilhas,
+mais o trabalho solo e as participações de cada integrante e subunidade (inclusive ex-integrantes).
+Filtre por pessoa e por tipo, e ordene dos mais recentes ou dos mais antigos. Uma participação toca a
+partir da faixa em que a pessoa aparece.
+
+Quem faz parte de uma banda vem do [MusicBrainz](https://musicbrainz.org) (dados abertos, sem chave; um
+pedido por segundo, guardado por um mês em `data/musicbrainz-cache.json`), que também liga cada pessoa
+ao perfil dela no Spotify. Integrantes sem esse link são procurados pelo nome, e ficam de fora quando o
+nome é ambíguo. Essa busca quase não usa a busca da Spotify, então funciona mesmo com a busca pausada.
 
 ### Guardar o que gostou
 

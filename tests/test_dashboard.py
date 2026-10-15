@@ -59,6 +59,10 @@ class FakeSpotify:
     def set_repeat(self, mode):
         self.repeat = mode
 
+    def album_tracks(self, album_id):
+        return [{"uri": "spotify:track:a", "artists": [{"id": "someone"}]},
+                {"uri": "spotify:track:b", "artists": [{"id": "someone"}, {"id": "nayeon"}]}]
+
     def save_to_library(self, uris):
         self.library = getattr(self, "library", set()) | set(uris)
 
@@ -281,7 +285,13 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.post(f"/api/favorites/{fav_id}", {"every": "hourly"}, as_user="ana")[0], 400)
         self.assertEqual(self.post(f"/api/favorites/{fav_id}", {"every": "daily"})[0], 404)  # not the owner's
         self.assertEqual(self.post(f"/api/favorites/{fav_id}/remove", {}, as_user="ana")[0], 200)
-        self.assertEqual(favorites.load("ana"), [])
+        # Off the bar but kept, recipe and all, so it can come back.
+        self.assertEqual(self.bar("ana"), [])
+        self.assertEqual(json.loads(self.request("/api/overview", as_user="ana")[1])["hidden"],
+                         [{"id": fav_id, "name": "Roleta da Ana"}])
+        self.assertTrue(favorites.load("ana")[0]["hidden"])
+        self.assertEqual(self.post(f"/api/favorites/{fav_id}/show", {}, as_user="ana")[0], 200)
+        self.assertEqual([p["name"] for p in self.bar("ana")], ["Roleta da Ana"])
 
     def bar(self, user_id="paulo"):
         return json.loads(self.request("/api/overview", as_user=user_id)[1])["playlists"]
@@ -492,6 +502,21 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.post("/api/player", {"action": "repeat", "value": "off"}, as_user="ana")[0], 200)
         status, data = self.post("/api/player", {"action": "like", "uri": "spotify:track:1", "value": True}, as_user="ana")
         self.assertEqual((status, data.get("scope")), (403, True))
+
+    def test_artists_search_is_checked_and_runs_while_search_is_paused(self):
+        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
+            self.assertEqual(self.request("/api/hunts", {"kind": "artist", "name": "  "})[0], 400)
+            self.assertEqual(self.request("/api/hunts", {"kind": "artist", "name": "x" * 61})[0], 400)
+            with mock.patch.object(dashboard.gate, "remaining", return_value=3600):
+                status, body = self.request("/api/hunts", {"kind": "artist", "name": "  Racionais   MC's "})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["label"], "Racionais MC's")
+
+    def test_a_feature_plays_from_the_right_track(self):
+        status, data = self.post("/api/artists/track", {"album": "abc123", "artists": ["nayeon"]})
+        self.assertEqual((status, data["uri"]), (200, "spotify:track:b"))
+        self.assertEqual(self.post("/api/artists/track", {"album": "abc123", "artists": ["nobody"]})[0], 404)
+        self.assertEqual(self.post("/api/artists/track", {"album": "../x", "artists": ["nayeon"]})[0], 400)
 
     def test_repeat_takes_only_spotify_modes(self):
         self.assertEqual(self.request("/api/player", {"action": "repeat", "value": "track"})[0], 200)

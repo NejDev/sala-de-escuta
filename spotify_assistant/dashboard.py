@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import accounts, config, curation, discovery, favorites, i18n, tempo
+from . import accounts, artists, config, curation, discovery, favorites, i18n, tempo
 from .api import Spotify, SpotifyError, gate
 from .auth import (
     LIBRARY_SCOPES, PLAYER_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes, start_authorization,
@@ -34,6 +34,7 @@ from .config import (
 from .deezer import Deezer, DeezerError
 from .discovery import Hunt
 from .i18n import t
+from .musicbrainz import MusicBrainz
 from .playlists import owned_playlists, run
 from .views import item_row, pick_image
 
@@ -58,6 +59,7 @@ MAX_BODY_BYTES = 64_000
 COOKIE_NAME = "sala"
 LIBRARY_KEY = re.compile(r"id:(?P<id>[A-Za-z0-9]{1,64})")
 TRACK_URI = re.compile(r"spotify:track:[A-Za-z0-9]{1,64}")
+PLAYLIST_ID_LIKE = re.compile(r"[A-Za-z0-9]{1,64}")  # Spotify ids are base62
 LIKEABLE = re.compile(r"spotify:(?P<kind>track|episode):[A-Za-z0-9]{1,64}")
 PLAYLIST_NAME_MAX = 100
 SAVE_MAX_TRACKS = 500
@@ -226,6 +228,7 @@ class App:
         self.settings = settings
         self.sessions = accounts.Sessions()
         self.deezer = Deezer()
+        self.musicbrainz = MusicBrainz()
         self._profiles: dict[str, Profile] = {}
         self._profiles_lock = threading.Lock()
         self._pending: dict[str, AuthRequest] = {}
@@ -279,6 +282,7 @@ class App:
         return {
             "me": {"id": user.id, "name": accounts.display_name(user.id), "is_owner": user.is_owner},
             "playlists": self._shelf(user, library),
+            "hidden": [{"id": fav["id"], "name": fav["name"]} for fav in self._favorites(user) if fav.get("hidden")],
             "max_favorites": favorites.MAX_FAVORITES,
             "player_ready": not missing_scopes(user.paths.token, PLAYER_SCOPES),
             "search_paused_s": gate.remaining("search"),
@@ -291,6 +295,9 @@ class App:
         specs = {spec["name"]: spec for spec in load_playlists()["playlists"]} if user.is_owner else {}
         shelf, gone = [], set()
         for fav in self._favorites(user):
+            if fav["kind"] != "curated" and fav.get("playlist_id") not in owned:
+                gone.add(fav["id"])  # deleted in the Spotify app: it leaves the Sala too
+                continue
             if fav.get("hidden"):
                 continue
             if fav["kind"] == "curated":
@@ -306,10 +313,7 @@ class App:
                 if "mix" in spec:
                     item["sources"] = spec["mix"]["from"]
             else:
-                remote = owned.get(fav["playlist_id"])
-                if remote is None:  # deleted in the Spotify app: it leaves the bar
-                    gone.add(fav["id"])
-                    continue
+                remote = owned[fav["playlist_id"]]
                 item = {
                     "key": f"fav:{fav['id']}",
                     "name": remote["name"],
@@ -490,7 +494,8 @@ class App:
             raise UserError(pause_message(SpotifyError(429, "paused", retry_after=paused, family="search")), 429)
 
     def start_hunt(self, user: Profile, body: dict) -> dict:
-        self._check_search()
+        if body.get("kind") != "artist":  # the Artists search mostly finds people through MusicBrainz
+            self._check_search()
         hunt, task = self._hunt_task(user, self.spotify(user), body, random.Random())
         with user.lock:
             if user.hunt:
@@ -548,10 +553,33 @@ class App:
 
             def task() -> None:
                 discovery.news(hunt, sp, self.deezer, genre, size, days, blocked=user.blocked)
+        elif kind == "artist":
+            name = " ".join(str(body.get("name") or "").split())
+            if not name:
+                raise UserError(t("err.artist_name"))
+            if len(name) > FEELING_MAX_CHARS:
+                raise UserError(t("err.feeling_too_long", max=FEELING_MAX_CHARS))
+            recipe["name"] = name
+            hunt = Hunt("artist", name)
+
+            def task() -> None:
+                artists.discography(hunt, sp, self.musicbrainz, name)
         else:
             raise UserError(t("err.hunt_kind"))
         hunt.recipe = recipe
         return hunt, task
+
+    def feature_track(self, user: Profile, body: dict) -> dict:
+        """The track on someone else's album where the artist (or a member) appears, to play from it."""
+        album = str(body.get("album") or "")
+        if not PLAYLIST_ID_LIKE.fullmatch(album):
+            raise UserError(t("err.pick_result"))
+        wanted = {str(artist_id) for artist_id in body.get("artists") or []}
+        tracks = self.spotify(user).album_tracks(album)
+        track = next((tr for tr in tracks if wanted & {a.get("id") for a in tr.get("artists", [])}), None)
+        if track is None:
+            raise UserError(t("artists.no_track"), 404)
+        return {"uri": track["uri"]}
 
     @staticmethod
     def current_hunt(user: Profile) -> dict | None:
@@ -743,8 +771,7 @@ class App:
         sp = self.spotify(user)
         same = next((playlist for playlist in self._owned(user, sp) if playlist["name"] == name), None)
         if every and not (same and self._favorite_for(user, same["id"])):
-            made = sum(1 for fav in favorites.load(user.id) if fav["kind"] == "discovery")
-            if made >= favorites.MAX_FAVORITES:
+            if self._updating_count(user) >= favorites.MAX_FAVORITES:
                 raise UserError(t("fav.too_many", max=favorites.MAX_FAVORITES), 409)
         if same:
             # Same name: the songs are only swapped if the person confirms (the old list is gone).
@@ -889,18 +916,24 @@ class App:
         favorites.change(user.id, edit)
         return {**self.favorite_status(user, fav_id), "notice": t("fav.every_set", every=t(f"every.{every}"))}
 
+    def _updating_count(self, user: Profile) -> int:
+        return sum(1 for fav in self._favorites(user) if fav["kind"] == "discovery" and not fav.get("hidden"))
+
     def remove_favorite(self, user: Profile, fav_id: str) -> dict:
-        """Off the bar. Curated ones are only hidden (they live in playlists.json); the playlist stays on Spotify."""
+        """Off the bar, never lost: playlists that update are kept hidden (with their recipe) and can come
+        back; a pinned shortcut is simply removed. The playlist always stays on Spotify."""
         fav = self._favorite(user, fav_id)
-        if fav["kind"] == "curated":
-            self._edit_favorite(user, fav_id, hidden=True)
-            return {"message": t("fav.hidden", name=fav["name"])}
-        favorites.change(user.id, lambda items: items.__setitem__(slice(None), [f for f in items if f["id"] != fav_id]))
-        return {"message": t("fav.unpinned" if fav["kind"] == "pinned" else "fav.removed", name=fav["name"])}
+        if fav["kind"] == "pinned":
+            favorites.change(user.id, lambda items: items.__setitem__(slice(None), [f for f in items if f["id"] != fav_id]))
+            return {"message": t("fav.unpinned", name=fav["name"])}
+        self._edit_favorite(user, fav_id, hidden=True)
+        return {"message": t("fav.hidden", name=fav["name"])}
 
     def show_favorite(self, user: Profile, fav_id: str) -> dict:
-        """A curated playlist back on the bar; its schedule starts over from now."""
+        """Back on the bar; its schedule starts over from now."""
         fav = self._favorite(user, fav_id)
+        if fav["kind"] == "discovery" and fav.get("hidden") and self._updating_count(user) >= favorites.MAX_FAVORITES:
+            raise UserError(t("fav.too_many", max=favorites.MAX_FAVORITES), 409)
         self._edit_favorite(user, fav_id, hidden=False, last_run=time.time())
         return {"message": t("fav.shown", name=fav["name"])}
 
@@ -930,10 +963,13 @@ class App:
                 "total": (playlist.get("items") or playlist.get("tracks") or {}).get("total", 0),
             }
 
+        def playlist_of(fav: dict) -> str | None:
+            return ids.get(fav["name"]) if fav["kind"] == "curated" else fav.get("playlist_id")
+
         hidden = [
-            {**(row(by_id[ids[fav["name"]]]) if ids.get(fav["name"]) in by_id else {"image": None, "total": 0}),
-             "fav": fav["id"], "name": fav["name"]}
-            for fav in items if fav["kind"] == "curated" and fav.get("hidden")
+            {**(row(by_id[playlist_of(fav)]) if playlist_of(fav) in by_id else {"image": None, "total": 0}),
+             "fav": fav["id"], "name": fav["name"], "kind": fav["kind"]}
+            for fav in items if fav.get("hidden")
         ]
         return {
             "hidden": hidden,
@@ -1227,6 +1263,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.server.app.forget(user_id)
             self.server.app.sessions.end(self._cookie())
             self._send_json({"error": str(exc.code), "login": True, "expired": True}, 401)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            return  # the browser closed the connection before the answer arrived
         except Exception:
             log.exception("Panel error")
             self._send_json({"error": t("err.unexpected")}, 500)
@@ -1256,6 +1294,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.blocked_artists(user)
         if method == "POST" and path == "/api/blocked":
             return app.set_blocked(user, body)
+        if method == "POST" and path == "/api/artists/track":
+            return app.feature_track(user, body)
         if method == "GET" and path == "/api/recent":
             return app.recent_finds(user)
         if method == "GET" and path == "/api/favorites/extras":

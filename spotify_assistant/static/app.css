@@ -1027,6 +1027,8 @@ a.brand { color: inherit; text-decoration: none; }
 }
 .fav-card-play svg { width: 20px; height: 20px; }
 
+.home-hidden { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 16px 0 0; color: var(--smoke); font-size: .875rem; }
+.toast-action { padding: 0; border: 0; background: none; cursor: pointer; text-decoration: underline; }
 .home-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 20px 28px; max-width: 760px; }
 .home-empty p { max-width: 52ch; margin: 0 0 12px; color: color-mix(in srgb, var(--linen) 86%, transparent); }
 .home-empty-art { width: 120px; height: 120px; border-radius: 12px; object-fit: cover; }
@@ -1048,6 +1050,36 @@ a.brand { color: inherit; text-decoration: none; }
 .recent-list { margin-top: 0; }
 .recent-list .track-button { grid-template-columns: 2rem 44px minmax(0, 1fr) auto auto; }
 .recent-where { overflow: hidden; max-width: 22ch; color: var(--smoke); font-size: .8125rem; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Artists: photo, who's in it, and the releases. */
+.artist-head { display: flex; align-items: center; gap: 22px; }
+.artist-photo { flex: none; width: 96px; height: 96px; border-radius: 50%; object-fit: cover; }
+.who-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; }
+.who-chip {
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--smoke);
+  font-size: .875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.who-chip:hover { border-color: var(--smoke); color: var(--linen); }
+.who-chip[aria-pressed="true"] { border-color: transparent; background: var(--linen); color: var(--ink); }
+.who-chip small { margin-left: 6px; font-weight: 400; opacity: .75; }
+.artist-filters { margin-top: 18px; }
+.release { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+.release-type {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: .75rem;
+}
+.release-date { color: var(--smoke); font-size: .875rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.release-open { font-size: .875rem; }
 
 /* A favorite's page: how often it updates. */
 .every-control { display: inline-flex; align-items: center; gap: 8px; color: var(--smoke); font-size: .875rem; }
@@ -1306,6 +1338,8 @@ a.brand { color: inherit; text-decoration: none; }
   .fav-card-play { top: 18px; right: 18px; width: 38px; height: 38px; }
   .recent-list .track-button { grid-template-columns: 1.5rem 40px minmax(0, 1fr) auto; }
   .recent-where { display: none; }
+  .artist-photo { width: 64px; height: 64px; }
+  .release-open { display: none; }
 
   .picker.is-sheet {
     inset: auto 0 0 0;

@@ -17,6 +17,8 @@ These were built with tests and mocked screens only, because Spotify search was 
       playlist off the bar and bring it back.
 - [ ] The heart in the player: each person authorizes Spotify once more (new library permission, the
       heart shows the link), then likes and unlikes a song and a podcast episode; check Liked Songs.
+- [ ] Artists: a K-pop group (members without a MusicBrainz link need Spotify search), a solo artist,
+      a rock band with former members; play a feature from its track.
 - [ ] Home: **For right now** builds the sensation, or plays it when it's already a favorite;
       **Now playing** follows the player; recent finds play.
 

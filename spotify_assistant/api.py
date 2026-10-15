@@ -185,6 +185,21 @@ class Spotify:
         data = self._call("GET", "/search", params=params)
         return [item for item in data[f"{kind}s"]["items"] if item]
 
+    def artist(self, artist_id: str) -> dict:
+        return self._call("GET", f"/artists/{artist_id}")
+
+    def artist_albums(self, artist_id: str, groups: str, max_pages: int = 10) -> list[dict]:
+        """An artist's releases (include_groups: album, single, compilation, appears_on), 10 per page."""
+        params = {"include_groups": groups, "limit": 10, "market": self.market}
+        page = self._call("GET", f"/artists/{artist_id}/albums", params=params)
+        albums: list[dict] = []
+        for _ in range(max_pages):
+            albums.extend(album for album in page.get("items", []) if album)
+            if not page.get("next"):
+                break
+            page = self._call("GET", page["next"])
+        return albums
+
     def album_tracks(self, album_id: str) -> list[dict]:
         data = self._call("GET", f"/albums/{album_id}/tracks", params={"limit": 50, "market": self.market})
         return [track for track in data["items"] if track]

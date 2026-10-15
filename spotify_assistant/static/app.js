@@ -81,12 +81,15 @@ function langOptions() {
 // ---------- Screens and filters
 
 // Screens that aren't playlists: the key becomes the URL #.
-const VIEWS = { home: "view.home", sensations: "view.sensations", discover: "view.discover", news: "view.news" };
-const VIEW_ALIASES = { inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news" };  // old bookmarks
+const VIEWS = {
+  home: "view.home", sensations: "view.sensations", discover: "view.discover", news: "view.news", artists: "view.artists",
+};
+const VIEW_ALIASES = { inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news", artistas: "artists" };
 const EVERY = ["daily", "weekly", "monthly"];
 // Home: the ready-made sensation suggested for each time of day (hour it starts -> preset id).
 const MOMENTS = [[5, "work-groove"], [9, "deep-focus"], [12, "work-groove"], [14, "deep-focus"], [18, "workout"], [21, "wind-down"]];
-const HUNT_KINDS = { sensations: ["sense"], discover: ["roulette", "rabbit"], news: ["news"] };
+const HUNT_KINDS = { sensations: ["sense"], discover: ["roulette", "rabbit"], news: ["news"], artists: ["artist"] };
+const RELEASE_TYPES = ["album", "single", "feature", "compilation"];
 
 // Artist size is measured in fans: no free API says how many times a song was played.
 const SIZE_MIN = ["", "100", "1000", "10000", "100000", "1000000"];
@@ -111,6 +114,8 @@ const state = {
   huntSignature: "",
   lastHunt: null,
   seed: "",
+  artistName: "",
+  artistFilters: { who: "", type: "", order: "new" },
   filters: { rouletteGenre: "", newsGenre: "", min: "", max: "", days: "30", ...savedFilters() },
   added: new Set(),
   openDetails: new Set(),
@@ -172,7 +177,8 @@ async function api(path, body) {
   const data = await response.json().catch(() => ({}));
   if (response.status === 401 && data.login) showGate(data);
   if (!response.ok) {
-    const error = new Error(data.error || t("error.status", { status: response.status }));
+    const restarting = !data.error && [502, 503, 504].includes(response.status);
+    const error = new Error(data.error || t(restarting ? "error.restarting" : "error.status", { status: response.status }));
     error.data = data;
     throw error;
   }
@@ -226,7 +232,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function toast(message, isError = false, action = null) {
   const classes = ["toast", isError && "is-error", action && "has-action"].filter(Boolean).join(" ");
   const el = h("div", { class: classes }, message,
-    action && h("a", { class: "toast-action", href: action.href }, action.label));
+    action && (action.href
+      ? h("a", { class: "toast-action", href: action.href }, action.label)
+      : h("button", {
+        class: "toast-action",
+        type: "button",
+        onclick: () => { el.remove(); action.onclick(); },
+      }, action.label)));
   $("#toasts").append(el);
   setTimeout(() => el.remove(), action ? 9000 : isError ? 6500 : 4000);
 }
@@ -523,8 +535,10 @@ async function removeFavorite(fav) {
     renderSleeve();
     return;
   }
+  const playlist = current();
   try {
-    toast((await api(`/api/favorites/${fav.id}/remove`, {})).message);
+    const { message } = await api(`/api/favorites/${fav.id}/remove`, {});
+    toast(message, false, { label: t("fav.undo"), onclick: () => putBack(fav, playlist) });
   } catch (error) {
     toast(error.message, true);
     return;
@@ -532,6 +546,20 @@ async function removeFavorite(fav) {
   state.confirmRemove = null;
   await loadOverview();
   go("home");
+}
+
+/** Undo "Remove from the bar": a pinned shortcut is pinned again, the others come back as they were. */
+async function putBack(fav, playlist) {
+  const id = playlist?.uri?.split(":").pop();
+  try {
+    toast((fav.kind === "pinned"
+      ? await api("/api/favorites/pin", { playlist: id })
+      : await api(`/api/favorites/${fav.id}/show`, {})).message);
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  await loadOverview();
 }
 
 function refreshLabel(playlist) {
@@ -711,7 +739,7 @@ function renderIntro() {
   sleeve.className = "sleeve is-plain";
   const moment = state.view === "home" ? momentPreset() : null;
   setMood(huntHere()?.color || moment?.color || ROOM_LIGHT);
-  const intro = { home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro }[state.view];
+  const intro = { home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro, artists: artistsIntro }[state.view];
   sleeve.replaceChildren(...intro());
 }
 
@@ -881,6 +909,142 @@ function genreList() {
     GENRE_SUGGESTIONS.map((genre) => h("option", { value: genre.startsWith("genre.") ? t(genre) : genre })));
 }
 
+// ---------- Artists: a band's or artist's releases, with members' solo work and features
+
+function artistsIntro() {
+  const input = h("input", {
+    class: "filter-control filter-genre",
+    id: "artist-name",
+    type: "search",
+    maxlength: "60",
+    autocomplete: "off",
+    spellcheck: "false",
+    required: true,
+    placeholder: t("artists.placeholder"),
+  });
+  input.value = state.artistName;
+  input.addEventListener("input", () => { state.artistName = input.value; });
+  const submit = (event) => {
+    event.preventDefault();
+    state.artistFilters = { ...state.artistFilters, who: "" };
+    startHunt({ kind: "artist", name: input.value.trim() });
+  };
+  return [
+    viewHead("journeys", t("view.artists"), t("artists.description")),
+    h("form", { class: "filters", onsubmit: submit },
+      h("label", { class: "filter", for: "artist-name" }, h("span", { class: "filter-label" }, t("artists.label")), input),
+      h("button", { class: "play-button", type: "submit" }, t("artists.search"))),
+  ];
+}
+
+function releaseDate(date) {
+  const [year, month, day] = (date || "").split("-").map(Number);
+  if (!year) return "";
+  if (!month) return String(year);
+  const value = new Date(year, month - 1, day || 1);
+  return day
+    ? value.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", year: "numeric" })
+    : value.toLocaleDateString(LOCALE, { month: "2-digit", year: "numeric" });
+}
+
+function renderArtist(hunt, panel, list) {
+  const filters = state.artistFilters;
+  const signature = JSON.stringify(["artist", hunt.status, hunt.progress, hunt.message, hunt.releases.length, filters]);
+  if (!panel.hidden && signature === state.huntSignature) return;
+  state.huntSignature = signature;
+  panel.hidden = false;
+  const artist = hunt.artist;
+  const people = artist?.people || [];
+  const running = hunt.status === "running";
+  const percent = hunt.total ? Math.max(4, Math.round((hunt.progress / hunt.total) * 100)) : 4;
+  const counts = RELEASE_TYPES
+    .map((type) => [type, hunt.releases.filter((release) => release.type === type).length])
+    .filter(([, count]) => count)
+    .map(([type, count]) => t(`artists.count.${type}`, { count }));
+  const choice = (id, label, options, key) => {
+    const control = h("select", { class: "filter-control", id },
+      options.map(([value, text]) => h("option", { value, selected: filters[key] === value }, text)));
+    control.addEventListener("change", () => {
+      state.artistFilters = { ...state.artistFilters, [key]: control.value };
+      renderHunt();
+    });
+    return h("label", { class: "filter", for: id }, h("span", { class: "filter-label" }, label), control);
+  };
+  const chip = (id, label, note) => h("button", {
+    class: "who-chip",
+    type: "button",
+    "aria-pressed": String(filters.who === id),
+    onclick: () => { state.artistFilters = { ...state.artistFilters, who: id }; renderHunt(); },
+  }, label, note && h("small", null, note));
+  panel.replaceChildren(...[
+    h("div", { class: "artist-head" },
+      artist?.image && h("img", { class: "artist-photo", src: artist.image, alt: "" }),
+      h("div", null,
+        h("h2", { class: "hunt-title" }, hunt.label),
+        h("p", { class: "meta" }, hunt.message),
+        counts.length > 0 && h("p", { class: "meta" }, listFormat.format(counts)))),
+    running && h("div", { class: "progress", "aria-hidden": "true" }, h("i", { style: `width: ${percent}%` })),
+    h("div", { class: "actions" },
+      artist && h("a", { class: "ghost-button", href: artist.uri }, t("artists.open_artist")),
+      h("button", { class: "text-button", type: "button", onclick: () => startHunt(state.lastHunt) }, t("hunt.again.artist"))),
+    people.length > 1 && h("div", { class: "who-chips", role: "group", "aria-label": t("artists.who_label") },
+      chip("", t("artists.all")),
+      people.map((person) => chip(person.spotify, person.name,
+        person.role === "subgroup" ? t("artists.subgroup") : person.former ? t("artists.former") : null))),
+    hunt.releases.length > 0 && h("div", { class: "filters artist-filters" },
+      choice("release-type", t("artists.type_label"),
+        [["", t("artists.type.all")], ...RELEASE_TYPES.map((type) => [type, t(`artists.type.${type}`)])], "type"),
+      choice("release-order", t("artists.order_label"),
+        ["new", "old"].map((order) => [order, t(`artists.order.${order}`)]), "order")),
+  ].filter(Boolean));
+
+  const shown = hunt.releases
+    .filter((release) => !filters.type || release.type === filters.type)
+    .filter((release) => !filters.who || release.who.some((person) => person.id === filters.who))
+    .sort((a, b) => (filters.order === "old" ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)));
+  if (!shown.length) {
+    list.replaceChildren(hunt.releases.length ? h("li", { class: "tracks-empty" }, t("artists.empty_filter")) : "");
+    return;
+  }
+  const main = people[0]?.spotify;
+  list.replaceChildren(...shown.map((release, index) => {
+    // Who from this artist is on it, when it isn't simply the artist's own release.
+    const others = release.who.filter((person) => person.id !== main).map((person) => person.name);
+    return h("li", { class: "track release", "data-uri": release.uri },
+      h("button", {
+        class: "track-button",
+        type: "button",
+        title: t("action.play_title", { title: release.name }),
+        onclick: () => playRelease(release),
+      },
+        h("span", { class: "track-index" }, String(index + 1)),
+        release.image ? h("img", { class: "track-art", src: release.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
+        h("span", { class: "track-text" },
+          h("span", { class: "track-title" }, release.name),
+          h("span", { class: "track-sub" },
+            h("span", { class: "release-type" }, t(`artists.badge.${release.type}`)),
+            release.artists.join(", "),
+            others.length > 0 && release.type !== "single" && release.type !== "album"
+              ? ` ${t("artists.with", { names: listFormat.format(others) })}` : "")),
+        h("span", { class: "release-date" }, releaseDate(release.date))),
+      h("a", { class: "text-button release-open", href: release.uri }, t("artists.open")));
+  }));
+  markPlaying();
+}
+
+/** Own releases play from the start; on someone else's album, from the track where they appear. */
+async function playRelease(release) {
+  if (release.type === "feature" || release.type === "compilation") {
+    try {
+      const { uri } = await api("/api/artists/track", { album: release.id, artists: release.who.map((person) => person.id) });
+      return command({ action: "play", context_uri: release.uri, offset_uri: uri });
+    } catch {
+      // not found on the album: play it from the start
+    }
+  }
+  return play(release.uri);
+}
+
 function newsIntro() {
   const submit = (event) => {
     event.preventDefault();
@@ -917,7 +1081,7 @@ function homeView() {
   return [h("div", { class: "home" },
     h("h1", { class: "title home-title" }, t(greeting, { name: state.overview.me.name })),
     h("div", { class: "home-top" }, momentCard(), nowCard()),
-    section(t("home.favorites"), favoriteCards(),
+    section(t("home.favorites"), h("div", null, favoriteCards(), offBarLine()),
       h("button", { class: "text-button", type: "button", "aria-haspopup": "dialog", onclick: (event) => openPinPicker(event.currentTarget) },
         t("pin.open"))),
     section(t("home.discover"), shortcutCards()),
@@ -968,6 +1132,19 @@ function nowCard() {
       player.device?.name && h("p", { class: "meta" }, t("player.on_device", { name: player.device.name })),
       h("button", { class: "ghost-button is-small", type: "button", onclick: togglePlay },
         t(player.is_playing ? "player.pause" : "player.play"))));
+}
+
+/** What was taken off the bar, one click away from coming back. */
+function offBarLine() {
+  const hidden = state.overview.hidden || [];
+  if (!hidden.length) return null;
+  return h("p", { class: "home-hidden" }, t("home.hidden"),
+    hidden.map((fav) => h("button", {
+      class: "text-button",
+      type: "button",
+      title: t("home.bring_back", { name: fav.name }),
+      onclick: () => putBack(fav, null),
+    }, fav.name)));
 }
 
 function favoriteCards() {
@@ -1180,6 +1357,10 @@ function renderHunt() {
   if (!hunt) {
     panel.hidden = true;
     list.replaceChildren();
+    return;
+  }
+  if (hunt.kind === "artist") {
+    renderArtist(hunt, panel, list);
     return;
   }
   const signature = JSON.stringify([
@@ -1463,7 +1644,8 @@ function pinChoices(picker) {
         h("span", { class: "picker-option-name" }, item.name),
         h("span", { class: "picker-option-sub" }, sub))));
   const rows = [
-    ...extras.hidden.map((item) => option(item, t("pin.curated"), () => pinAction(`/api/favorites/${item.fav}/show`, {}))),
+    ...extras.hidden.map((item) => option(item, t(item.kind === "curated" ? "pin.curated" : "pin.hidden"),
+      () => pinAction(`/api/favorites/${item.fav}/show`, {}))),
     ...extras.playlists.map((item) => option(item, t("count.tracks", { count: item.total }),
       () => pinAction("/api/favorites/pin", { playlist: item.id }))),
   ];

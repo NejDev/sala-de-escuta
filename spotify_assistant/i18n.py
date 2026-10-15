@@ -76,6 +76,16 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # Artists search
+        "err.artist_name": "Digite o nome de um artista ou banda.",
+        "artists.looking": "Procurando {name} e quem faz parte…",
+        "artists.reading": "Lendo os lançamentos de {name} ({progress} de {total})…",
+        "artists.not_found": "Não achei “{name}”. Confira o nome do artista ou da banda.",
+        "artists.none": "Nenhum lançamento de {name} no Spotify.",
+        "artists.done": ("1 lançamento de {name}.", "{count} lançamentos de {name}."),
+        "artists.done_group": ("1 lançamento de {name} e de quem faz parte.",
+                               "{count} lançamentos de {name} e de quem faz parte."),
+        "artists.no_track": "Não achei essa participação no álbum.",
         # New releases from today
         "news.none_today": "Nenhum lançamento de {genre} nesse tamanho hoje. Aumente o período ou o tamanho.",
         "news.done_today": ("1 lançamento de {genre} de hoje.", "{count} lançamentos de {genre} de hoje."),
@@ -105,7 +115,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "fav.added": "Ela fica na barra e se atualiza {every}.",
         "fav.not_found": "Favorita não encontrada.",
         "fav.every_set": "Agora ela se atualiza {every}.",
-        "fav.removed": "{name} saiu da barra e não se atualiza mais. A playlist continua no seu Spotify.",
         "fav.already_running": "Essa playlist já está se atualizando.",
         "fav.queued": "Na fila para atualizar…",
         "fav.updated_curated": "Atualizada.",
@@ -297,6 +306,15 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # Artists search
+        "err.artist_name": "Type the name of an artist or band.",
+        "artists.looking": "Looking up {name} and who's part of it…",
+        "artists.reading": "Reading {name}'s releases ({progress} of {total})…",
+        "artists.not_found": "Couldn't find “{name}”. Check the artist or band name.",
+        "artists.none": "No releases by {name} on Spotify.",
+        "artists.done": ("1 release by {name}.", "{count} releases by {name}."),
+        "artists.done_group": ("1 release by {name} and its members.", "{count} releases by {name} and its members."),
+        "artists.no_track": "Couldn't find that feature on the album.",
         # New releases from today
         "news.none_today": "No {genre} releases of that size today. Widen the period or the size.",
         "news.done_today": ("1 {genre} release from today.", "{count} {genre} releases from today."),
@@ -326,7 +344,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "fav.added": "It's on the bar and updates itself {every}.",
         "fav.not_found": "Favorite not found.",
         "fav.every_set": "It now updates itself {every}.",
-        "fav.removed": "{name} left the bar and won't update anymore. The playlist stays on your Spotify.",
         "fav.already_running": "This playlist is already updating.",
         "fav.queued": "Waiting to update…",
         "fav.updated_curated": "Updated.",

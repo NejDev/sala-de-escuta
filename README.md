@@ -10,6 +10,7 @@ in Portuguese or English.
 - **Discover**: a roulette of barely-played records from all over the world, and a rabbit hole that
   hops from an artist you like toward lesser-known ones.
 - **New releases**: what just came out in a genre, only from artists of the size you choose.
+- **Artists**: everything a band or artist released, with each member's solo work and their features.
 - **Favorites that update themselves**: turn a selection into a playlist that gets new songs every
   day, week or month. Only these special playlists go on the top bar.
 - **Home**: a suggestion for this time of day, what's playing, your favorites, shortcuts and recent finds.
@@ -95,6 +96,18 @@ Pick a genre (e.g. K-pop), the artist size and the period (today, or the last 3,
 artists of that genre from playlists, filters them by fans, looks at each one's releases and shows the
 main track of each release, newest first. "Clean" versions of the same release are merged, and on
 soundtracks the artist's own track is used.
+
+### Artists
+
+Type a band or an artist, of any genre (e.g. Racionais MC's, TWICE, Coldplay), and see everything
+they released: albums, singles and EPs, features on other artists' songs, compilations and soundtracks,
+plus the solo work and features of each member and subunit (former members included). Filter by
+person and by type, and sort newest or oldest first. A feature plays from the track where they appear.
+
+Who is in a band comes from [MusicBrainz](https://musicbrainz.org) (open data, no key; one request per
+second, kept for a month in `data/musicbrainz-cache.json`), which also links each person to their
+Spotify profile. Members without that link are looked up by name, and left out when the name is
+ambiguous. This search barely uses Spotify search, so it keeps working while search is paused.
 
 ### Keeping what you like
 

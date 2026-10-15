@@ -236,7 +236,7 @@ fan_counts = FanCounts()
 
 @dataclass
 class Hunt:
-    kind: str  # sense | roulette | rabbit | news
+    kind: str  # sense | roulette | rabbit | news | artist
     label: str
     color: str | None = None
     status: str = "running"  # running | done | error | cancelled
@@ -248,6 +248,8 @@ class Hunt:
     cancelled: bool = False
     spec: dict | None = None  # the sensation's parameters (used for the playlist description)
     recipe: dict | None = None  # what rebuilds this discovery later (a favorite's automatic updates)
+    artist: dict | None = None  # Artists search: who it is, with members and subunits
+    releases: list[dict] = field(default_factory=list)  # Artists search: their releases, newest first
 
     def snapshot(self) -> dict:
         return {
@@ -263,6 +265,8 @@ class Hunt:
                 {"path": chain["path"], "finds": [asdict(find) for find in chain["finds"]]}
                 for chain in list(self.chains)
             ],
+            "artist": self.artist,
+            "releases": list(self.releases),
         }
 
 
