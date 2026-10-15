@@ -1,5 +1,7 @@
 import random
 import re
+import threading
+import time
 from datetime import date, timedelta
 import tempfile
 import unittest
@@ -712,6 +714,30 @@ class ListenerCapTest(FreshMatches):
         self.assertEqual([(t["id"], t["lastfm"]) for t in kept], [(0, {"listeners": None, "url": None}),
                                                                  (1, {"listeners": None, "url": None})])
         self.assertEqual(discovery.within_listeners(tracks, discovery.NO_CAP, want=2), tracks[:2])
+
+    def test_within_listeners_reports_every_check(self):
+        # With a small cap most songs are turned down: the message still moves, or the panel looks frozen.
+        hunt = discovery.Hunt("sense", "Treino")
+        fake = FakeLastFm({f"Faixa {n}": 900 for n in range(5)})
+        discovery.within_listeners([dz_track(n, 120) for n in range(5)], discovery.ListenerCap(100, fake), want=2,
+                                   hunt=hunt)
+        self.assertEqual(hunt.message, "Conferindo ouvintes no Last.fm: 5 conferidas, 0 dentro do limite.")
+
+    def test_within_listeners_asks_several_at_once(self):
+        active, peak, lock = [0], [0], threading.Lock()
+
+        def slow(artist, title):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            time.sleep(0.05)
+            with lock:
+                active[0] -= 1
+            return lastfm.Listeners(None, None)
+
+        kept = discovery.within_listeners([dz_track(n, 120) for n in range(6)], discovery.ListenerCap(100, slow), want=6)
+        self.assertEqual([track["id"] for track in kept], list(range(6)))  # the order is kept
+        self.assertGreater(peak[0], 1)
 
     def test_lastfm_failures_stop_the_roulette(self):
         deezer = FakeDeezer(

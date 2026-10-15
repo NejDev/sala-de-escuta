@@ -651,21 +651,31 @@ def within_size(
 def within_listeners(
     tracks: list[dict], listeners: ListenerCap, want: int, hunt: Hunt | None = None,
 ) -> list[dict]:
-    """The first `want` tracks within the listener cap, asking Last.fm about LISTENER_SCAN_MAX of them at most."""
+    """The first `want` tracks within the listener cap, asking Last.fm about LISTENER_SCAN_MAX of them at most.
+    Several lookups run at once in batches; the Last.fm client still keeps its own pace."""
     if not listeners.active:
         return tracks[:want]
     kept: list[dict] = []
-    for track in tracks[:LISTENER_SCAN_MAX]:
-        if hunt and hunt.cancelled:
-            break
-        fits, heard = listeners.check(track["artist"]["name"], track["title"])
-        if fits:
-            kept.append({**track, "lastfm": heard})
-            if hunt:
-                hunt.message = t("sense.checking_listeners", count=len(kept))
+    checked = 0
+    pool = tracks[:LISTENER_SCAN_MAX]
+    executor = ThreadPoolExecutor(max_workers=LISTEN_THREADS)
+    try:
+        for start in range(0, len(pool), SIZE_BATCH):
+            if hunt and hunt.cancelled:
+                break
+            batch = pool[start : start + SIZE_BATCH]
+            answers = executor.map(lambda track: listeners.check(track["artist"]["name"], track["title"]), batch)
+            for track, (fits, heard) in zip(batch, answers):
+                checked += 1
+                if fits:
+                    kept.append({**track, "lastfm": heard})
+                if hunt:  # every check moves the message: with a small cap most songs are turned down
+                    hunt.message = t("sense.checking_listeners", checked=checked, count=len(kept))
             if len(kept) >= want:
                 break
-    return kept
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    return kept[:want]
 
 
 def listen(
