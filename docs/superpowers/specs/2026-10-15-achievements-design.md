@@ -74,7 +74,7 @@ At least 100 medals, plus one per game. The catalog file has the exact list; the
 | Friends | 8 | matches between participants |
 | The panel | 17 | discoveries, playlists, favorites, reviews, blocks, Artists searches |
 | Monthly titles won | 5 | closed months |
-| Games: one medal named after each game with a memorable soundtrack | about 30–40 | plays (album, title, artists) |
+| Games: one medal named after each game with a memorable soundtrack | 40 | plays (album, title, artists) |
 
 Games are chosen by the size of their soundtrack's audience (fans and catalog rank), and matched by the game's name in
 the album or title (with a soundtrack hint when the name is a common word) or by artists tied to that one game.
