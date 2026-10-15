@@ -119,8 +119,10 @@ nome é ambíguo. Essa busca quase não usa a busca da Spotify, então funciona 
 Só para quem ativar, e só entre essas pessoas: quem não participa não vê nada e não aparece. A sala lê
 as músicas recentes de cada participante no Spotify a cada 15 minutos (guardadas por 90 dias) e mostra:
 
-- **Afinidade** com cada amigo nos últimos 30 dias (principalmente artistas em comum, um pouco as
-  músicas), com os artistas que vocês têm em comum e quanto cada um ouviu na semana.
+- **Afinidade** com cada amigo: compara os artistas de que cada um gosta, pelos mais ouvidos no
+  Spotify (4 semanas, 6 meses, um ano), as playlists que criou, as curtidas e o que ouviu nos últimos 30
+  dias (refeito a cada 3 dias, em segundo plano). Só os artistas em comum aparecem; ninguém vê as
+  playlists de ninguém.
 - **Matches**: a mesma música ouvida pelos dois com até 6 horas de diferença, na última semana; cada
   uma toca com um clique. O que um amigo ouve sozinho nunca aparece.
 

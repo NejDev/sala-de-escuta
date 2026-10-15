@@ -1,5 +1,9 @@
 """Friends: musical affinity and matches (the same song, close in time) among people who join.
 
+The affinity compares taste profiles: Spotify's most played artists, the artists in the playlists the
+person made and in their liked songs (taste.json, rebuilt every 3 days in the background), plus what
+they played in the last 30 days. Only the artists two people have in common are ever named.
+
 Only for people who turn it on (data/users/<id>/social.json); everyone else stays invisible.
 What a friend plays alone is never shown, only the songs you both played.
 The owner decides who may use it at all (data/room.json): per person, plus a default for people
@@ -10,6 +14,7 @@ panel is open, and are kept for 90 days in plays.json.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import threading
 import time
@@ -18,24 +23,38 @@ from datetime import datetime
 from pathlib import Path
 
 from . import config
-from .api import Spotify
+from .api import Spotify, SpotifyError
 from .views import pick_image
 
 KEEP_DAYS = 90
 AFFINITY_DAYS = 30
-MIN_PLAYS = 10  # below this an affinity number would be noise
+MIN_PLAYS = 10  # recent plays count only from this many on
+MIN_ARTISTS = 5  # below this an affinity number would be noise
 MATCH_WINDOW_S = 6 * 3600  # same song within 6 hours of each other
 MATCH_DAYS = 7
 FEED_SIZE = 40
 COLLECT_EVERY_S = 15 * 60
 DAY = 86400
+TASTE_EVERY_S = 3 * DAY  # most played, playlists and likes change slowly
+TASTE_PLAYLISTS = 20  # the person's own playlists read, in their library's order
+TASTE_PLAYLIST_ITEMS = 100
+TASTE_LIKED = 100
+TASTE_PAUSE_S = 1.5  # between requests: it runs in the background, no hurry
+TOP_RANGES = {"short_term": 0.3, "medium_term": 0.4, "long_term": 0.3}
+# How much each source counts (a source someone doesn't have just drops out).
+SOURCE_WEIGHTS = {"top": 0.4, "playlists": 0.25, "liked": 0.2, "plays": 0.15}
 
+log = logging.getLogger(__name__)
 _lock = threading.Lock()
 
 
 def _paths(user_id: str) -> tuple[Path, Path]:
     folder = config.user_paths(user_id).dir
     return folder / "social.json", folder / "plays.json"
+
+
+def _taste_file(user_id: str) -> Path:
+    return config.user_paths(user_id).dir / "taste.json"
 
 
 def _read(path: Path, default):
@@ -111,6 +130,7 @@ def set_share(user_id: str, share: bool, forget: bool = False) -> None:
         if forget:
             current["after"] = None
             plays_file.unlink(missing_ok=True)
+            _taste_file(user_id).unlink(missing_ok=True)
         social_file.parent.mkdir(parents=True, exist_ok=True)
         social_file.write_text(json.dumps(current), encoding="utf-8")
 
@@ -160,29 +180,115 @@ def _recent(items: list[dict], now: float, days: int) -> list[dict]:
     return [play for play in items if play["at"] >= now - days * DAY]
 
 
-def _cosine(a: Counter, b: Counter) -> float:
-    # log scale: one artist on repeat doesn't drown out everything else
-    wa = {key: math.log1p(count) for key, count in a.items()}
-    wb = {key: math.log1p(count) for key, count in b.items()}
-    dot = sum(wa[key] * wb[key] for key in wa.keys() & wb.keys())
-    norm = math.sqrt(sum(v * v for v in wa.values())) * math.sqrt(sum(v * v for v in wb.values()))
-    return dot / norm if norm else 0.0
+# ---------- taste: what a person likes beyond their last 50 songs
 
 
-def affinity(mine: list[dict], theirs: list[dict], now: float | None = None) -> dict | None:
-    """Musical affinity (0-100) over the last 30 days: mostly shared artists, partly shared songs."""
+def taste(user_id: str) -> dict:
+    return _read(_taste_file(user_id), {})
+
+
+def taste_due(user_id: str, with_top: bool, now: float | None = None) -> bool:
     now = time.time() if now is None else now
-    a, b = _recent(mine, now, AFFINITY_DAYS), _recent(theirs, now, AFFINITY_DAYS)
-    if len(a) < MIN_PLAYS or len(b) < MIN_PLAYS:
+    known = taste(user_id)
+    return not known or now - known.get("at", 0) > TASTE_EVERY_S or (with_top and not known.get("top_tried"))
+
+
+def build_taste(sp: Spotify, user_id: str, with_top: bool, pause=time.sleep, now: float | None = None) -> dict:
+    """Most played artists (4 weeks, 6 months, a year), and the artists in the playlists the person made
+    and in their liked songs. A source that fails is just left out."""
+    sources: dict[str, dict[str, float]] = {}
+    names: dict[str, str] = {}
+
+    def weights(tracks: list[dict]) -> dict[str, float]:
+        counts: Counter = Counter()
+        for track in tracks:
+            if track.get("type", "track") != "track":
+                continue  # podcast episodes say nothing about music taste
+            for artist in track.get("artists", []):
+                if artist.get("id"):
+                    counts[artist["id"]] += 1
+                    names[artist["id"]] = artist.get("name", "")
+        return {key: math.log1p(count) for key, count in counts.items()}  # one artist on repeat doesn't drown the rest
+
+    if with_top:
+        top: Counter = Counter()
+        for time_range, weight in TOP_RANGES.items():
+            try:
+                found = sp.top_artists(time_range)
+            except SpotifyError as err:
+                log.warning("Couldn't read %s's most played (%s): %s", user_id, time_range, err)
+                continue
+            finally:
+                pause(TASTE_PAUSE_S)
+            for rank, artist in enumerate(found):
+                top[artist["id"]] += weight * (1 - rank / len(found))
+                names[artist["id"]] = artist.get("name", "")
+        if top:
+            sources["top"] = dict(top)
+    tracks: list[dict] = []
+    try:
+        own = [playlist for playlist in sp.my_playlists() if (playlist.get("owner") or {}).get("id") == user_id]
+        for playlist in own[:TASTE_PLAYLISTS]:
+            pause(TASTE_PAUSE_S)
+            try:
+                tracks += sp.playlist_items(playlist["id"], max_items=TASTE_PLAYLIST_ITEMS)
+            except SpotifyError as err:
+                log.warning("Couldn't read playlist %s: %s", playlist.get("id"), err)
+    except SpotifyError as err:
+        log.warning("Couldn't list %s's playlists: %s", user_id, err)
+    if found_weights := weights(tracks):
+        sources["playlists"] = found_weights
+    try:
+        pause(TASTE_PAUSE_S)
+        if found_weights := weights(sp.saved_tracks(TASTE_LIKED)):
+            sources["liked"] = found_weights
+    except SpotifyError as err:
+        log.warning("Couldn't read %s's liked songs: %s", user_id, err)
+    result = {"at": time.time() if now is None else now, "top_tried": with_top, "sources": sources, "names": names}
+    with _lock:
+        path = _taste_file(user_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    return result
+
+
+def _unit(weights: dict[str, float]) -> dict[str, float]:
+    norm = math.sqrt(sum(value * value for value in weights.values()))
+    return {key: value / norm for key, value in weights.items()} if norm else {}
+
+
+def profile(user_plays: list[dict], user_taste: dict, now: float | None = None) -> dict[str, float]:
+    """One vector of the artists a person likes, mixing every source they have."""
+    now = time.time() if now is None else now
+    sources = dict(user_taste.get("sources") or {})
+    recent = _recent(user_plays, now, AFFINITY_DAYS)
+    if len(recent) >= MIN_PLAYS:
+        counts = Counter(artist["id"] for play in recent for artist in play["artists"][:1])
+        sources["plays"] = {key: math.log1p(count) for key, count in counts.items()}
+    combined: Counter = Counter()
+    for source, weights in sources.items():
+        for key, value in _unit(weights).items():
+            combined[key] += SOURCE_WEIGHTS.get(source, 0) * value
+    return dict(combined)
+
+
+def artist_names(user_plays: list[dict], user_taste: dict) -> dict[str, str]:
+    names = dict(user_taste.get("names") or {})
+    names.update({artist["id"]: artist["name"] for play in user_plays for artist in play["artists"]})
+    return names
+
+
+def affinity(mine: dict[str, float], theirs: dict[str, float], names: dict[str, str]) -> dict | None:
+    """Musical affinity (0-100) between two taste profiles, and the artists they have in common."""
+    if len(mine) < MIN_ARTISTS or len(theirs) < MIN_ARTISTS:
         return None
-    artists_a = Counter(artist["id"] for play in a for artist in play["artists"][:1])
-    artists_b = Counter(artist["id"] for play in b for artist in play["artists"][:1])
-    tracks_a, tracks_b = Counter(play["uri"] for play in a), Counter(play["uri"] for play in b)
-    score = 0.7 * _cosine(artists_a, artists_b) + 0.3 * _cosine(tracks_a, tracks_b)
-    names = {artist["id"]: artist["name"] for play in a + b for artist in play["artists"][:1]}
-    shared = sorted(artists_a.keys() & artists_b.keys(), key=lambda key: -min(artists_a[key], artists_b[key]))
-    # A gentle curve: people with similar taste rarely overlap song by song, so raw cosine undersells it.
-    return {"percent": round(100 * min(1.0, score) ** 0.6), "shared": [names[key] for key in shared[:3]]}
+    common = mine.keys() & theirs.keys()
+    dot = sum(mine[key] * theirs[key] for key in common)
+    norm = math.sqrt(sum(v * v for v in mine.values())) * math.sqrt(sum(v * v for v in theirs.values()))
+    score = dot / norm if norm else 0.0
+    shared = [names[key] for key in sorted(common, key=lambda key: -min(mine[key], theirs[key])) if names.get(key)]
+    # A gentle curve: even close friends share a small part of everything they like.
+    return {"percent": round(100 * min(1.0, score) ** 0.6), "shared": shared[:3]}
 
 
 def matches(mine: list[dict], theirs: list[dict], now: float | None = None) -> list[dict]:

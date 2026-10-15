@@ -1061,6 +1061,7 @@ a.brand { color: inherit; text-decoration: none; }
 .friend-percent { margin: 2px 0 8px; color: var(--mood); font-size: 3.25rem; font-stretch: 62%; font-weight: 850; line-height: 1; }
 .friend-percent small { margin-left: 8px; color: var(--smoke); font-size: .8125rem; font-stretch: 100%; font-weight: 400; }
 .friend-percent.is-empty { color: var(--smoke); }
+.friends-hint { max-width: 68ch; margin-top: 14px; }
 .feed .track-button { grid-template-columns: 44px minmax(0, 1fr); }
 .feed-text { white-space: normal; }
 .friends-me { margin-top: 36px; }

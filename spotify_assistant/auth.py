@@ -27,9 +27,10 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 PLAYER_SCOPES = "user-read-playback-state user-modify-playback-state user-read-currently-playing"
 LIBRARY_SCOPES = "user-library-read user-library-modify"  # the heart: Liked Songs and saved episodes
 SOCIAL_SCOPES = "user-read-recently-played"  # Friends: what each person listened to (only if they join)
+TASTE_SCOPES = "user-top-read"  # Friends: most played artists, for the affinity (optional)
 SCOPES = (
     f"playlist-read-private playlist-modify-private playlist-modify-public "
-    f"{PLAYER_SCOPES} {LIBRARY_SCOPES} {SOCIAL_SCOPES}"
+    f"{PLAYER_SCOPES} {LIBRARY_SCOPES} {SOCIAL_SCOPES} {TASTE_SCOPES}"
 )
 LOGIN_TIMEOUT_S = 300
 

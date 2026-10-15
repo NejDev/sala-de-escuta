@@ -26,7 +26,7 @@ from typing import Any, Callable
 from . import accounts, artists, config, curation, discovery, favorites, i18n, social, tempo
 from .api import Spotify, SpotifyError, gate
 from .auth import (
-    LIBRARY_SCOPES, PLAYER_SCOPES, SOCIAL_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes,
+    LIBRARY_SCOPES, PLAYER_SCOPES, SOCIAL_SCOPES, TASTE_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes,
     start_authorization,
 )
 from .config import (
@@ -236,6 +236,7 @@ class App:
         self._refreshing: dict[str, Hunt] = {}  # favorite id -> rebuild in progress
         self._refreshing_lock = threading.Lock()
         self._refresh_slot = threading.Lock()  # one rebuild at a time, manual or scheduled
+        self._collector_wake = threading.Event()  # someone just joined Friends: build their taste now
 
     # People and sign-in
 
@@ -1114,15 +1115,23 @@ class App:
         everyone = {uid: social.plays(uid) for uid in config.list_users()
                     if social.sharing(uid) and social.allowed(uid)}
         names = {uid: accounts.display_name(uid) for uid in everyone}
+        tastes = {uid: social.taste(uid) for uid in everyone}
+        profiles = {uid: social.profile(everyone[uid], tastes[uid]) for uid in everyone}
+        artist_names: dict[str, str] = {}
+        for uid in everyone:  # only names of artists both people like are ever shown
+            artist_names.update(social.artist_names(everyone[uid], tastes[uid]))
         mine = everyone.get(user.id, [])
         friends = []
         for uid, items in everyone.items():
             if uid != user.id:
                 numbers = social.stats(items)
-                friends.append({"id": uid, "name": names[uid], "affinity": social.affinity(mine, items),
+                friends.append({"id": uid, "name": names[uid],
+                                "affinity": social.affinity(profiles.get(user.id, {}), profiles[uid], artist_names),
                                 "plays_7d": numbers["plays_7d"]})  # not what they played: only matches show songs
         friends.sort(key=lambda friend: -(friend["affinity"] or {}).get("percent", -1))
-        return {"sharing": True, "ready": ready, "me": social.stats(mine), "friends": friends,
+        me = {**social.stats(mine), "top": not missing_scopes(user.paths.token, TASTE_SCOPES),
+              "taste": bool(tastes.get(user.id))}
+        return {"sharing": True, "ready": ready, "me": me, "friends": friends,
                 "feed": social.feed(everyone, names, user.id), **owner}
 
     @staticmethod
@@ -1158,6 +1167,7 @@ class App:
         social.set_share(user.id, share, forget=forget)
         if share:
             self._collect(user)
+            self._collector_wake.set()  # their taste profile gets built in the background right away
         message = t("friends.joined") if share else t("friends.forgot" if forget else "friends.left")
         return {**self.friends(user), "message": message}
 
@@ -1170,9 +1180,11 @@ class App:
             log.warning("Couldn't read %s's recent plays: %s", user.id, err)
 
     def collector(self) -> None:
-        """While the panel is open, reads what the people who joined Friends listened to."""
-        time.sleep(SCHEDULER_FIRST_S)
+        """While the panel is open, reads what the people who joined Friends listened to, and every
+        few days what they like (most played, playlists, liked songs) for the affinity."""
+        self._collector_wake.wait(SCHEDULER_FIRST_S)
         while True:
+            self._collector_wake.clear()
             for user_id in config.list_users():
                 if not social.sharing(user_id) or not social.allowed(user_id):
                     continue
@@ -1180,11 +1192,14 @@ class App:
                     user = self.profile(user_id)
                     if not missing_scopes(user.paths.token, SOCIAL_SCOPES):
                         self._collect(user)
+                    with_top = not missing_scopes(user.paths.token, TASTE_SCOPES)
+                    if social.taste_due(user_id, with_top):
+                        social.build_taste(self.spotify(user), user_id, with_top)
                 except UserError:
                     continue  # signed out
                 except Exception:
-                    log.exception("Reading recent plays failed")
-            time.sleep(social.COLLECT_EVERY_S)
+                    log.exception("Reading what %s listens to failed", user_id)
+            self._collector_wake.wait(social.COLLECT_EVERY_S)
 
     @staticmethod
     def recent_finds(user: Profile) -> dict:

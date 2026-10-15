@@ -118,8 +118,10 @@ ambiguous. This search barely uses Spotify search, so it keeps working while sea
 Only for people who join, and only among them: whoever doesn't join sees nothing and doesn't show up.
 The room reads each member's recently played songs on Spotify every 15 minutes (kept for 90 days) and shows:
 
-- **Affinity** with each friend over the last 30 days (mostly shared artists, partly shared songs), with
-  the artists you have in common and how much each one listened this week.
+- **Affinity** with each friend: it compares the artists each one likes, from Spotify's most played
+  (4 weeks, 6 months, a year), the playlists they made, their liked songs and the last 30 days of plays
+  (rebuilt every 3 days, in the background). Only the artists you have in common are named; nobody sees
+  anyone's playlists.
 - **Matches**: the same song played by both of you within 6 hours, over the last week; each one plays
   with a click. What a friend plays alone is never shown.
 

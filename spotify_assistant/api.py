@@ -210,6 +210,28 @@ class Spotify:
         data = self._call("GET", f"/albums/{album_id}/tracks", params={"limit": 50, "market": self.market})
         return [track for track in data["items"] if track]
 
+    def _paged(self, path: str, params: dict, max_items: int, pick=lambda entry: entry) -> list:
+        """Items of a paged list, up to max_items: 50 per page, or 10 where Development Mode caps it."""
+        try:
+            page = self._call("GET", path, params={**params, "limit": 50})
+        except SpotifyError as err:
+            if err.status != 400:
+                raise
+            page = self._call("GET", path, params={**params, "limit": 10})
+        items: list = []
+        while page:
+            items += [picked for entry in page.get("items", []) if entry and (picked := pick(entry))]
+            page = self._call("GET", page["next"]) if page.get("next") and len(items) < max_items else None
+        return items[:max_items]
+
+    def top_artists(self, time_range: str, max_items: int = 50) -> list[dict]:
+        """Most played artists: short_term (~4 weeks), medium_term (~6 months) or long_term (~1 year)."""
+        return self._paged("/me/top/artists", {"time_range": time_range}, max_items)
+
+    def saved_tracks(self, max_items: int = 100) -> list[dict]:
+        """Liked Songs, newest first."""
+        return self._paged("/me/tracks", {"market": self.market}, max_items, pick=lambda entry: entry.get("track"))
+
     def my_playlists(self) -> Iterator[dict]:
         page = self._call("GET", "/me/playlists", params={"limit": 50})
         while page:
@@ -234,7 +256,7 @@ class Spotify:
         data = self._call("GET", f"/shows/{show_id}/episodes", params=params)
         return [episode for episode in data["items"] if episode]
 
-    def playlist_items(self, playlist_id: str) -> list[dict]:
+    def playlist_items(self, playlist_id: str, max_items: int | None = None) -> list[dict]:
         """Tracks/episodes in the playlist (the object comes in 'item'; 'track' is the old name)."""
         # Without additional_types=episode, episodes come "disguised" as tracks, with no show or date.
         params = {"limit": 50, "market": self.market, "additional_types": "episode"}
@@ -245,8 +267,9 @@ class Spotify:
                 item = entry and (entry.get("item") or entry.get("track"))
                 if item:
                     items.append(item)
-            page = self._call("GET", page["next"]) if page.get("next") else None
-        return items
+            more = page.get("next") and (max_items is None or len(items) < max_items)
+            page = self._call("GET", page["next"]) if more else None
+        return items[:max_items] if max_items else items
 
     def add_items(self, playlist_id: str, uris: list[str]) -> None:
         self._call("POST", f"/playlists/{playlist_id}/items", body={"uris": uris})

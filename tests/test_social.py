@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from spotify_assistant import config, social
+from spotify_assistant.api import SpotifyError
 
 NOW = 1_800_000_000.0
 DAY = 86400
@@ -25,21 +26,48 @@ def listened(artists_and_counts, start=NOW - DAY):
     return plays
 
 
+def taste(**sources):
+    """A taste profile: taste(top={"a": 1.0}, playlists={...}); artist names are the ids in capitals."""
+    return {"sources": sources, "names": {key: key.upper() for weights in sources.values() for key in weights}}
+
+
+def spread(*artists):
+    return {artist: 1.0 for artist in artists}
+
+
+def affinity(plays_a, plays_b, taste_a=None, taste_b=None):
+    taste_a, taste_b = taste_a or {}, taste_b or {}
+    names = {**social.artist_names(plays_a, taste_a), **social.artist_names(plays_b, taste_b)}
+    return social.affinity(social.profile(plays_a, taste_a, NOW), social.profile(plays_b, taste_b, NOW), names)
+
+
 class AffinityTest(unittest.TestCase):
     def test_same_taste_is_high_different_is_zero(self):
-        mine = listened([("a", 8), ("b", 4)])
-        self.assertEqual(social.affinity(mine, listened([("a", 8), ("b", 4)]), NOW)["percent"], 100)
-        self.assertEqual(social.affinity(mine, listened([("x", 12)]), NOW)["percent"], 0)
-        some = social.affinity(mine, listened([("a", 6), ("z", 6)]), NOW)
+        mine = listened([("a", 8), ("b", 4), ("c", 2), ("d", 2), ("e", 2)])
+        self.assertEqual(affinity(mine, listened([("a", 8), ("b", 4), ("c", 2), ("d", 2), ("e", 2)]))["percent"], 100)
+        self.assertEqual(affinity(mine, listened([("v", 4), ("w", 4), ("x", 4), ("y", 4), ("z", 4)]))["percent"], 0)
+        some = affinity(mine, listened([("a", 6), ("w", 4), ("x", 4), ("y", 4), ("z", 4)]))
         self.assertTrue(0 < some["percent"] < 100)
         self.assertEqual(some["shared"], ["A"])
 
-    def test_needs_some_history(self):
-        self.assertIsNone(social.affinity(listened([("a", 3)]), listened([("a", 30)]), NOW))
+    def test_playlists_and_most_played_count_beyond_the_last_songs(self):
+        # Their last songs share nothing, but they like the same artists.
+        mine = listened([("p", 4), ("q", 4), ("r", 4)])
+        theirs = listened([("s", 4), ("t", 4), ("u", 4)])
+        self.assertIsNone(affinity(mine, theirs))  # 3 artists each: too little to say
+        both = taste(top=spread("radiohead", "bjork", "portishead"), playlists=spread("radiohead", "massive", "air"))
+        other = taste(top=spread("radiohead", "portishead", "tricky"), liked=spread("air", "bjork"))
+        found = affinity(mine, theirs, both, other)
+        self.assertGreater(found["percent"], 30)
+        self.assertLessEqual(set(found["shared"]), {"RADIOHEAD", "PORTISHEAD", "BJORK", "AIR"})  # only what both like
+        self.assertIn("RADIOHEAD", found["shared"])
 
-    def test_only_the_last_month_counts(self):
-        old = listened([("x", 20)], start=NOW - 60 * DAY)
-        self.assertIsNone(social.affinity(old, listened([("x", 20)]), NOW))
+    def test_needs_some_history(self):
+        self.assertIsNone(affinity(listened([("a", 3)]), listened([("a", 30)])))
+
+    def test_only_the_last_month_of_plays_counts(self):
+        old = listened([("v", 4), ("w", 4), ("x", 4), ("y", 4), ("z", 4)], start=NOW - 60 * DAY)
+        self.assertIsNone(affinity(old, listened([("v", 4), ("w", 4), ("x", 4), ("y", 4), ("z", 4)])))
 
 
 class MatchTest(unittest.TestCase):
@@ -61,13 +89,31 @@ class MatchTest(unittest.TestCase):
 
 
 class FakeSpotify:
-    def __init__(self, items):
-        self.items = items
+    def __init__(self, items=()):
+        self.items = list(items)
         self.asked = []
+        self.read = []
 
     def recently_played(self, after=None):
         self.asked.append(after)
         return self.items
+
+    def top_artists(self, time_range):
+        if time_range == "long_term":
+            raise SpotifyError(500, "down")
+        return [{"id": "bjork", "name": "Björk"}, {"id": "air", "name": "Air"}]
+
+    def my_playlists(self):
+        yield {"id": "mine", "owner": {"id": "ana"}}
+        yield {"id": "followed", "owner": {"id": "spotify"}}
+
+    def playlist_items(self, playlist_id, max_items=None):
+        self.read.append(playlist_id)
+        return [{"type": "track", "artists": [{"id": "air", "name": "Air"}, {"id": "beck", "name": "Beck"}]},
+                {"type": "episode", "artists": [{"id": "podcast", "name": "A podcast"}]}]
+
+    def saved_tracks(self, max_items=100):
+        raise SpotifyError(403, "not allowed")
 
 
 def item(uri, when):
@@ -94,6 +140,21 @@ class StorageTest(unittest.TestCase):
         later = NOW + 100 * DAY
         social.collect(FakeSpotify([item("spotify:track:3", later - 60)]), "ana", later)
         self.assertEqual([p["uri"] for p in social.plays("ana")], ["spotify:track:3"])
+
+    def test_taste_from_most_played_own_playlists_and_likes(self):
+        sp = FakeSpotify()
+        built = social.build_taste(sp, "ana", with_top=True, pause=lambda seconds: None, now=NOW)
+        self.assertEqual(sp.read, ["mine"])  # only playlists she made
+        self.assertEqual(set(built["sources"]), {"top", "playlists"})  # likes failed: left out, the rest kept
+        self.assertEqual(set(built["sources"]["playlists"]), {"air", "beck"})  # episodes don't count
+        self.assertEqual(built["names"]["bjork"], "Björk")
+        self.assertFalse(social.taste_due("ana", with_top=True, now=NOW + 60))
+        self.assertTrue(social.taste_due("ana", with_top=True, now=NOW + social.TASTE_EVERY_S + 1))
+        without_top = social.build_taste(sp, "bia", with_top=False, pause=lambda seconds: None, now=NOW)
+        self.assertNotIn("top", without_top["sources"])
+        self.assertTrue(social.taste_due("bia", with_top=True, now=NOW + 60))  # authorized later: read again
+        social.set_share("ana", False, forget=True)
+        self.assertEqual(social.taste("ana"), {})  # leaving deletes it too
 
     def test_leaving_can_delete_the_history(self):
         social.set_share("ana", True)

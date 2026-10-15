@@ -50,7 +50,7 @@ class FakeSpotify:
             yield {"id": f"new{number}", "name": name, "uri": f"spotify:playlist:new{number}", "images": [],
                    "items": {"total": 0}, "owner": {"id": "paulo"}}
 
-    def playlist_items(self, playlist_id):
+    def playlist_items(self, playlist_id, max_items=None):
         return [TRACK]
 
     def add_items(self, playlist_id, uris):
