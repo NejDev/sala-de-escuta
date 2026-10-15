@@ -418,11 +418,11 @@ a.brand { color: inherit; text-decoration: none; }
   gap: 2px 12px;
   width: 100%;
   height: 100%;
-  padding: 14px 16px 14px 22px;
+  padding: 14px 16px 14px 18px;
   border: 0;
-  border-radius: 6px;
+  border-left: 4px solid var(--tone);
+  border-radius: 0 6px 6px 0;
   background: none;
-  box-shadow: inset 4px 0 0 var(--tone);
   color: var(--linen);
   text-align: left;
   cursor: pointer;
@@ -579,10 +579,10 @@ a.brand { color: inherit; text-decoration: none; }
   flex-direction: column;
   align-items: flex-start;
   gap: 10px;
-  padding: 22px 24px 24px 28px;
-  border-radius: 8px;
+  padding: 22px 24px 24px 24px;
+  border-left: 4px solid var(--tone);
+  border-radius: 0 8px 8px 0;
   background: var(--velvet);
-  box-shadow: inset 4px 0 0 var(--tone);
 }
 .path-name {
   margin: 0;
@@ -947,10 +947,10 @@ a.brand { color: inherit; text-decoration: none; }
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 24px;
-  padding: 22px 26px 24px 30px;
-  border-radius: 8px;
+  padding: 22px 26px 24px 26px;
+  border-left: 4px solid var(--tone);
+  border-radius: 0 8px 8px 0;
   background: var(--velvet);
-  box-shadow: inset 4px 0 0 var(--tone);
 }
 .moment-name { margin: 0; color: var(--tone); font-size: 2.75rem; font-stretch: 62%; font-weight: 850; line-height: 1; }
 .moment-text { max-width: 52ch; margin: 8px 0 0; color: color-mix(in srgb, var(--linen) 86%, transparent); }
@@ -995,11 +995,11 @@ a.brand { color: inherit; text-decoration: none; }
   display: grid;
   gap: 4px;
   width: 100%;
-  padding: 12px 12px 14px;
+  padding: 12px 12px 11px;
   border: 0;
-  border-radius: 8px;
+  border-bottom: 3px solid var(--spine);
+  border-radius: 8px 8px 0 0;
   background: var(--velvet);
-  box-shadow: inset 0 -3px 0 var(--spine);
   color: var(--linen);
   text-align: left;
   cursor: pointer;
@@ -1037,10 +1037,10 @@ a.brand { color: inherit; text-decoration: none; }
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  padding: 18px 20px 20px 24px;
-  border-radius: 8px;
+  padding: 18px 20px 20px 20px;
+  border-left: 4px solid var(--tone);
+  border-radius: 0 8px 8px 0;
   background: var(--velvet);
-  box-shadow: inset 4px 0 0 var(--tone);
 }
 .shortcut-name { margin: 0; color: var(--tone); font-size: 1.75rem; font-stretch: 62%; font-weight: 850; line-height: 1; }
 .shortcut-text { margin: 0 0 8px; color: var(--smoke); }
