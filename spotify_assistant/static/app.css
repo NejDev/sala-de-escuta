@@ -154,6 +154,9 @@ a.brand { color: inherit; text-decoration: none; }
 .nav-item:hover { background: var(--velvet); color: var(--linen); }
 /* The chosen one lights up in its own color: the whole room changes light with it. */
 .nav-item[aria-current] { background: var(--spine, var(--linen)); color: var(--ink); }
+/* "+" at the end of the favorites: put a playlist on the bar. */
+.nav-item.nav-add { justify-content: center; width: 34px; padding: 0; border: 1px dashed var(--line); font-size: 1.125rem; font-weight: 500; }
+.nav-item.nav-add:hover { border-color: var(--smoke); }
 
 .nav-mark {
   display: flex;
@@ -935,7 +938,8 @@ a.brand { color: inherit; text-decoration: none; }
   .home-top { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
 }
 .home-label { margin: 0 0 6px; color: var(--smoke); font-size: .8125rem; }
-.section-title { margin: 0 0 16px; font-size: 1.75rem; font-stretch: 62%; font-weight: 800; line-height: 1; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin: 0 0 16px; }
+.section-title { margin: 0; font-size: 1.75rem; font-stretch: 62%; font-weight: 800; line-height: 1; }
 
 /* The moment: a sensation's own spine and light. */
 .moment {

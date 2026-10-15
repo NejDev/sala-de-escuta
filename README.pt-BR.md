@@ -42,7 +42,7 @@ O painel abre em http://127.0.0.1:8888 e fica no ar enquanto a janela preta esti
 Na primeira visita aparece uma apresentação curta com o mascote; **Como funciona**, no topo, abre de novo.
 **PT / EN** troca o idioma daquela pessoa (as mensagens do servidor acompanham).
 
-- **Barra**: no topo, "Favoritas" (só playlists que se atualizam sozinhas) e "Sala" (Início,
+- **Barra**: no topo, "Favoritas" (playlists que se atualizam sozinhas, mais as que você fixar) e "Sala" (Início,
   Sensações, Descobrir, Novidades). Cada favorita é uma lombada colorida, e a escolhida vira a luz do
   painel. O mascote ao lado do nome também volta para o Início.
 - **Início**: "Pra agora" sugere uma sensação para a hora do dia (manhã, tarde, noite; festa nas noites
@@ -112,7 +112,9 @@ Cada música tem o próprio **Adicionar**, com as mesmas opções. Playlists que
 (a semanal de podcasts e a mistura) não aparecem ali, porque o que entrasse nelas se perderia.
 
 Na página de uma favorita: **Atualizar agora**, a frequência e **Tirar da barra** (a playlist
-continua no Spotify; só para de se atualizar). Até 8 favoritas por pessoa. As atualizações rodam
+continua no Spotify; só para de se atualizar). O **+** no fim das favoritas (ou **Pôr playlist na barra**,
+no Início) fixa qualquer playlist sua como atalho, sem atualização automática, e traz de volta as da
+curadoria que saíram da barra. Até 8 favoritas por pessoa. As atualizações rodam
 dentro do painel, uma de cada vez e no máximo uma a cada 10 minutos, para poupar os limites da
 Spotify; enquanto a Spotify estiver com a busca pausada, elas esperam. Se o PC estava desligado na
 hora, a atualização roda assim que o painel voltar.
@@ -135,7 +137,8 @@ qualquer denominação (`RELIGIOUS_WORDS` em `spotify_assistant/discovery.py`).
 | The Classical Room | clássico, do contemplativo ao grandioso | todo mês |
 | The Study Collection | jazz + lo-fi + clássico, alternados | todo mês |
 
-As playlists curadas são as favoritas do dono; a frequência muda na página de cada uma.
+As playlists curadas são as favoritas do dono; a frequência muda na página de cada uma, e **Tirar da
+barra** esconde uma delas (ela para de se atualizar até voltar pelo **+**).
 
 - **Atualizar agora / Refazer seleção** roda a curadoria com o log aparecendo ao vivo; **Ver prévia**
   mostra o resultado sem alterar nada.

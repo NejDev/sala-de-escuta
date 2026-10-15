@@ -42,7 +42,7 @@ The panel opens at http://127.0.0.1:8888 and stays up while the black window is 
 The first visit shows a short tour with the mascot; **How it works** at the top opens it again.
 **PT / EN** switches the language for that person (the server's messages follow it).
 
-- **Bar**: at the top, "Favorites" (only playlists that update themselves) and "Room" (Home,
+- **Bar**: at the top, "Favorites" (playlists that update themselves, plus any you pin) and "Room" (Home,
   Sensations, Discover, New releases). Each favorite is a colored spine, and the selected one becomes
   the panel's light. The mascot next to the name also goes back Home.
 - **Home**: "For right now" suggests a sensation for this time of day (morning, afternoon, evening;
@@ -112,7 +112,9 @@ Each song has its own **Add**, with the same choices. Playlists the room rebuild
 (the weekly podcasts and the mix) don't show up there, since anything added would be lost.
 
 On a favorite's page: **Update now**, the frequency, and **Remove from the bar** (the playlist stays on
-Spotify; it just stops updating). Up to 8 favorites per person. Updates run inside the panel, one at a
+Spotify; it just stops updating). The **+** at the end of the favorites (or **Put a playlist on the bar**
+on Home) pins any playlist of yours as a shortcut, without automatic updates, and brings back curated
+playlists that left the bar. Up to 8 favorites per person. Updates run inside the panel, one at a
 time and at most one every 10 minutes, to spare Spotify's request limits; while Spotify has search paused,
 they wait. If the PC was off at the time, the update runs once the panel is back.
 
@@ -133,7 +135,8 @@ denomination (`RELIGIOUS_WORDS` in `spotify_assistant/discovery.py`).
 | The Classical Room | classical, from contemplative to grand | every month |
 | The Study Collection | jazz + lo-fi + classical, alternating | every month |
 
-The curated playlists are the owner's favorites; the frequency can be changed on each page.
+The curated playlists are the owner's favorites; the frequency can be changed on each page, and
+**Remove from the bar** hides one (it stops updating until it comes back through the **+**).
 
 - **Update now / Redo selection** runs the curation with the log showing live; **See preview**
   shows the result without changing anything.

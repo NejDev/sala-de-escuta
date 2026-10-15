@@ -13,6 +13,8 @@ These were built with tests and mocked screens only, because Spotify search was 
 - [ ] **Add to a playlist**: `Finds from the Sala` is created only once, repeated songs are skipped,
       and songs added to a curated playlist land in `playlists.json`.
 - [ ] Repeat button on a real device: off → all → this track.
+- [ ] The **+** on the bar: pin one of your playlists, add a track to it, take it off; take a curated
+      playlist off the bar and bring it back.
 - [ ] The heart in the player: each person authorizes Spotify once more (new library permission, the
       heart shows the link), then likes and unlikes a song and a podcast episode; check Liked Songs.
 - [ ] Home: **For right now** builds the sensation, or plays it when it's already a favorite;
@@ -36,8 +38,8 @@ These were built with tests and mocked screens only, because Spotify search was 
 ## Before calling it 1.0
 
 - [ ] Use each person's own country (from `/me`) instead of the single `market` in `playlists.json`.
-- [ ] Remove the old library-shelf code now that the bar only holds favorites (`LIBRARY_KEY` in
-      `dashboard.playlist` and `dashboard.add_item`, and the tests that use it).
+- [ ] Remove the old library-shelf code (`LIBRARY_KEY` in `dashboard.playlist` and `dashboard.add_item`,
+      and the tests that use it): pinned favorites (`fav:<id>` keys) replaced it.
 - [ ] Drop the `weekly` command alias (kept only for old scheduled tasks).
 - [ ] README: screenshots (home, sensations, a favorite) and a social preview image with the mascot.
 - [ ] GitHub Actions running `python -m unittest discover -s tests` on every push.

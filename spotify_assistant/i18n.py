@@ -76,6 +76,15 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # Pinned playlists and the bar
+        "fav.hidden": "{name} saiu da barra e não se atualiza mais. Para trazer de volta, use o + da barra.",
+        "fav.shown": "{name} voltou para a barra.",
+        "fav.pinned": "{name} está na barra.",
+        "fav.unpinned": "{name} saiu da barra. A playlist continua no seu Spotify.",
+        "fav.already": "Essa playlist já está na barra.",
+        "fav.too_many_pinned": "Dá para fixar até {max} playlists. Tire uma da barra para pôr outra.",
+        "fav.pinned_no_update": "Playlists fixadas não se atualizam sozinhas.",
+        "fav.pinned_only_add": "Essa playlist ganha músicas novas a cada atualização; adicionar à mão não adianta.",
         # The heart (Spotify library)
         "err.like_what": "Nada para curtir aqui.",
         "liked.need_auth": "Para curtir por aqui, autorize o Spotify de novo (só uma vez).",
@@ -93,7 +102,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "fav.added": "Ela fica na barra e se atualiza {every}.",
         "fav.not_found": "Favorita não encontrada.",
         "fav.every_set": "Agora ela se atualiza {every}.",
-        "fav.curated_stays": "As playlists da curadoria ficam na barra; para tirar uma, edite o playlists.json.",
         "fav.removed": "{name} saiu da barra e não se atualiza mais. A playlist continua no seu Spotify.",
         "fav.already_running": "Essa playlist já está se atualizando.",
         "fav.queued": "Na fila para atualizar…",
@@ -286,6 +294,15 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # Pinned playlists and the bar
+        "fav.hidden": "{name} left the bar and won't update anymore. To bring it back, use the + on the bar.",
+        "fav.shown": "{name} is back on the bar.",
+        "fav.pinned": "{name} is on the bar.",
+        "fav.unpinned": "{name} left the bar. The playlist stays on your Spotify.",
+        "fav.already": "That playlist is already on the bar.",
+        "fav.too_many_pinned": "You can pin up to {max} playlists. Take one off the bar to add another.",
+        "fav.pinned_no_update": "Pinned playlists don't update themselves.",
+        "fav.pinned_only_add": "This playlist gets new songs on every update; adding by hand won't stick.",
         # The heart (Spotify library)
         "err.like_what": "Nothing to like here.",
         "liked.need_auth": "To like songs from here, authorize Spotify again (just once).",
@@ -303,7 +320,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "fav.added": "It's on the bar and updates itself {every}.",
         "fav.not_found": "Favorite not found.",
         "fav.every_set": "It now updates itself {every}.",
-        "fav.curated_stays": "Curated playlists stay on the bar; to remove one, edit playlists.json.",
         "fav.removed": "{name} left the bar and won't update anymore. The playlist stays on your Spotify.",
         "fav.already_running": "This playlist is already updating.",
         "fav.queued": "Waiting to update…",

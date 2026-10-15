@@ -282,8 +282,47 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.post(f"/api/favorites/{fav_id}", {"every": "daily"})[0], 404)  # not the owner's
         self.assertEqual(self.post(f"/api/favorites/{fav_id}/remove", {}, as_user="ana")[0], 200)
         self.assertEqual(favorites.load("ana"), [])
-        curated = json.loads(self.request("/api/overview")[1])["playlists"][0]["favorite"]["id"]
-        self.assertEqual(self.post(f"/api/favorites/{curated}/remove", {})[0], 409)
+
+    def bar(self, user_id="paulo"):
+        return json.loads(self.request("/api/overview", as_user=user_id)[1])["playlists"]
+
+    def test_curated_leaves_the_bar_and_comes_back(self):
+        jazz = self.bar()[1]["favorite"]["id"]
+        status, data = self.post(f"/api/favorites/{jazz}/remove", {})
+        self.assertEqual(status, 200, data)
+        self.assertEqual([p["name"] for p in self.bar()], ["Tech", "Mix"])
+        extras = json.loads(self.request("/api/favorites/extras")[1])
+        self.assertEqual([(h["fav"], h["name"], h["id"]) for h in extras["hidden"]], [(jazz, "Jazz", "pl-jazz")])
+        self.assertNotIn("pl-jazz", [p["id"] for p in extras["playlists"]])  # it comes back as curated, not pinned
+        fav = next(f for f in favorites.load("paulo") if f["id"] == jazz)
+        self.assertIsNone(favorites.next_run(fav))  # off the bar: no automatic updates
+        self.assertEqual(self.post(f"/api/favorites/{jazz}/show", {})[0], 200)
+        self.assertEqual([p["name"] for p in self.bar()], ["Tech", "Jazz", "Mix"])
+
+    def test_any_own_playlist_can_be_pinned(self):
+        extras = json.loads(self.request("/api/favorites/extras", as_user="ana")[1])
+        self.assertEqual([p["id"] for p in extras["playlists"]], ["anamix"])  # only hers, not followed ones
+        status, data = self.post("/api/favorites/pin", {"playlist": "anamix"}, as_user="ana")
+        self.assertEqual(status, 200, data)
+        bar = self.bar("ana")
+        self.assertEqual([(p["key"], p["kind"], p["favorite"]["every"]) for p in bar], [(data["key"], "pinned", None)])
+        self.assertIsNone(bar[0]["favorite"]["next_run"])
+        self.assertEqual(self.post("/api/favorites/pin", {"playlist": "anamix"}, as_user="ana")[0], 409)  # already there
+        self.assertEqual(self.post("/api/favorites/pin", {"playlist": "seguida"}, as_user="ana")[0], 403)  # not hers
+        fav_id = data["key"][4:]
+        self.assertEqual(self.post(f"/api/favorites/{fav_id}", {"every": "daily"}, as_user="ana")[0], 409)
+        self.assertEqual(self.post(f"/api/favorites/{fav_id}/refresh", {}, as_user="ana")[0], 409)
+        # A pinned playlist takes tracks by hand, straight to Spotify.
+        key = urllib.parse.quote(data["key"])
+        status, _ = self.request(f"/api/playlists/{key}/items", {"uri": "spotify:track:2", "entry": "X - Y"}, as_user="ana")
+        self.assertEqual(status, 200)
+        self.assertEqual(self.fake.added, [("anamix", ["spotify:track:2"])])
+        status, data = self.post(f"/api/favorites/{fav_id}/remove", {}, as_user="ana")
+        self.assertEqual((status, data["message"]), (200, "Mix da Ana saiu da barra. A playlist continua no seu Spotify."))
+        self.assertEqual(self.bar("ana"), [])
+
+    def test_curated_playlists_cannot_be_pinned_twice(self):
+        self.assertEqual(self.post("/api/favorites/pin", {"playlist": "pl-jazz"})[0], 409)
 
     def test_scheduler_rebuilds_the_most_overdue_favorite_with_its_recipe(self):
         from spotify_assistant.discovery import Find, Hunt

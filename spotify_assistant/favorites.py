@@ -1,9 +1,11 @@
 """Favorites (the playlists in the top bar, which rebuild themselves) and recent finds.
 
-Each person has data/users/<id>/favorites.json. A favorite is either one of the owner's
-curated playlists (playlists.json) or a playlist created from a discovery together with its
-"recipe": the same parameters the panel sends to start that discovery. Every favorite has a
-frequency (daily, weekly or monthly); on each update its songs are replaced with a fresh selection.
+Each person has data/users/<id>/favorites.json. A favorite is one of:
+- curated: one of the owner's playlists from playlists.json (can be hidden from the bar);
+- discovery: a playlist created from a discovery, with its "recipe" (the same parameters the panel
+  sends to start that discovery); on each update its songs are replaced with a fresh selection;
+- pinned: any playlist of the person's own, kept on the bar as a shortcut; it never updates.
+Curated and discovery favorites have a frequency: daily, weekly or monthly.
 
 recent.json keeps the last songs the person saved or added, for the home screen.
 """
@@ -20,6 +22,7 @@ from . import config
 
 EVERY = {"daily": 86400, "weekly": 7 * 86400, "monthly": 30 * 86400}
 MAX_FAVORITES = 8  # made from discoveries; the owner's curated playlists don't count
+MAX_PINNED = 8  # shortcuts on the bar
 RECENT_MAX = 30
 # Bar color for favorites made from discoveries (sensations use their own color).
 KIND_COLORS = {"sense": "#7FB7BE", "roulette": "#F2C14E", "rabbit": "#9DB4E6", "news": "#E3909E"}
@@ -58,7 +61,7 @@ def new(kind: str, name: str, every: str, *, playlist_id: str | None = None, rec
     now = time.time() if now is None else now
     return {
         "id": secrets.token_hex(6),
-        "kind": kind,  # curated | discovery
+        "kind": kind,  # curated | discovery | pinned
         "name": name,
         "every": every,
         "playlist_id": playlist_id,
@@ -73,13 +76,17 @@ def new(kind: str, name: str, every: str, *, playlist_id: str | None = None, rec
     }
 
 
-def next_run(fav: dict) -> float:
+def next_run(fav: dict) -> float | None:
+    """None for favorites that don't update by themselves (pinned, or curated taken off the bar)."""
+    if fav.get("every") not in EVERY or fav.get("hidden"):
+        return None
     last = fav.get("last_run")
     return (fav["created"] if last is None else last) + EVERY[fav["every"]]
 
 
 def is_due(fav: dict, now: float) -> bool:
-    return now >= next_run(fav)
+    due = next_run(fav)
+    return due is not None and now >= due
 
 
 def sync_curated(user_id: str, specs: list[dict], now: float | None = None) -> list[dict]:

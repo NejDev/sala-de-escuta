@@ -51,7 +51,7 @@ PLAYLIST_PATH = re.compile(r"/api/playlists/(?P<name>[^/]+)(?P<items>/items)?")
 # The "finds" playlist is stored under a fixed key, so switching languages doesn't create a second one.
 FINDS_KEY = "_finds"
 FINDS_NAMES = {i18n.MESSAGES[lang]["finds.name"] for lang in i18n.LANGUAGES}
-FAVORITE_PATH = re.compile(r"/api/favorites/(?P<id>[a-f0-9]{1,32})(?:/(?P<action>refresh|remove))?")
+FAVORITE_PATH = re.compile(r"/api/favorites/(?P<id>[a-f0-9]{1,32})(?:/(?P<action>refresh|remove|show))?")
 SCHEDULER_FIRST_S = 120  # let the panel settle after startup
 SCHEDULER_TICK_S = 600  # at most one favorite rebuilt per tick, to spread Spotify requests out
 MAX_BODY_BYTES = 64_000
@@ -291,6 +291,8 @@ class App:
         specs = {spec["name"]: spec for spec in load_playlists()["playlists"]} if user.is_owner else {}
         shelf, gone = [], set()
         for fav in self._favorites(user):
+            if fav.get("hidden"):
+                continue
             if fav["kind"] == "curated":
                 spec = specs[fav["name"]]
                 remote = owned.get(ids.get(spec["name"]))
@@ -311,7 +313,7 @@ class App:
                 item = {
                     "key": f"fav:{fav['id']}",
                     "name": remote["name"],
-                    "kind": "favorite",
+                    "kind": "pinned" if fav["kind"] == "pinned" else "favorite",
                     "description": html.unescape(remote.get("description") or ""),
                     "color": fav.get("color"),
                 }
@@ -854,12 +856,14 @@ class App:
         if fav["kind"] == "curated" and job and job.status == "running" and job.name == fav["name"]:
             running = Hunt("refresh", fav["name"], message=(job.lines or [job.label])[-1])
         recipe = fav.get("recipe") or {}
+        due = favorites.next_run(fav)
         return {
             "id": fav["id"],
+            "kind": fav["kind"],
             "curated": fav["kind"] == "curated",
-            "every": fav["every"],
+            "every": fav.get("every"),
             "last_run": int(fav["updated"] * 1000) if fav.get("updated") else None,
-            "next_run": int(favorites.next_run(fav) * 1000),
+            "next_run": int(due * 1000) if due else None,
             "status": fav.get("status", "ok"),
             "message": fav.get("message", ""),
             "recipe": {"kind": recipe.get("kind"), "id": recipe.get("id")} if recipe else None,
@@ -874,7 +878,8 @@ class App:
         every = body.get("every")
         if every not in favorites.EVERY:
             raise UserError(t("fav.bad_every"))
-        self._favorite(user, fav_id)
+        if self._favorite(user, fav_id)["kind"] == "pinned":
+            raise UserError(t("fav.pinned_no_update"), 409)
 
         def edit(items: list[dict]) -> None:
             for fav in items:
@@ -885,17 +890,78 @@ class App:
         return {**self.favorite_status(user, fav_id), "notice": t("fav.every_set", every=t(f"every.{every}"))}
 
     def remove_favorite(self, user: Profile, fav_id: str) -> dict:
+        """Off the bar. Curated ones are only hidden (they live in playlists.json); the playlist stays on Spotify."""
         fav = self._favorite(user, fav_id)
         if fav["kind"] == "curated":
-            raise UserError(t("fav.curated_stays"), 409)
+            self._edit_favorite(user, fav_id, hidden=True)
+            return {"message": t("fav.hidden", name=fav["name"])}
         favorites.change(user.id, lambda items: items.__setitem__(slice(None), [f for f in items if f["id"] != fav_id]))
-        return {"message": t("fav.removed", name=fav["name"])}
+        return {"message": t("fav.unpinned" if fav["kind"] == "pinned" else "fav.removed", name=fav["name"])}
+
+    def show_favorite(self, user: Profile, fav_id: str) -> dict:
+        """A curated playlist back on the bar; its schedule starts over from now."""
+        fav = self._favorite(user, fav_id)
+        self._edit_favorite(user, fav_id, hidden=False, last_run=time.time())
+        return {"message": t("fav.shown", name=fav["name"])}
+
+    @staticmethod
+    def _edit_favorite(user: Profile, fav_id: str, **changes) -> None:
+        def edit(items: list[dict]) -> None:
+            for item in items:
+                if item["id"] == fav_id:
+                    item.update(changes)
+
+        favorites.change(user.id, edit)
+
+    def shelf_extras(self, user: Profile) -> dict:
+        """What can go on the bar: curated playlists taken off it and the person's own playlists."""
+        items = self._favorites(user)
+        on_bar = {fav.get("playlist_id") for fav in items if fav["kind"] != "curated"}
+        curated_ids = set(load_state(user.paths.state).get("playlists", {}).values()) if user.is_owner else set()
+        owned = self._owned(user, self.spotify(user))
+        by_id = {playlist["id"]: playlist for playlist in owned}
+        ids = load_state(user.paths.state).get("playlists", {})
+
+        def row(playlist: dict) -> dict:
+            return {
+                "id": playlist["id"],
+                "name": playlist["name"],
+                "image": pick_image(playlist.get("images"), 64),
+                "total": (playlist.get("items") or playlist.get("tracks") or {}).get("total", 0),
+            }
+
+        hidden = [
+            {**(row(by_id[ids[fav["name"]]]) if ids.get(fav["name"]) in by_id else {"image": None, "total": 0}),
+             "fav": fav["id"], "name": fav["name"]}
+            for fav in items if fav["kind"] == "curated" and fav.get("hidden")
+        ]
+        return {
+            "hidden": hidden,
+            "playlists": [row(p) for p in owned if p["id"] not in on_bar and p["id"] not in curated_ids],
+        }
+
+    def pin(self, user: Profile, body: dict) -> dict:
+        playlist_id = str(body.get("playlist") or "")
+        playlist = next((p for p in self._owned(user, self.spotify(user)) if p["id"] == playlist_id), None)
+        if playlist is None:
+            raise UserError(t("save.not_yours"), 403)
+        items = self._favorites(user)
+        curated_ids = set(load_state(user.paths.state).get("playlists", {}).values()) if user.is_owner else set()
+        if playlist_id in curated_ids or any(fav.get("playlist_id") == playlist_id for fav in items):
+            raise UserError(t("fav.already"), 409)
+        if sum(1 for fav in items if fav["kind"] == "pinned") >= favorites.MAX_PINNED:
+            raise UserError(t("fav.too_many_pinned", max=favorites.MAX_PINNED), 409)
+        fav = favorites.new("pinned", playlist["name"], None, playlist_id=playlist_id, lang=i18n.current())
+        favorites.change(user.id, lambda items: items.append(fav))
+        return {"message": t("fav.pinned", name=playlist["name"]), "key": f"fav:{fav['id']}"}
 
     def refresh_favorite(self, user: Profile, fav_id: str) -> dict:
         """'Update now': curated ones go through the update console; the others rebuild in the background."""
         fav = self._favorite(user, fav_id)
         if fav["kind"] == "curated":
             return {"job": self.start_job(user, {"playlist": fav["name"]})}
+        if fav["kind"] == "pinned":
+            raise UserError(t("fav.pinned_no_update"), 409)
         self._check_search()
         with self._refreshing_lock:
             if fav_id in self._refreshing:
@@ -1003,10 +1069,18 @@ class App:
         entry, uri = body.get("entry", "").strip(), body.get("uri", "")
         if not entry or not uri.startswith("spotify:"):
             raise UserError(t("err.pick_result"))
+        own_id = None
         if match := LIBRARY_KEY.fullmatch(name):
+            own_id = match["id"]
+        elif name.startswith("fav:"):
+            fav = self._favorite(user, name[4:])
+            if fav["kind"] != "pinned":
+                raise UserError(t("fav.pinned_only_add"), 409)
+            own_id = fav["playlist_id"]
+        if own_id:
             # A playlist from their own account: it only goes to Spotify (which refuses if it isn't theirs).
             try:
-                self.spotify(user).add_items(match["id"], [uri])
+                self.spotify(user).add_items(own_id, [uri])
             except SpotifyError as err:
                 if err.status in (403, 404):
                     raise UserError(t("save.not_yours"), 403) from None
@@ -1184,6 +1258,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.set_blocked(user, body)
         if method == "GET" and path == "/api/recent":
             return app.recent_finds(user)
+        if method == "GET" and path == "/api/favorites/extras":
+            return app.shelf_extras(user)
+        if method == "POST" and path == "/api/favorites/pin":
+            return app.pin(user, body)
         if match := FAVORITE_PATH.fullmatch(path):
             fav_id, action = match["id"], match["action"]
             if method == "GET" and not action:
@@ -1194,6 +1272,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return app.refresh_favorite(user, fav_id)
             if method == "POST" and action == "remove":
                 return app.remove_favorite(user, fav_id)
+            if method == "POST" and action == "show":
+                return app.show_favorite(user, fav_id)
         if method == "GET" and path == "/api/my-playlists":
             return app.my_playlists(user)
         if method == "POST" and path == "/api/playlists/new":

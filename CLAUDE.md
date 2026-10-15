@@ -27,7 +27,7 @@ Static files are read from disk on each request (images are cached by browsers f
 
 - `dashboard.py`: HTTP server, routes, per-person state (`Profile`), discoveries, favorites and the scheduler thread.
 - `discovery.py`: Sensations, roulette, rabbit hole, new releases; Deezer → Spotify matching by ISRC.
-- `favorites.py`: `data/users/<id>/favorites.json` (recipe + frequency) and `recent.json`.
+- `favorites.py`: `data/users/<id>/favorites.json` (curated, discovery with recipe + frequency, or pinned) and `recent.json`.
 - `api.py`: Spotify client with a request gate and persisted pauses (`data/spotify-pauses.json`).
 - `i18n.py`: server messages; `static/i18n.js`: browser texts (a JSON object after `const STRINGS =`).
 - `playlists.py` / `curation.py`: the owner's curated playlists from `playlists.json`.

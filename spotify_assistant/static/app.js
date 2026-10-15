@@ -359,8 +359,16 @@ function renderShelf() {
     h("span", { class: "nav-label", "aria-hidden": "true" }, label),
     items);
   const emptyShelf = !playlists.length && h("span", { class: "nav-empty" }, t("nav.none_yet"));
+  const add = h("button", {
+    class: "nav-item nav-add",
+    type: "button",
+    "aria-haspopup": "dialog",
+    "aria-label": t("pin.open"),
+    title: t("pin.open"),
+    onclick: (event) => openPinPicker(event.currentTarget),
+  }, "+");
   $("#shelf").replaceChildren(
-    group(t("nav.favorites"), playlists.length ? playlists : [emptyShelf]),
+    group(t("nav.favorites"), [...(playlists.length ? playlists : [emptyShelf]), add]),
     group(t("nav.room"), room),
   );
   markPlaying();
@@ -398,18 +406,23 @@ function renderSleeve() {
 
   const fav = playlist.favorite;
   const curated = fav.curated;
-  // Curated playlists keep a base selection (playlists.json); the others get new songs on every update.
-  const canAdd = curated && playlist.uri && ["music", "podcasts"].includes(playlist.kind);
+  const pinned = fav.kind === "pinned";
+  // Curated playlists keep a base selection (playlists.json) and pinned ones are plain playlists;
+  // the ones made from discoveries get new songs on every update, so adding by hand wouldn't stick.
+  const canAdd = playlist.uri && (pinned || (curated && ["music", "podcasts"].includes(playlist.kind)));
   const actions = h("div", { class: "actions" },
     h("button", { class: "play-button", type: "button", disabled: !playlist.uri, onclick: () => play(playlist.uri) },
       playIcon(), t("action.play")),
     playlist.uri && h("a", { class: "ghost-button", href: playlist.uri }, t("sleeve.open_app")),
-    curated
-      ? h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refreshLabel(playlist))
-      : h("button", { class: "ghost-button", type: "button", disabled: Boolean(fav.running), onclick: () => refreshFavorite(fav) },
-        t("sleeve.update_now")),
+    curated && h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refreshLabel(playlist)),
+    fav.kind === "discovery" && h("button", {
+      class: "ghost-button",
+      type: "button",
+      disabled: Boolean(fav.running),
+      onclick: () => refreshFavorite(fav),
+    }, t("sleeve.update_now")),
     curated && h("button", { class: "text-button", type: "button", onclick: () => startJob(true) }, t("sleeve.preview")),
-    everyControl(fav),
+    !pinned && everyControl(fav),
     canAdd && h("button", {
       class: "text-button",
       type: "button",
@@ -417,7 +430,7 @@ function renderSleeve() {
       "aria-controls": "adder",
       onclick: toggleAdder,
     }, t(playlist.kind === "podcasts" ? "sleeve.follow_show" : "sleeve.add_track")),
-    !curated && h("button", { class: "text-button", type: "button", onclick: () => removeFavorite(fav) },
+    h("button", { class: "text-button", type: "button", onclick: () => removeFavorite(fav) },
       t(state.confirmRemove === fav.id ? "fav.remove_confirm" : "fav.remove")),
   );
 
@@ -431,6 +444,7 @@ function renderSleeve() {
 
 /** When it updates, how the last update went, or what it is doing right now. */
 function favoriteLines(fav) {
+  if (fav.kind === "pinned") return [h("p", { class: "meta" }, t("pin.line"))];
   if (fav.running) {
     const percent = fav.running.total ? Math.max(4, Math.round((fav.running.progress / fav.running.total) * 100)) : 4;
     return [
@@ -536,7 +550,9 @@ function renderTracks() {
   if (!items.length) {
     let message = playlist.kind === "favorite"
       ? t("tracks.empty_favorite", { button: t("sleeve.update_now") })
-      : t("tracks.empty_curated", { button: t("sleeve.redo") });
+      : playlist.kind === "pinned"
+        ? t("tracks.empty_pinned", { button: t("sleeve.add_track") })
+        : t("tracks.empty_curated", { button: t("sleeve.redo") });
     if (!playlist.uri) message = t("tracks.not_created", { button: t("sleeve.create") });
     else if (playlist.kind === "podcasts") message = t("tracks.no_episodes", { button: t("sleeve.update_now") });
     list.replaceChildren(h("li", { class: "tracks-empty" }, message));
@@ -896,11 +912,14 @@ function momentPreset(now = new Date()) {
 function homeView() {
   const hour = new Date().getHours();
   const greeting = hour >= 5 && hour < 12 ? "home.morning" : hour >= 12 && hour < 18 ? "home.afternoon" : "home.evening";
-  const section = (title, body) => h("section", { class: "home-section" }, h("h2", { class: "section-title" }, title), body);
+  const section = (title, body, extra) => h("section", { class: "home-section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, title), extra), body);
   return [h("div", { class: "home" },
     h("h1", { class: "title home-title" }, t(greeting, { name: state.overview.me.name })),
     h("div", { class: "home-top" }, momentCard(), nowCard()),
-    section(t("home.favorites"), favoriteCards()),
+    section(t("home.favorites"), favoriteCards(),
+      h("button", { class: "text-button", type: "button", "aria-haspopup": "dialog", onclick: (event) => openPinPicker(event.currentTarget) },
+        t("pin.open"))),
     section(t("home.discover"), shortcutCards()),
     section(t("home.recent"), recentList()))];
 }
@@ -962,14 +981,15 @@ function favoriteCards() {
   }
   return h("ul", { class: "fav-grid" }, playlists.map((playlist) => {
     const fav = playlist.favorite;
-    const next = fav.running ? t("home.updating") : t("fav.next_short", { when: whenText(fav.next_run) });
+    const meta = fav.kind === "pinned" ? t("pin.card")
+      : `${capitalize(t(`every.${fav.every}`))}. ${fav.running ? t("home.updating") : t("fav.next_short", { when: whenText(fav.next_run) })}`;
     return h("li", { class: "fav-card", style: `--spine: ${colorOf(playlist)}` },
       h("button", { class: "fav-card-open", type: "button", onclick: () => go(playlist.key) },
         playlist.image
           ? h("img", { class: "fav-card-art", src: playlist.image, alt: "", loading: "lazy" })
           : h("span", { class: "fav-card-art is-empty", "aria-hidden": "true" }, playlist.name.charAt(0)),
         h("span", { class: "fav-card-name" }, playlist.name),
-        h("span", { class: "fav-card-meta" }, `${capitalize(t(`every.${fav.every}`))}. ${next}`)),
+        h("span", { class: "fav-card-meta" }, meta)),
       playlist.uri && h("button", {
         class: "fav-card-play",
         type: "button",
@@ -1392,8 +1412,11 @@ function renderPicker() {
   const panel = $("#picker");
   const picker = state.picker;
   if (!panel || !picker) return;
-  const title = t(picker.mode === "list" ? "picker.title_add" : "picker.title_new");
-  const body = picker.conflict ? conflictView(picker) : picker.mode === "new" ? newPlaylistForm(picker) : playlistChoices(picker);
+  const title = t({ list: "picker.title_add", new: "picker.title_new", pin: "pin.title" }[picker.mode]);
+  const body = picker.conflict ? conflictView(picker)
+    : picker.mode === "new" ? newPlaylistForm(picker)
+      : picker.mode === "pin" ? pinChoices(picker)
+        : playlistChoices(picker);
   panel.classList.toggle("is-busy", picker.busy);
   panel.replaceChildren(
     h("header", { class: "picker-head" },
@@ -1402,6 +1425,65 @@ function renderPicker() {
       h("button", { class: "picker-close", type: "button", "aria-label": t("common.close"), onclick: () => closePicker() },
         icon(CLOSE_ICON))),
     ...body);
+}
+
+/** "+" on the bar: one of your playlists as a shortcut, or a curated one back from outside the bar. */
+async function openPinPicker(anchor) {
+  closePicker({ restoreFocus: false });
+  state.picker = {
+    anchor, mode: "pin", from: "pin", uris: [], label: t("pin.sub"), busy: false, conflict: null,
+    rect: anchor.getBoundingClientRect(), extras: null,
+  };
+  document.body.append(h("div", { class: "picker", id: "picker", role: "dialog", "aria-labelledby": "picker-title" }));
+  renderPicker();
+  placePicker();
+  document.addEventListener("pointerdown", pickerOutside, true);
+  const picker = state.picker;
+  try {
+    picker.extras = await api("/api/favorites/extras");
+  } catch (error) {
+    picker.extras = { error: error.message };
+  }
+  if (state.picker !== picker) return;
+  renderPicker();
+  placePicker();
+  focusPicker();
+}
+
+function pinChoices(picker) {
+  const extras = picker.extras;
+  if (!extras) return [h("p", { class: "picker-note" }, t("common.loading"))];
+  if (extras.error) return [h("p", { class: "picker-note is-error" }, extras.error)];
+  const option = (item, sub, onclick) => h("li", null,
+    h("button", { class: "picker-option", type: "button", disabled: picker.busy, onclick },
+      item.image
+        ? h("img", { class: "picker-art", src: item.image, alt: "", loading: "lazy" })
+        : h("span", { class: "picker-art is-empty", "aria-hidden": "true" }, item.name.charAt(0)),
+      h("span", { class: "picker-option-text" },
+        h("span", { class: "picker-option-name" }, item.name),
+        h("span", { class: "picker-option-sub" }, sub))));
+  const rows = [
+    ...extras.hidden.map((item) => option(item, t("pin.curated"), () => pinAction(`/api/favorites/${item.fav}/show`, {}))),
+    ...extras.playlists.map((item) => option(item, t("count.tracks", { count: item.total }),
+      () => pinAction("/api/favorites/pin", { playlist: item.id }))),
+  ];
+  return [rows.length ? h("ul", { class: "picker-list" }, rows) : h("p", { class: "picker-note" }, t("pin.none"))];
+}
+
+async function pinAction(path, body) {
+  const picker = state.picker;
+  if (!picker || picker.busy) return;
+  picker.busy = true;
+  renderPicker();
+  try {
+    toast((await api(path, body)).message);
+    closePicker();
+    await loadOverview();
+  } catch (error) {
+    picker.busy = false;
+    renderPicker();
+    toast(error.message, true);
+  }
 }
 
 function playlistChoices(picker) {
