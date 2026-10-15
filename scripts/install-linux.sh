@@ -14,6 +14,16 @@ sudo apt-get update -qq
 sudo apt-get install -y -qq git python3 python3-venv >/dev/null
 sudo timedatectl set-timezone "$TIME_ZONE"
 
+# Small free machines (Oracle's E2.1.Micro has 1 GB): 2 GB of swap keeps apt and pip from running out of memory.
+if [ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -lt 2000000 ] && ! swapon --show | grep -q .; then
+  echo "==> 2 GB swap file"
+  sudo fallocate -l 2G /swapfile
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile >/dev/null
+  sudo swapon /swapfile
+  echo "/swapfile none swap sw 0 0" | sudo tee -a /etc/fstab >/dev/null
+fi
+
 echo "==> Code in $DIR"
 if [ -d "$DIR/.git" ]; then
   git -C "$DIR" pull --ff-only

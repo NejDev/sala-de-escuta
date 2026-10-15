@@ -20,8 +20,12 @@ Get-Content $env:USERPROFILE\.ssh\sala-oracle.pub   # paste this in step 2
 2. ☰ → Compute → Instances → **Create instance**. Name: `sala`.
 3. **Image**: Canonical Ubuntu 24.04.
 4. **Shape**: Ampere `VM.Standard.A1.Flex` with 1 OCPU and 6 GB. If creating fails with
-   "Out of capacity", use `VM.Standard.E2.1.Micro` (AMD) instead. Both are marked *Always Free-eligible*.
-5. **Networking**: the defaults (a new network with a public IPv4 address).
+   "Out of capacity" (common), use `VM.Standard.E2.1.Micro` (Specialty and previous generation)
+   instead; the install script adds swap for its 1 GB. Both are marked *Always Free-eligible*.
+5. **Networking**: the form may not offer a public IP for a network it creates itself. Create the
+   network first (Networking → Virtual cloud networks → Actions → *Start VCN Wizard* → *Create VCN
+   with Internet Connectivity*), then pick it and its **public** subnet, and turn on
+   *Automatically assign public IPv4 address*.
 6. **SSH keys**: *Paste public keys* and paste the line from step 1.
 7. Create, wait for *Running*, and copy the **Public IP address**.
 
