@@ -72,6 +72,18 @@ tailscale funnel status    # the address, which must match SALA_PUBLIC_URL in .e
 If you chose a new address instead, set `SALA_PUBLIC_URL` in `~/sala-de-escuta/.env`, add
 `<address>/callback` to the Redirect URIs of the Spotify app, and run `sudo systemctl restart sala-de-escuta`.
 
+## Backups
+
+Keep a daily copy of the room on your PC (a folder per day in `%USERPROFILE%\sala-backup`, the last 14):
+
+```powershell
+.\scriptsackup-from-server.ps1 -Server ubuntu@<public-ip> -Install   # first copy now, then every day
+```
+
+If the server is lost (for example Oracle reclaims an idle free machine), create a new one (steps 2
+and 3), copy the latest backup folder's `data`, `.env` and `playlists.json` to `~/sala-de-escuta/`,
+give it the room's machine name in Tailscale, and start the service and the Funnel (step 4).
+
 ## Day to day
 
 ```bash
