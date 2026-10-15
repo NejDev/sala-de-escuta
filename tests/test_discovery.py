@@ -635,6 +635,35 @@ class ListenerCapTest(FreshMatches):
         self.assertIn(("Tina Brooks", "Eu e a Brisa"), fake.asked)  # asked with the hop's artist
         self.assertNotIn(mock.call("isrc:ISRC31", "track"), sp.search.call_args_list)
 
+    def test_features_are_looked_up_under_their_own_artist(self):
+        # Deezer's top tracks include songs where the hop artist is only featured: the star's hit.
+        deezer = FakeDeezer(
+            artists={"Chet Baker": {"id": 1, "name": "Chet Baker", "nb_fan": 500000}},
+            related={1: [{"id": 2, "name": "Pequena", "nb_fan": 3800}]},
+            tops={2: [{"id": 21, "title": "Hit", "artist": {"name": "Estrela"}}, {"id": 22, "title": "Lado B"}]},
+        )
+        fake = FakeLastFm({"Hit": 2_000_000})
+        hunt = discovery.Hunt("rabbit", "Toca do coelho")
+        discovery.rabbit_hole(hunt, FakeSpotify(), deezer, random.Random(), ["Chet Baker"], walks=1,
+                              listeners=discovery.ListenerCap(100, fake))
+        self.assertIn(("Estrela", "Hit"), fake.asked)
+        self.assertEqual([f.uri for f in hunt.finds], ["spotify:track:22"])
+
+    def test_soundtrack_fallback_is_looked_up_under_its_own_artist(self):
+        today = date.today().isoformat()
+        deezer = FakeDeezer(
+            playlists={"k-pop": [{"id": "p", "nb_tracks": 30, "title": "K-pop"}]},
+            tracks={"p": [song(1, "x", 10, "Banda")]},
+            # A soundtrack where the band has no track of its own: the pick falls back to someone else's.
+            albums={10: [{"id": 100, "title": "Trilha", "release_date": today, "record_type": "album"}]},
+            album_songs={100: [song(1001, "Tema", 99, "Estrela")]},
+        )
+        fake = FakeLastFm({"Tema": 900_000})
+        hunt = discovery.Hunt("news", "Novidades: K-pop")
+        discovery.news(hunt, FakeSpotify(), deezer, "k-pop", days=7, listeners=discovery.ListenerCap(100, fake))
+        self.assertEqual(fake.asked, [("Estrela", "Tema")])
+        self.assertEqual(hunt.finds, [])
+
     def test_news_checks_each_release_before_spotify(self):
         today = date.today()
         deezer = FakeDeezer(

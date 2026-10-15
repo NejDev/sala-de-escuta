@@ -1030,7 +1030,8 @@ def news(
         track = focus_track(album, dz.album_tracks(album["id"]), artist["id"])
         if track is None or religious_track(track) or blocked_track(track, blocked):
             continue
-        fits, heard = listeners.check(artist["name"], track["title"])
+        # A soundtrack's pick may be someone else's track: ask under the track's own artist.
+        fits, heard = listeners.check((track.get("artist") or {}).get("name") or artist["name"], track["title"])
         if not fits:
             continue
         match = to_spotify(sp, track)
@@ -1089,7 +1090,8 @@ def artist_picks(
             continue
         if religious_track(top):
             continue
-        fits, heard = listeners.check(artist["name"], top.get("title", ""))
+        # Asked under the track's own artist: the hop artist may only be featured on someone's hit.
+        fits, heard = listeners.check((top.get("artist") or {}).get("name") or artist["name"], top.get("title", ""))
         if not fits:
             continue
         match = to_spotify(sp, dz.track(top["id"]))  # the "top" entry has no ISRC
