@@ -76,6 +76,7 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        "artists.choose": "Tem mais de um artista chamado “{name}”. Qual é o seu?",
         # Artists search
         "err.artist_name": "Digite o nome de um artista ou banda.",
         "artists.looking": "Procurando {name} e quem faz parte…",
@@ -306,6 +307,7 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        "artists.choose": "There's more than one artist called “{name}”. Which one?",
         # Artists search
         "err.artist_name": "Type the name of an artist or band.",
         "artists.looking": "Looking up {name} and who's part of it…",

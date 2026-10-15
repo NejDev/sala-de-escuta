@@ -559,11 +559,14 @@ class App:
                 raise UserError(t("err.artist_name"))
             if len(name) > FEELING_MAX_CHARS:
                 raise UserError(t("err.feeling_too_long", max=FEELING_MAX_CHARS))
-            recipe["name"] = name
+            spotify_id = str(body.get("spotify") or "") or None
+            if spotify_id and not PLAYLIST_ID_LIKE.fullmatch(spotify_id):
+                raise UserError(t("err.artist_name"))
+            recipe.update(name=name, spotify=spotify_id)
             hunt = Hunt("artist", name)
 
             def task() -> None:
-                artists.discography(hunt, sp, self.musicbrainz, name)
+                artists.discography(hunt, sp, self.musicbrainz, name, spotify_id)
         else:
             raise UserError(t("err.hunt_kind"))
         hunt.recipe = recipe

@@ -74,7 +74,7 @@ class FakeSpotify:
     def artist(self, artist_id):
         return {"name": {"BAND1": "TWICE"}.get(artist_id, artist_id), "images": [{"url": "pic", "width": 300}]}
 
-    def artist_albums(self, artist_id, groups):
+    def artist_albums(self, artist_id, groups, max_pages=10):
         return self.albums.get((artist_id, groups), [])
 
     def search(self, query, kind):
@@ -85,6 +85,11 @@ class FakeSpotify:
 class FakeMusicBrainz:
     def __init__(self, fail=False):
         self.fail = fail
+
+    def by_spotify(self, spotify_id):
+        if self.fail:
+            raise musicbrainz.MusicBrainzError("down")
+        return "band" if spotify_id == "BAND1" else None
 
     def find(self, name):
         if self.fail:
@@ -119,6 +124,7 @@ class DiscographyTest(unittest.TestCase):
             ("NAYEON1", artists.FEATURES): [album("n2", "Someone's Song", "2023-09-01", kind="single", artist="Someone")],
             ("DAHYUN1", artists.OWN): [album("d1", "Dahyun Solo", "2025-01-01", kind="single", artist="DAHYUN")],
         }, search={
+            "twice": [{"id": "BAND1", "name": "TWICE"}, {"id": "x", "name": "Twice a Man"}],
             "DAHYUN": [{"id": "DAHYUN1", "name": "DAHYUN"}],
             "MINA": [{"id": "it", "name": "Mina"}, {"id": "kr", "name": "MINA"}],  # ambiguous: left out
         })
@@ -143,7 +149,6 @@ class DiscographyTest(unittest.TestCase):
 
     def test_without_musicbrainz_it_still_finds_the_artist(self):
         sp = self.spotify()
-        sp.found["twice"] = [{"id": "BAND1", "name": "TWICE"}]
         hunt = Hunt("artist", "twice")
         artists.discography(hunt, sp, FakeMusicBrainz(fail=True), "twice")
         self.assertEqual([p["name"] for p in hunt.artist["people"]], ["TWICE"])
@@ -162,6 +167,43 @@ class DiscographyTest(unittest.TestCase):
         artists.discography(hunt, sp, FakeMusicBrainz(), "twice")
         self.assertEqual([p["name"] for p in hunt.artist["people"]], ["TWICE", "NAYEON", "MISAMO"])
         self.assertEqual(hunt.status, "running")  # the discovery itself didn't fail
+
+    def test_a_shared_name_asks_which_one(self):
+        sp = self.spotify()
+        sp.found["andy"] = [{"id": "A1", "name": "Andy", "genres": ["indie"], "images": []},
+                            {"id": "A2", "name": "ANDY", "images": [{"url": "face", "width": 160}]},
+                            {"id": "A3", "name": "Andy Bell"}]
+        sp.albums[("A1", "album,single")] = [album("o", "Old", "2019-01-01"), album("n", "New", "2025-05-05")]
+        hunt = Hunt("artist", "andy")
+        artists.discography(hunt, sp, FakeMusicBrainz(), "andy")
+        self.assertEqual([(c["id"], c["image"], c["genres"]) for c in hunt.candidates],
+                         [("A1", None, ["indie"]), ("A2", "face", [])])  # only the exact names
+        self.assertEqual(hunt.candidates[0]["latest"], {"name": "New", "year": "2025"})
+        self.assertEqual(hunt.message, "Tem mais de um artista chamado “andy”. Qual é o seu?")
+        self.assertEqual(hunt.releases, [])
+        # Picking one goes straight to that profile, without asking again.
+        sp.albums[("A2", artists.OWN)] = [album("s", "Solo", "2024-01-01", artist="ANDY")]
+        chosen = Hunt("artist", "andy")
+        artists.discography(chosen, sp, FakeMusicBrainz(), "andy", spotify_id="A2")
+        self.assertEqual([r["name"] for r in chosen.releases], ["Solo"])
+
+    def test_with_search_paused_it_goes_by_name(self):
+        from spotify_assistant.api import SpotifyError
+
+        sp = self.spotify()
+        searches = []
+
+        def search(query, kind):
+            searches.append(query)
+            if query == "twice":
+                raise SpotifyError(429, "paused", retry_after=60, family="search")
+            return sp.found.get(query, [])
+
+        sp.search = search
+        hunt = Hunt("artist", "twice")
+        artists.discography(hunt, sp, FakeMusicBrainz(), "twice")
+        self.assertEqual(hunt.label, "TWICE")
+        self.assertIn("NAYEON", [p["name"] for p in hunt.artist["people"]])
 
     def test_unknown_artist(self):
         hunt = Hunt("artist", "zzz")

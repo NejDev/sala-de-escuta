@@ -250,6 +250,7 @@ class Hunt:
     recipe: dict | None = None  # what rebuilds this discovery later (a favorite's automatic updates)
     artist: dict | None = None  # Artists search: who it is, with members and subunits
     releases: list[dict] = field(default_factory=list)  # Artists search: their releases, newest first
+    candidates: list[dict] = field(default_factory=list)  # Artists search: "which one?" when names repeat
 
     def snapshot(self) -> dict:
         return {
@@ -267,6 +268,7 @@ class Hunt:
             ],
             "artist": self.artist,
             "releases": list(self.releases),
+            "candidates": list(self.candidates),
         }
 
 

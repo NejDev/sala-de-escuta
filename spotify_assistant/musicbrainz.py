@@ -90,6 +90,20 @@ class MusicBrainz:
 
         return self._cached(f"find:{curation.normalize(name)}", load)
 
+    def by_spotify(self, spotify_id: str) -> str | None:
+        """MusicBrainz id of the artist linked to this Spotify profile (exact, no guessing by name)."""
+        def load() -> str | None:
+            url = urllib.parse.quote(f"https://open.spotify.com/artist/{spotify_id}", safe="")
+            try:
+                data = self._fetch(f"{API}/url?resource={url}&inc=artist-rels&fmt=json")
+            except MusicBrainzError as err:
+                if "404" in str(err):  # nobody linked this profile
+                    return None
+                raise
+            return next((r["artist"]["id"] for r in data.get("relations", []) if r.get("artist")), None)
+
+        return self._cached(f"spotify:{spotify_id}", load)
+
     def artist(self, mbid: str) -> dict:
         """Name, Spotify id and, for a band, its members and subunits."""
         return self._cached(f"artist:{mbid}", lambda: parse_artist(

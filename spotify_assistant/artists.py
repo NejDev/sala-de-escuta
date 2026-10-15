@@ -20,6 +20,7 @@ from .views import pick_image
 OWN = "album,single,compilation"
 FEATURES = "appears_on"
 MAX_PEOPLE = 16  # the artist plus members and subunits read in one search
+MAX_CANDIDATES = 8  # "which one?" cards when several artists share a name
 CACHE_TTL_S = 6 * 3600  # releases don't change by the minute; repeated searches cost nothing
 
 log = logging.getLogger(__name__)
@@ -47,14 +48,34 @@ def spotify_artist(sp: Spotify, name: str, unique: bool = False) -> dict | None:
     return (exact or found or [None])[0]
 
 
-def resolve(sp: Spotify, mb: MusicBrainz, name: str) -> tuple[dict | None, list[dict]]:
-    """The artist ({name, spotify}) and the people and units around them ({name, spotify, role, former})."""
-    person, people = None, []
+def candidate(sp: Spotify, artist: dict) -> dict:
+    """A card for "which one?": photo, genres and their latest release, so the person recognizes them."""
+    latest = None
     try:
-        mbid = mb.find(name)
+        albums = sp.artist_albums(artist["id"], "album,single", max_pages=1)
+        newest = max(albums, key=lambda album: album.get("release_date", ""), default=None)
+        if newest:
+            latest = {"name": newest.get("name", ""), "year": newest.get("release_date", "")[:4]}
+    except SpotifyError as err:
+        log.warning("Couldn't read %s's releases: %s", artist.get("name"), err)
+    return {
+        "id": artist["id"],
+        "name": artist.get("name", ""),
+        "image": pick_image(artist.get("images"), 160),
+        "genres": (artist.get("genres") or [])[:3],
+        "latest": latest,
+    }
+
+
+def resolve(sp: Spotify, mb: MusicBrainz, name: str, spotify_id: str | None = None) -> tuple[dict | None, list[dict]]:
+    """The artist ({name, spotify}) and the people and units around them ({name, spotify, role, former})."""
+    person, people = ({"name": name, "spotify": spotify_id} if spotify_id else None), []
+    try:
+        # The exact Spotify profile when we have it; otherwise the name (when Spotify search is paused).
+        mbid = mb.by_spotify(spotify_id) if spotify_id else mb.find(name)
         if mbid:
             info = mb.artist(mbid)
-            person = {"name": info["name"], "spotify": info["spotify"]}
+            person = person or {"name": info["name"], "spotify": info["spotify"]}
             for member in info["members"][:MAX_PEOPLE]:
                 people.append({**member, "spotify": mb.artist(member["mbid"])["spotify"]})
     except MusicBrainzError as err:
@@ -102,9 +123,27 @@ def _add(by_key: dict, album: dict, who: dict, feature: bool) -> None:
         entry["who"].append({"id": who["spotify"], "name": who["name"]})
 
 
-def discography(hunt: Hunt, sp: Spotify, mb: MusicBrainz, name: str) -> None:
+def discography(hunt: Hunt, sp: Spotify, mb: MusicBrainz, name: str, spotify_id: str | None = None) -> None:
     hunt.message = t("artists.looking", name=name)
-    person, people = resolve(sp, mb, name)
+    if spotify_id is None:
+        try:
+            found = sp.search(name, "artist")
+        except SpotifyError as err:
+            if err.status != 429:
+                raise
+            found = None  # Spotify search paused: go by the name through MusicBrainz
+        if found is not None:
+            exact = [artist for artist in found if curation.normalize(artist.get("name", "")) == curation.normalize(name)]
+            if len(exact) == 1:
+                spotify_id = exact[0]["id"]
+            elif found:  # several with this name (or none exactly): the person picks
+                hunt.candidates = [candidate(sp, artist) for artist in (exact or found)[:MAX_CANDIDATES]]
+                hunt.message = t("artists.choose", name=name)
+                return
+            else:
+                hunt.message = t("artists.not_found", name=name)
+                return
+    person, people = resolve(sp, mb, name, spotify_id)
     if hunt.cancelled:
         return
     if not person:

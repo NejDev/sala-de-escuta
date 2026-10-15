@@ -1069,6 +1069,27 @@ a.brand { color: inherit; text-decoration: none; }
 .who-chip[aria-pressed="true"] { border-color: transparent; background: var(--linen); color: var(--ink); }
 .who-chip small { margin-left: 6px; font-weight: 400; opacity: .75; }
 .artist-filters { margin-top: 18px; }
+.candidates-row { list-style: none; }
+.candidates { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+.candidate {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 100%;
+  padding: 18px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--velvet);
+  color: var(--linen);
+  text-align: center;
+  cursor: pointer;
+}
+.candidate:hover { border-color: var(--smoke); background: var(--velvet-raised); }
+.candidate-photo { width: 96px; height: 96px; margin-bottom: 8px; border-radius: 50%; object-fit: cover; }
+.candidate-photo.is-empty { display: grid; place-items: center; background: var(--line); font-size: 2.5rem; font-stretch: 62%; font-weight: 900; }
+.candidate-name { font-weight: 700; }
+.candidate-meta { color: var(--smoke); font-size: .8125rem; }
 .release { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .release-type {
   display: inline-block;

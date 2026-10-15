@@ -953,6 +953,10 @@ function renderArtist(hunt, panel, list) {
   if (!panel.hidden && signature === state.huntSignature) return;
   state.huntSignature = signature;
   panel.hidden = false;
+  if (hunt.candidates?.length) {
+    renderCandidates(hunt, panel, list);
+    return;
+  }
   const artist = hunt.artist;
   const people = artist?.people || [];
   const running = hunt.status === "running";
@@ -1030,6 +1034,26 @@ function renderArtist(hunt, panel, list) {
       h("a", { class: "text-button release-open", href: release.uri }, t("artists.open")));
   }));
   markPlaying();
+}
+
+/** Several artists share the name: photo, genres and latest release, so the person picks theirs. */
+function renderCandidates(hunt, panel, list) {
+  panel.replaceChildren(
+    h("h2", { class: "hunt-title" }, hunt.label),
+    h("p", { class: "meta" }, hunt.message));
+  list.replaceChildren(h("li", { class: "candidates-row" }, h("ul", { class: "candidates" }, hunt.candidates.map((artist) =>
+    h("li", null, h("button", {
+      class: "candidate",
+      type: "button",
+      onclick: () => startHunt({ kind: "artist", name: artist.name, spotify: artist.id }),
+    },
+      artist.image
+        ? h("img", { class: "candidate-photo", src: artist.image, alt: "" })
+        : h("span", { class: "candidate-photo is-empty", "aria-hidden": "true" }, artist.name.charAt(0)),
+      h("span", { class: "candidate-name" }, artist.name),
+      artist.genres.length > 0 && h("span", { class: "candidate-meta" }, artist.genres.join(", ")),
+      artist.latest && h("span", { class: "candidate-meta" },
+        t("artists.latest", { name: artist.latest.name, year: artist.latest.year }))))))));
 }
 
 /** Own releases play from the start; on someone else's album, from the track where they appear. */
