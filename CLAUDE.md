@@ -30,6 +30,7 @@ Static files are read from disk on each request (images are cached by browsers f
 - `artists.py` / `musicbrainz.py`: the Artists search (band members and their Spotify profiles from MusicBrainz).
 - `social.py`: Friends (opt-in): recently played history, affinity, matches; who may use it (data/room.json).
   Never expose a non-member's data, and never what a member played alone (only matches show songs).
+- `reviews.py`: album reviews (`data/users/<id>/reviews.json`); private ones never reach anyone else.
 - `favorites.py`: `data/users/<id>/favorites.json` (curated, discovery with recipe + frequency, or pinned) and `recent.json`.
 - `api.py`: Spotify client with a request gate and persisted pauses (`data/spotify-pauses.json`).
 - `i18n.py`: server messages; `static/i18n.js`: browser texts (a JSON object after `const STRINGS =`).

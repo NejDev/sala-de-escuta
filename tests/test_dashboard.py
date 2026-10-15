@@ -62,6 +62,15 @@ class FakeSpotify:
     def recently_played(self, after=None):
         return []
 
+    def album(self, album_id):
+        from spotify_assistant.api import SpotifyError
+
+        if album_id == "N" * 22:
+            raise SpotifyError(404, "not found")
+        self.albums_read = getattr(self, "albums_read", 0) + 1
+        return {"id": album_id, "uri": f"spotify:album:{album_id}", "name": "Kind of Blue", "release_date": "1959-08-17",
+                "artists": [{"name": "Miles Davis"}], "images": [{"url": "cover", "width": 300}]}
+
     def album_tracks(self, album_id):
         return [{"uri": "spotify:track:a", "artists": [{"id": "someone"}]},
                 {"uri": "spotify:track:b", "artists": [{"id": "someone"}, {"id": "nayeon"}]}]
@@ -551,6 +560,34 @@ class ServerTest(unittest.TestCase):
         self.assertFalse(social.allowed("newcomer"))
         self.post("/api/friends/access", {"user": "ana", "allowed": True})
         self.assertTrue(social.allowed("ana"))
+
+    def test_reviews_private_or_open_to_the_room(self):
+        album = "1weenld61qoidwYuZ1GESA"
+        status, data = self.post("/api/reviews", {"album": f"https://open.spotify.com/album/{album}", "rating": 4.5,
+                                                  "text": "Só pra mim.", "public": False}, as_user="ana")
+        self.assertEqual((status, data["message"]), (200, "Resenha salva. Só você vê."))
+        self.assertEqual(data["album"]["name"], "Kind of Blue")
+        room = lambda who: json.loads(self.request("/api/reviews", as_user=who)[1])
+        self.assertEqual(room("paulo"), {"room": [], "mine": []})  # nothing of Ana's private review
+        self.assertEqual(json.loads(self.request(f"/api/reviews/album?id={album}")[1])["room"], [])
+        self.assertEqual([r["text"] for r in room("ana")["mine"]], ["Só pra mim."])
+        status, data = self.post("/api/reviews", {"album": album, "rating": 4.5, "text": "Agora aberta.", "public": True}, as_user="ana")
+        self.assertEqual(data["message"], "Resenha salva e aberta para a sala.")
+        self.assertEqual(self.fake.albums_read, 1)  # the album's details come from the first review
+        seen = json.loads(self.request(f"/api/reviews/album?id={album}")[1])
+        self.assertEqual(([r["author"] for r in seen["room"]], seen["average"], seen["mine"]), (["Ana"], 4.5, None))
+        self.assertEqual(self.post("/api/reviews/delete", {"album": album})[0], 404)  # Paulo has none to delete
+        self.assertEqual(self.post("/api/reviews/delete", {"album": album}, as_user="ana")[0], 200)
+        self.assertEqual(room("paulo")["room"], [])
+
+    def test_reviews_need_a_real_album_and_something_to_say(self):
+        album = "1weenld61qoidwYuZ1GESA"
+        self.assertEqual(self.post("/api/reviews", {"album": "kind of blue", "rating": 4})[0], 400)
+        self.assertEqual(self.post("/api/reviews", {"album": "N" * 22, "rating": 4})[0], 404)
+        self.assertEqual(self.post("/api/reviews", {"album": album, "rating": 4.2})[0], 400)
+        self.assertEqual(self.post("/api/reviews", {"album": album, "rating": None, "text": "  "})[0], 400)
+        self.assertEqual(self.post("/api/reviews", {"album": album, "text": "x" * 2001})[0], 400)
+        self.assertEqual(self.post("/api/reviews", {"album": album, "text": "Só texto, sem nota."})[0], 200)
 
     def test_turning_off_the_default_keeps_people_already_in(self):
         self.post("/api/friends/access", {"new": False})

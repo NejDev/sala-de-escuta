@@ -206,6 +206,9 @@ class Spotify:
         page = self._call("GET", f"/artists/{artist_id}/albums", params=params)
         return [album for album in page.get("items", []) if album], bool(page.get("next"))
 
+    def album(self, album_id: str) -> dict:
+        return self._call("GET", f"/albums/{album_id}", params={"market": self.market})
+
     def album_tracks(self, album_id: str) -> list[dict]:
         data = self._call("GET", f"/albums/{album_id}/tracks", params={"limit": 50, "market": self.market})
         return [track for track in data["items"] if track]

@@ -113,6 +113,13 @@ second, kept for a month in `data/musicbrainz-cache.json`), which also links eac
 Spotify profile. Members without that link are looked up by name, and left out when the name is
 ambiguous. This search barely uses Spotify search, so it keeps working while search is paused.
 
+### Reviews
+
+Letterboxd for albums: half-star ratings and a few words. Each review is either **just for you** or
+**open to the room** (everyone sees the rating, the text and your name). Review from the star in the
+player, from any release in Artists, or by pasting an album's Spotify link. Opening an album shows
+the room's open reviews and their average.
+
 ### Friends
 
 Only for people who join, and only among them: whoever doesn't join sees nothing and doesn't show up.

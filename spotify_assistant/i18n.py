@@ -76,6 +76,15 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # Reviews
+        "reviews.invalid_album": "Não achei esse álbum no Spotify.",
+        "reviews.bad_rating": "A nota vai de meia estrela a 5 estrelas.",
+        "reviews.too_long": "A resenha pode ter até {max} caracteres.",
+        "reviews.empty": "Dê uma nota ou escreva alguma coisa.",
+        "reviews.saved": "Resenha salva. Só você vê.",
+        "reviews.saved_public": "Resenha salva e aberta para a sala.",
+        "reviews.deleted": "Resenha apagada.",
+        "reviews.not_found": "Você não tem resenha deste álbum.",
         # Friends: who may use it
         "friends.off": "O Amigos não está disponível para você.",
         "err.which_person": "Escolha uma pessoa da sala.",
@@ -319,6 +328,15 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # Reviews
+        "reviews.invalid_album": "Couldn't find that album on Spotify.",
+        "reviews.bad_rating": "Ratings go from half a star to 5 stars.",
+        "reviews.too_long": "A review can be up to {max} characters.",
+        "reviews.empty": "Give a rating or write something.",
+        "reviews.saved": "Review saved. Only you see it.",
+        "reviews.saved_public": "Review saved and open to the room.",
+        "reviews.deleted": "Review deleted.",
+        "reviews.not_found": "You don't have a review of this album.",
         # Friends: who may use it
         "friends.off": "Friends isn't available to you.",
         "err.which_person": "Pick a person in the room.",

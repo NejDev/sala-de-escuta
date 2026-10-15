@@ -3,6 +3,7 @@
 // Sala de escuta panel. Every text comes from i18n.js (STRINGS) through t(); each person picks the language.
 
 const FALLBACK_COLORS = ["#5CC8C0", "#D4A84B", "#E3909E", "#E6D5AA", "#9DB4E6"];
+const STAR_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.8l2.5 5.1 5.6.8-4.05 3.95.95 5.6L12 16.6l-5 2.65.95-5.6L3.9 9.7l5.6-.8z"/></svg>';
 const PLAY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M8 5v14l11-7z"/></svg>';
 const CLOSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
 
@@ -83,10 +84,11 @@ function langOptions() {
 // Screens that aren't playlists: the key becomes the URL #.
 const VIEWS = {
   home: "view.home", sensations: "view.sensations", discover: "view.discover", news: "view.news", artists: "view.artists",
-  friends: "view.friends",
+  reviews: "view.reviews", friends: "view.friends",
 };
 const VIEW_ALIASES = {
-  inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news", artistas: "artists", amigos: "friends",
+  inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news", artistas: "artists",
+  resenhas: "reviews", amigos: "friends",
 };
 const EVERY = ["daily", "weekly", "monthly"];
 // Home: the ready-made sensation suggested for each time of day (hour it starts -> preset id).
@@ -120,6 +122,8 @@ const state = {
   artistName: "",
   friends: null,
   confirmLeave: false,
+  reviews: null,
+  review: null,
   artistFilters: { who: "", type: "", order: "new" },
   filters: { rouletteGenre: "", newsGenre: "", min: "", max: "", days: "30", ...savedFilters() },
   added: new Set(),
@@ -702,6 +706,7 @@ async function openView(key) {
   renderShelf();
   if (key === "home") loadRecent();
   if (key === "friends") loadFriends();
+  if (key === "reviews") loadReviews();
   if ((key === "sensations" || key === "home") && !state.sensations) {
     try {
       state.sensations = await api("/api/sensations");
@@ -757,7 +762,8 @@ function renderIntro() {
   const moment = state.view === "home" ? momentPreset() : null;
   setMood(huntHere()?.color || moment?.color || ROOM_LIGHT);
   const intro = {
-    home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro, artists: artistsIntro, friends: friendsView,
+    home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro, artists: artistsIntro,
+    reviews: reviewsView, friends: friendsView,
   }[state.view];
   sleeve.replaceChildren(...intro());
 }
@@ -771,7 +777,9 @@ function pauseNotice() {
   const day = days === 0 ? t("day.today") : days === 1 ? t("day.tomorrow")
     : t("day.on", { date: back.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" }) });
   const time = back.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
-  return h("p", { class: "meta is-warning" }, t("pause.notice", { time, day }));
+  return h("p", { class: "meta is-warning pause-notice" },
+    h("img", { class: "notice-art", src: "/mascot-sleep.webp?v=2", alt: "", width: "44", height: "48" }),
+    h("span", null, t("pause.notice", { time, day })));
 }
 
 /** The screen's title with the mascot beside it, like a playlist's cover. */
@@ -781,7 +789,7 @@ function viewHead(art, title, description, ...extra) {
       h("h1", { class: "title" }, title),
       h("p", { class: "description" }, description),
       extra),
-    h("img", { class: "view-art", src: `/mascot-${art}.webp`, alt: "", width: "150", height: "150" }));
+    h("img", { class: "view-art", src: `/mascot-${art}.webp?v=2`, alt: "", width: "150", height: "150" }));
 }
 
 function senseIntro() {
@@ -932,7 +940,7 @@ function genreList() {
 
 function friendsView() {
   const data = state.friends;
-  const head = viewHead("hero", t("view.friends"), t("friends.description"));
+  const head = viewHead("friends", t("view.friends"), t("friends.description"));
   if (!data) return [head, h("p", { class: "meta" }, t("common.loading"))];
   if (data.error) return [head, h("p", { class: "meta is-warning" }, data.error)];
   if (!data.sharing) {
@@ -965,6 +973,247 @@ function friendsView() {
         t(state.confirmLeave ? "friends.leave_confirm" : "friends.leave"))),
     accessSection(data.access),
   ];
+}
+
+// ---------- Reviews: albums rated and written about, Letterboxd style (private or open to the room)
+
+async function loadReviews() {
+  try {
+    state.reviews = await api("/api/reviews");
+  } catch (error) {
+    state.reviews = { error: error.message };
+  }
+  if (state.view === "reviews") renderIntro();
+}
+
+function reviewsView() {
+  const data = state.reviews;
+  const head = viewHead("reviews", t("view.reviews"), t("reviews.description"));
+  const playing = state.player?.item;
+  const start = h("section", { class: "home-section review-start" },
+    h("form", { class: "review-link", onsubmit: openFromLink },
+      h("label", { class: "field-label", for: "review-link" }, t("reviews.link_label")),
+      h("div", { class: "review-link-row" },
+        h("input", {
+          class: "filter-control", id: "review-link", type: "text", inputmode: "url", autocomplete: "off",
+          spellcheck: "false", placeholder: "https://open.spotify.com/album/…",
+        }),
+        h("button", { class: "play-button", type: "submit" }, t("reviews.open")))),
+    playing?.album_id && h("p", { class: "meta" },
+      h("button", { class: "text-button", type: "button", onclick: () => openReview(playing.album_id) },
+        t("reviews.now_playing", { title: playing.title }))),
+    h("p", { class: "meta" }, t("reviews.hint_more")));
+  if (!data) return [head, start, h("p", { class: "meta" }, t("common.loading"))];
+  if (data.error) return [head, start, h("p", { class: "meta is-warning" }, data.error)];
+  const section = (title, items, empty) => h("section", { class: "home-section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, title)),
+    items.length ? h("ul", { class: "review-list" }, items.map((review) => reviewCard(review))) : h("p", { class: "meta" }, empty));
+  return [
+    head,
+    start,
+    section(t("reviews.room_title"), data.room, t("reviews.room_empty")),
+    section(t("reviews.mine_title"), data.mine, t("reviews.mine_empty")),
+  ];
+}
+
+function openFromLink(event) {
+  event.preventDefault();
+  const text = $("#review-link").value.trim();
+  const found = text.match(/(?:open\.spotify\.com\/(?:intl-[a-z-]+\/)?album\/|spotify:album:)([A-Za-z0-9]{22})/)
+    || text.match(/^([A-Za-z0-9]{22})$/);
+  if (!found) {
+    toast(t("reviews.link_invalid"), true);
+    return;
+  }
+  openReview(found[1]);
+}
+
+function ratingText(rating) {
+  return rating.toLocaleString(LOCALE, { maximumFractionDigits: 1 });
+}
+
+/** Five stars, filled up to the rating (halves included). */
+function stars(rating, large = false) {
+  return h("span", { class: large ? "stars is-large" : "stars", role: "img", "aria-label": t("reviews.stars", { value: ratingText(rating) }) },
+    h("span", { class: "stars-base", "aria-hidden": "true" }, "★★★★★"),
+    h("span", { class: "stars-fill", "aria-hidden": "true", style: `width: ${rating * 20}%` }, "★★★★★"));
+}
+
+/** Click a star's left half for half a star, its right half for the whole one (again to clear); arrows work too. */
+function starsInput(draft) {
+  const fill = h("span", { class: "stars-fill", "aria-hidden": "true" }, "★★★★★");
+  const value = h("span", { class: "stars-value" });
+  const input = h("input", {
+    class: "stars-range", type: "range", min: "0", max: "10", step: "1", value: String(draft.rating * 2),
+    "aria-labelledby": "rating-label",
+    oninput: () => show(Number(input.value) / 2),
+  });
+  function show(rating) {
+    draft.rating = rating;
+    input.value = String(rating * 2);
+    fill.style.width = `${rating * 20}%`;
+    const label = rating ? t("reviews.stars", { value: ratingText(rating) }) : t("reviews.no_rating");
+    value.textContent = rating ? ratingText(rating) : t("reviews.no_rating");
+    input.setAttribute("aria-valuetext", label);
+  }
+  const box = h("span", {
+    class: "stars is-large is-input",
+    onclick: (event) => {
+      const rect = box.getBoundingClientRect();
+      const halves = Math.min(10, Math.max(1, Math.ceil(((event.clientX - rect.left) / rect.width) * 10)));
+      show(halves / 2 === draft.rating ? 0 : halves / 2);
+      input.focus({ preventScroll: true });
+    },
+  }, h("span", { class: "stars-base", "aria-hidden": "true" }, "★★★★★"), fill, input);
+  show(draft.rating);
+  return h("span", { class: "stars-input" }, box, value);
+}
+
+function reviewCard(review, compact = false) {
+  const album = review.album;
+  const who = t("reviews.by", { name: review.own ? t("reviews.you") : review.author, when: whenText(review.updated * 1000, false) });
+  return h("li", { class: compact ? "review-card is-compact" : "review-card" },
+    !compact && h("button", {
+      class: "review-cover", type: "button", tabindex: "-1", "aria-hidden": "true", onclick: () => openReview(album.id),
+    }, album.image ? h("img", { src: album.image, alt: "", loading: "lazy" }) : h("span")),
+    h("div", { class: "review-body" },
+      !compact && h("p", { class: "review-album" },
+        h("button", { class: "review-album-name", type: "button", onclick: () => openReview(album.id) }, album.name),
+        h("span", { class: "meta" }, albumLine(album))),
+      h("p", { class: "review-head" },
+        review.rating ? stars(review.rating) : null,
+        h("span", { class: "meta" }, who),
+        review.own && !review.public && h("span", { class: "review-private" }, t("reviews.private"))),
+      review.text && h("p", { class: "review-text" }, review.text)));
+}
+
+function albumLine(album) {
+  const artists = album.artists.join(", ");
+  return album.year ? t("reviews.album_line", { artists, year: album.year }) : artists;
+}
+
+async function openReview(albumId) {
+  closeReview();
+  const dialog = h("dialog", {
+    class: "review-sheet", id: "review-sheet", "aria-labelledby": "review-title",
+    onclose: () => {
+      dialog.remove();
+      state.review = null;
+    },
+    onclick: (event) => event.target === dialog && dialog.close(),
+  }, h("div", { class: "review-inner" }, h("p", { class: "meta" }, t("common.loading"))));
+  document.body.append(dialog);
+  dialog.showModal();
+  try {
+    const data = await api(`/api/reviews/album?id=${encodeURIComponent(albumId)}`);
+    if (!dialog.isConnected) return;
+    const mine = data.mine;
+    state.review = {
+      ...data,
+      busy: false,
+      confirmDelete: false,
+      draft: { rating: mine?.rating || 0, text: mine?.text || "", public: mine ? mine.public : localStorage.getItem("review-public") === "1" },
+    };
+    renderReview();
+    $("#review-sheet .stars-range")?.focus();
+  } catch (error) {
+    dialog.firstChild.replaceChildren(
+      h("p", { class: "meta is-warning" }, error.message),
+      h("button", { class: "text-button", type: "button", onclick: () => dialog.close() }, t("reviews.close")));
+  }
+}
+
+function closeReview() {
+  $("#review-sheet")?.close();
+}
+
+function renderReview() {
+  const dialog = $("#review-sheet");
+  const review = state.review;
+  if (!dialog || !review) return;
+  const { album, draft } = review;
+  const hint = h("p", { class: "meta review-visibility-hint" });
+  const choices = [[true, t("reviews.public")], [false, t("reviews.only_me")]].map(([value, label]) =>
+    h("button", { class: "who-chip", type: "button", "data-public": String(value), onclick: () => setVisibility(value) }, label));
+  function setVisibility(value) {
+    draft.public = value;
+    for (const chip of choices) chip.setAttribute("aria-pressed", String(chip.dataset.public === String(value)));
+    hint.textContent = t(value ? "reviews.public_hint" : "reviews.only_me_hint");
+  }
+  setVisibility(draft.public);
+  dialog.firstChild.replaceChildren(
+    h("header", { class: "review-sheet-head" },
+      album.image ? h("img", { class: "review-sheet-cover", src: album.image, alt: "" }) : h("span", { class: "review-sheet-cover" }),
+      h("div", { class: "review-sheet-text" },
+        h("h2", { class: "review-title", id: "review-title" }, album.name),
+        h("p", { class: "meta" }, albumLine(album)),
+        h("button", { class: "text-button", type: "button", onclick: () => play(album.uri) }, t("reviews.play"))),
+      h("button", { class: "icon-button review-close", type: "button", "aria-label": t("reviews.close"), title: t("reviews.close"), onclick: closeReview }, "×")),
+    h("form", { class: "review-form", onsubmit: saveReview },
+      h("div", { class: "review-field" }, h("span", { class: "field-label", id: "rating-label" }, t("reviews.rating")), starsInput(draft)),
+      h("div", { class: "review-field" },
+        h("label", { class: "field-label", for: "review-text" }, t("reviews.text_label")),
+        h("textarea", {
+          class: "review-textarea", id: "review-text", rows: "6", maxlength: "2000", placeholder: t("reviews.text_placeholder"),
+          oninput: (event) => { draft.text = event.target.value; },
+        }, draft.text)),
+      h("div", { class: "review-field" },
+        h("span", { class: "field-label" }, t("reviews.visibility")),
+        h("div", { class: "review-visibility", role: "group", "aria-label": t("reviews.visibility") }, choices),
+        hint),
+      h("div", { class: "review-actions" },
+        h("button", { class: "play-button", type: "submit", disabled: review.busy }, t("reviews.save")),
+        review.mine && h("button", { class: "text-button review-delete", type: "button", onclick: deleteReview },
+          t(review.confirmDelete ? "reviews.delete_confirm" : "reviews.delete")),
+        h("button", { class: "text-button", type: "button", onclick: closeReview }, t("reviews.cancel")))),
+    h("section", { class: "review-room" },
+      h("h3", { class: "review-room-title" }, t("reviews.others")),
+      review.average != null && h("p", { class: "review-average" }, stars(review.average), " ",
+        t("reviews.average", { value: ratingText(review.average), count: review.count })),
+      review.room.length
+        ? h("ul", { class: "review-list" }, review.room.map((other) => reviewCard(other, true)))
+        : h("p", { class: "meta" }, t("reviews.others_empty"))));
+}
+
+async function saveReview(event) {
+  event.preventDefault();
+  const review = state.review;
+  if (!review || review.busy) return;
+  if (!review.draft.rating && !review.draft.text.trim()) {
+    toast(t("reviews.need_something"), true);
+    return;
+  }
+  review.busy = true;
+  try {
+    const result = await api("/api/reviews", {
+      album: review.album.id, rating: review.draft.rating || null, text: review.draft.text, public: review.draft.public,
+    });
+    localStorage.setItem("review-public", review.draft.public ? "1" : "0");
+    toast(result.message);
+    closeReview();
+    loadReviews();
+  } catch (error) {
+    review.busy = false;
+    toast(error.message, true);
+  }
+}
+
+async function deleteReview() {
+  const review = state.review;
+  if (!review.confirmDelete) {
+    review.confirmDelete = true;
+    renderReview();
+    $("#review-sheet .review-delete")?.focus();
+    return;
+  }
+  try {
+    const result = await api("/api/reviews/delete", { album: review.album.id });
+    toast(result.message);
+    closeReview();
+    loadReviews();
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 /** Owner only: who may use Friends, one switch per person, and the default for people who join later. */
@@ -1074,7 +1323,7 @@ function artistsIntro() {
     startHunt({ kind: "artist", name: input.value.trim() });
   };
   return [
-    viewHead("journeys", t("view.artists"), t("artists.description")),
+    viewHead("artists", t("view.artists"), t("artists.description")),
     h("form", { class: "filters", onsubmit: submit },
       h("label", { class: "filter", for: "artist-name" }, h("span", { class: "filter-label" }, t("artists.label")), input),
       h("button", { class: "play-button", type: "submit" }, t("artists.search"))),
@@ -1175,6 +1424,13 @@ function renderArtist(hunt, panel, list) {
             others.length > 0 && release.type !== "single" && release.type !== "album"
               ? ` ${t("artists.with", { names: listFormat.format(others) })}` : "")),
         h("span", { class: "release-date" }, releaseDate(release.date))),
+      h("button", {
+        class: "icon-button release-review",
+        type: "button",
+        title: t("reviews.review_album", { name: release.name }),
+        "aria-label": t("reviews.review_album", { name: release.name }),
+        onclick: () => openReview(release.id),
+      }, icon(STAR_ICON)),
       h("a", { class: "text-button release-open", href: release.uri }, t("artists.open")));
   }));
   markPlaying();
@@ -1278,7 +1534,7 @@ function momentCard() {
       h("p", { class: "moment-text" }, preset.description),
       h("div", { class: "actions" }, action,
         h("button", { class: "text-button", type: "button", onclick: () => go("sensations") }, t("home.other_moment")))),
-    h("img", { class: "moment-art", src: "/mascot-sensations.webp", alt: "", width: "132", height: "132" }));
+    h("img", { class: "moment-art", src: "/mascot-sensations.webp?v=2", alt: "", width: "150", height: "140" }));
 }
 
 function nowCard() {
@@ -1319,7 +1575,7 @@ function favoriteCards() {
   const playlists = state.overview.playlists;
   if (!playlists.length) {
     return h("div", { class: "home-empty" },
-      h("img", { class: "home-empty-art", src: "/mascot-shelf.webp", alt: "", width: "120", height: "120" }),
+      h("img", { class: "home-empty-art", src: "/mascot-shelf.webp?v=2", alt: "", width: "90", height: "150" }),
       h("div", null,
         h("p", null, t("home.favorites_empty")),
         h("button", { class: "ghost-button is-small", type: "button", onclick: () => go("sensations") }, t("home.go_sense"))));
@@ -1845,7 +2101,7 @@ function playlistChoices(picker) {
         h("span", { class: "picker-option-name" }, name),
         h("span", { class: "picker-option-sub" }, sub))));
   const rows = [option("finds", mine.finds || t("picker.finds"), t("picker.finds_sub"),
-    h("img", { class: "picker-art is-round", src: "/mascot-head.webp", alt: "" }))];
+    h("img", { class: "picker-art is-round", src: "/mascot-head.webp?v=2", alt: "" }))];
   if (mine.loading) rows.push(h("li", { class: "picker-note" }, t("picker.loading")));
   else if (mine.error) rows.push(h("li", { class: "picker-note is-error" }, mine.error));
   for (const playlist of mine.playlists || []) {
@@ -1981,12 +2237,12 @@ function placePicker() {
 // ---------- How it works: a short tour with the mascot
 
 const TOUR = [
-  { key: "welcome", art: "hero", focus: "40% 30%" },
-  { key: "shelf", art: "shelf", focus: "50% 40%" },
-  { key: "sense", art: "sensations", focus: "50% 30%" },
-  { key: "discover", art: "roulette", focus: "50% 40%" },
-  { key: "news", art: "news", focus: "60% 40%" },
-  { key: "keep", art: "journeys", focus: "50% 30%" },
+  { key: "welcome", art: "hero", focus: "50% 50%" },
+  { key: "shelf", art: "shelf", focus: "50% 50%" },
+  { key: "sense", art: "sensations", focus: "50% 50%" },
+  { key: "discover", art: "roulette", focus: "50% 50%" },
+  { key: "news", art: "news", focus: "50% 50%" },
+  { key: "keep", art: "keep", focus: "50% 50%" },
 ];
 
 function openTour(step = 0) {
@@ -2014,7 +2270,7 @@ function showTourStep(step) {
     dialog.querySelector(".tour-next")?.focus();
   };
   dialog.replaceChildren(
-    h("img", { class: "tour-art", src: `/mascot-${art}.webp`, alt: "", style: `object-position: ${focus}` }),
+    h("img", { class: "tour-art", src: `/mascot-${art}.webp?v=2`, alt: "", style: `object-position: ${focus}` }),
     h("div", { class: "tour-body" },
       h("p", { class: "tour-step" }, t("tour.step", { n: step + 1, total: TOUR.length })),
       h("h2", { class: "tour-title", id: "tour-title" }, t(`tour.${key}.title`, { name: state.overview?.me?.name || "" })),
@@ -2155,6 +2411,7 @@ function renderPlayer() {
   like.setAttribute("aria-pressed", String(Boolean(player.liked)));
   like.setAttribute("aria-label", likeLabel);
   like.title = likeLabel;
+  $("#btn-review").hidden = !item?.album_id;
   const repeat = $("#btn-repeat");
   const mode = player.repeat || "off";
   repeat.dataset.mode = mode;
@@ -2267,6 +2524,7 @@ function togglePlay() {
 function bindPlayer() {
   $("#btn-play").addEventListener("click", togglePlay);
   $("#btn-like").addEventListener("click", toggleLike);
+  $("#btn-review").addEventListener("click", () => state.player?.item?.album_id && openReview(state.player.item.album_id));
   $("#btn-prev").addEventListener("click", () => command({ action: "previous" }));
   $("#btn-next").addEventListener("click", () => command({ action: "next" }));
   $("#btn-shuffle").addEventListener("click", () => {

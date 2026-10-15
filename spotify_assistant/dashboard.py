@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import accounts, artists, config, curation, discovery, favorites, i18n, social, tempo
+from . import accounts, artists, config, curation, discovery, favorites, i18n, reviews, social, tempo
 from .api import Spotify, SpotifyError, gate
 from .auth import (
     LIBRARY_SCOPES, PLAYER_SCOPES, SOCIAL_SCOPES, TASTE_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes,
@@ -37,7 +37,7 @@ from .discovery import Hunt
 from .i18n import t
 from .musicbrainz import MusicBrainz
 from .playlists import owned_playlists, run
-from .views import item_row, pick_image
+from .views import album_view, item_row, pick_image
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CONTENT_TYPES = {
@@ -397,7 +397,7 @@ class App:
         return {
             "liked": self._liked(user, sp, data["item"].get("uri", "")) if library_ready else None,
             "library_ready": library_ready,
-            "item": item_row(data["item"], image_size=120),
+            "item": {**item_row(data["item"], image_size=120), "album_id": (data["item"].get("album") or {}).get("id")},
             "is_playing": data.get("is_playing", False),
             "progress_ms": data.get("progress_ms") or 0,
             "shuffle": data.get("shuffle_state", False),
@@ -1201,6 +1201,59 @@ class App:
                     log.exception("Reading what %s listens to failed", user_id)
             self._collector_wake.wait(social.COLLECT_EVERY_S)
 
+    # Reviews: albums rated and written about, private or open to the room
+
+    @staticmethod
+    def _room() -> tuple[list[str], dict[str, str]]:
+        users = config.list_users()
+        return users, {uid: accounts.display_name(uid) for uid in users}
+
+    def reviews(self, user: Profile) -> dict:
+        users, names = self._room()
+        return {"room": reviews.room(user.id, users, names), "mine": reviews.own(user.id, names)}
+
+    def _album(self, user: Profile, album_id: str, users: list[str]) -> dict:
+        known = reviews.known_album(album_id, users)
+        if known:
+            return known
+        try:
+            return album_view(self.spotify(user).album(album_id))
+        except SpotifyError as err:
+            if err.status in (400, 404):
+                raise UserError(t("reviews.invalid_album"), 404) from None
+            raise
+
+    def album_reviews(self, user: Profile, raw_id: str) -> dict:
+        album_id = reviews.album_id(raw_id)
+        if not album_id:
+            raise UserError(t("reviews.invalid_album"))
+        users, names = self._room()
+        return {"album": self._album(user, album_id, users), **reviews.of_album(album_id, user.id, users, names)}
+
+    def save_review(self, user: Profile, body: dict) -> dict:
+        album_id = reviews.album_id(str(body.get("album") or ""))
+        if not album_id:
+            raise UserError(t("reviews.invalid_album"))
+        try:
+            stars = reviews.rating(body.get("rating"))
+        except (TypeError, ValueError):
+            raise UserError(t("reviews.bad_rating")) from None
+        text = str(body.get("text") or "").strip()
+        if len(text) > reviews.MAX_TEXT:
+            raise UserError(t("reviews.too_long", max=reviews.MAX_TEXT))
+        if stars is None and not text:
+            raise UserError(t("reviews.empty"))
+        public = bool(body.get("public"))
+        users, _ = self._room()
+        reviews.save(user.id, self._album(user, album_id, users), stars, text, public)
+        return {**self.album_reviews(user, album_id), "message": t("reviews.saved_public" if public else "reviews.saved")}
+
+    def delete_review(self, user: Profile, body: dict) -> dict:
+        album_id = reviews.album_id(str(body.get("album") or ""))
+        if not album_id or not reviews.delete(user.id, album_id):
+            raise UserError(t("reviews.not_found"), 404)
+        return {**self.album_reviews(user, album_id), "message": t("reviews.deleted")}
+
     @staticmethod
     def recent_finds(user: Profile) -> dict:
         return {"finds": favorites.recent(user.id)}
@@ -1402,6 +1455,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.set_blocked(user, body)
         if method == "POST" and path == "/api/artists/track":
             return app.feature_track(user, body)
+        if method == "GET" and path == "/api/reviews":
+            return app.reviews(user)
+        if method == "GET" and path == "/api/reviews/album":
+            return app.album_reviews(user, query.get("id", ""))
+        if method == "POST" and path == "/api/reviews":
+            return app.save_review(user, body)
+        if method == "POST" and path == "/api/reviews/delete":
+            return app.delete_review(user, body)
         if method == "GET" and path == "/api/friends":
             return app.friends(user)
         if method == "POST" and path == "/api/friends":

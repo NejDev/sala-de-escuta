@@ -114,6 +114,13 @@ pedido por segundo, guardado por um mês em `data/musicbrainz-cache.json`), que 
 ao perfil dela no Spotify. Integrantes sem esse link são procurados pelo nome, e ficam de fora quando o
 nome é ambíguo. Essa busca quase não usa a busca da Spotify, então funciona mesmo com a busca pausada.
 
+### Resenhas
+
+Um Letterboxd de álbuns: nota em meias estrelas e algumas palavras. Cada resenha fica **só para você**
+ou **aberta para a sala** (todo mundo vê a nota, o texto e o seu nome). Dá para resenhar pela estrela
+do player, por qualquer lançamento em Artistas ou colando o link do álbum no Spotify. Ao abrir um
+álbum aparecem as resenhas abertas da sala e a média delas.
+
 ### Amigos
 
 Só para quem ativar, e só entre essas pessoas: quem não participa não vê nada e não aparece. A sala lê

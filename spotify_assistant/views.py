@@ -10,6 +10,18 @@ def pick_image(images: list[dict] | None, min_size: int) -> str | None:
     return (fitting[-1] if fitting else images[0])["url"]
 
 
+def album_view(album: dict) -> dict:
+    """What a review keeps about the album: enough to show it and play it."""
+    return {
+        "id": album["id"],
+        "uri": album.get("uri") or f"spotify:album:{album['id']}",
+        "name": album.get("name", ""),
+        "artists": [artist.get("name", "") for artist in album.get("artists", [])],
+        "image": pick_image(album.get("images"), 300),
+        "year": (album.get("release_date") or "")[:4],
+    }
+
+
 def item_row(item: dict, image_size: int = 64) -> dict:
     if item.get("type") == "episode":
         show = item.get("show") or {}
