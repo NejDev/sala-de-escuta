@@ -221,6 +221,8 @@ class ListenerCap:
         """(fits, what Last.fm said). A track Last.fm has no record of fits; without a cap nothing is asked."""
         if not self.active:
             return True, None
+        if not any(char.isalnum() for char in artist):
+            return False, None  # a blank credit ("\xa0, \xa0") finds a stray Last.fm entry with a handful of listeners
         found = self.lookup(artist, title) if self.fresh_s is None else self.lookup(artist, title, fresh_s=self.fresh_s)
         return found.count is None or found.count <= self.max, {"listeners": found.count, "url": found.url}
 

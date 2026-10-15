@@ -625,6 +625,15 @@ class ListenerCapTest(FreshMatches):
         self.assertEqual(discovery.NO_CAP.check("A", "Pequena"), (True, None))
         self.assertEqual(len(fake.asked), 4)  # NO_CAP asked nothing
 
+    def test_a_blank_artist_name_cant_be_checked(self):
+        # A real case: a 13th Floor Elevators classic credited to "\xa0, \xa0" found a stray entry with 22 listeners.
+        fake = FakeLastFm({"You're Gonna Miss Me": 22})
+        cap = discovery.ListenerCap(1000, fake)
+        for blank in ("\xa0, \xa0", "", " - "):
+            self.assertEqual(cap.check(blank, "You're Gonna Miss Me"), (False, None))
+        self.assertEqual(fake.asked, [])
+        self.assertTrue(cap.check("13th Floor Elevators", "Sumida")[0])
+
     def test_genre_pick_skips_tracks_over_the_cap_before_spotify(self):
         deezer = FakeDeezer(
             playlists={"fado": [{"id": "p", "nb_tracks": 30, "title": "Fado"}]},
