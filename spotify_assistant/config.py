@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,7 +16,8 @@ DATA_DIR = ROOT / "data"
 TOKEN_FILE = DATA_DIR / "token.json"
 STATE_FILE = DATA_DIR / "state.json"
 LOG_FILE = DATA_DIR / "assistant.log"
-PLAYLISTS_FILE = ROOT / "playlists.json"
+PLAYLISTS_FILE = ROOT / "playlists.json"  # your curation; not in git (the panel writes to it)
+PLAYLISTS_EXAMPLE_FILE = ROOT / "playlists.example.json"  # starting point, copied on first run
 SENSATIONS_FILE = ROOT / "sensations.json"
 BLOCKED_FILE = ROOT / "bloqueados.json"  # legacy single-user file, moved on startup
 TEMPO_CACHE_FILE = DATA_DIR / "tempo-cache.json"
@@ -129,6 +131,8 @@ def load_settings() -> Settings:
 
 
 def load_playlists() -> dict:
+    if not PLAYLISTS_FILE.exists():
+        shutil.copyfile(PLAYLISTS_EXAMPLE_FILE, PLAYLISTS_FILE)
     return json.loads(PLAYLISTS_FILE.read_text(encoding="utf-8"))
 
 

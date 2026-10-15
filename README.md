@@ -31,6 +31,9 @@ So the way to share this project is for each person to run their own room:
    (or run `python -m spotify_assistant ui`).
 4. Sign in. The first person to sign in becomes the room's owner.
 
+Your curated shelf lives in `playlists.json`, created from `playlists.example.json` on the first run.
+It's yours: it stays out of git, and the panel writes to it when you add tracks.
+
 ## The panel
 
 The panel opens at http://127.0.0.1:8888 and stays up while the black window is open.
@@ -174,7 +177,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1 -Day Frid
 
 ## Customize
 
-Everything is in `playlists.json`:
+Everything is in `playlists.json` (your copy of `playlists.example.json`):
 
 - `tracks`: `"Artist - Title"`. The search skips karaoke, lo-fi, lullaby versions, etc.
 - `artists`: takes the `per_artist` most relevant tracks from each artist.
@@ -204,3 +207,7 @@ Interface texts are in `spotify_assistant/static/i18n.js` (browser) and `spotify
   search for a few hours (the player and playlists keep working). The panel respects the pause, shows
   when it comes back and keeps the songs it already found so it doesn't search them again. Avoid
   leaving several panel tabs open: each one polls the player.
+
+## License
+
+[MIT](LICENSE). Not affiliated with Spotify; it uses the Spotify Web API under Spotify's developer terms.

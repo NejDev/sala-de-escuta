@@ -31,6 +31,9 @@ Por isso, o jeito de compartilhar este projeto é cada pessoa rodar a própria s
    (ou rode `python -m spotify_assistant ui`).
 4. Entre. A primeira pessoa que entrar vira a dona da sala.
 
+A sua estante curada fica em `playlists.json`, criado a partir do `playlists.example.json` na primeira vez.
+Ele é seu: fica fora do git, e o painel escreve nele quando você adiciona faixas.
+
 ## O painel
 
 O painel abre em http://127.0.0.1:8888 e fica no ar enquanto a janela preta estiver aberta.
@@ -175,7 +178,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1 -Day Frid
 
 ## Personalizar
 
-Tudo fica em `playlists.json`:
+Tudo fica em `playlists.json` (a sua cópia do `playlists.example.json`):
 
 - `tracks`: `"Artista - Título"`. A busca descarta versões karaokê, lo-fi, de ninar etc.
 - `artists`: pega as `per_artist` faixas mais relevantes de cada artista.
@@ -205,3 +208,7 @@ Os textos da interface ficam em `spotify_assistant/static/i18n.js` (navegador) e
   por algumas horas (player e playlists continuam funcionando). O painel respeita a pausa, mostra
   quando volta e guarda as músicas já encontradas para não buscá-las de novo. Evite deixar várias
   abas do painel abertas: cada uma consulta o player.
+
+## Licença
+
+[MIT](LICENSE). Sem vínculo com a Spotify; usa a Web API do Spotify sob os termos de desenvolvedor da Spotify.

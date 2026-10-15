@@ -123,3 +123,19 @@ class RunTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FirstRunTest(unittest.TestCase):
+    def test_curation_starts_from_the_example(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+
+        from spotify_assistant import config
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mine, example = Path(tmp) / "playlists.json", Path(tmp) / "playlists.example.json"
+            example.write_text('{"market": "BR", "playlists": []}', encoding="utf-8")
+            with mock.patch.object(config, "PLAYLISTS_FILE", mine), mock.patch.object(config, "PLAYLISTS_EXAMPLE_FILE", example):
+                self.assertEqual(config.load_playlists(), {"market": "BR", "playlists": []})
+            self.assertTrue(mine.exists())
