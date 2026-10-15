@@ -52,6 +52,14 @@ class UserPaths:
     def blocked(self) -> Path:
         return self.dir / "blocked.json"
 
+    @property
+    def favorites(self) -> Path:
+        return self.dir / "favorites.json"
+
+    @property
+    def recent(self) -> Path:
+        return self.dir / "recent.json"
+
 
 def user_paths(user_id: str) -> UserPaths:
     # Spotify IDs are alphanumeric; anything else could escape the folder.

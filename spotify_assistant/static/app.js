@@ -81,8 +81,11 @@ function langOptions() {
 // ---------- Screens and filters
 
 // Screens that aren't playlists: the key becomes the URL #.
-const VIEWS = { sensations: "view.sensations", discover: "view.discover", news: "view.news" };
-const VIEW_ALIASES = { sensacoes: "sensations", descobrir: "discover", novidades: "news" };  // old bookmarks
+const VIEWS = { home: "view.home", sensations: "view.sensations", discover: "view.discover", news: "view.news" };
+const VIEW_ALIASES = { inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news" };  // old bookmarks
+const EVERY = ["daily", "weekly", "monthly"];
+// Home: the ready-made sensation suggested for each time of day (hour it starts -> preset id).
+const MOMENTS = [[5, "work-groove"], [9, "deep-focus"], [12, "work-groove"], [14, "deep-focus"], [18, "workout"], [21, "wind-down"]];
 const HUNT_KINDS = { sensations: ["sense"], discover: ["roulette", "rabbit"], news: ["news"] };
 
 // Artist size is measured in fans: no free API says how many times a song was played.
@@ -99,7 +102,7 @@ const ROOM_LIGHT = "#EEE7D7";
 const state = {
   overview: null,
   view: "playlist",
-  initialKey: decodeURIComponent(location.hash.slice(1)) || memory.get("selected"),
+  initialKey: decodeURIComponent(location.hash.slice(1)) || "home",
   selected: null,
   detail: null,
   sensations: null,
@@ -116,6 +119,9 @@ const state = {
   showBlocked: false,
   addingOpen: false,
   myPlaylists: null,
+  recent: null,
+  watching: new Set(),
+  confirmRemove: null,
   picker: null,
   tourStep: 0,
   player: null,
@@ -198,16 +204,23 @@ function relativeDay(iso) {
   return date.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" });
 }
 
-function scheduleLine(schedule) {
-  if (!schedule) return null;
-  if (!schedule.scheduled) return { text: t("schedule.none"), warning: true };
-  if (!schedule.ok) return { text: t("schedule.failed"), warning: true };
-  if (!schedule.next) return { text: t("schedule.on") };
-  const next = new Date(schedule.next).toLocaleString(LOCALE, {
-    weekday: "long", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
-  });
-  return { text: t("schedule.next", { when: next }) };
+/** "today at 14:30", "tomorrow at 07:00", "Mon, 20/10, 07:00"; a past due time is "soon". */
+function whenText(ms, future = true) {
+  if (future && ms <= Date.now()) return t("when.soon");
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+  const days = Math.round((new Date(ms).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86400000);
+  if (days === 0) return t("when.today", { time });
+  if (days === 1) return t("when.tomorrow", { time });
+  if (days === -1) return t("when.yesterday", { time });
+  return t("when.date", { date: date.toLocaleDateString(LOCALE, { weekday: "short", day: "2-digit", month: "2-digit" }), time });
 }
+
+function capitalize(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function toast(message, isError = false) {
   const el = h("div", { class: isError ? "toast is-error" : "toast" }, message);
@@ -237,6 +250,11 @@ async function loadOverview() {
   renderShelf();
   renderAccount();
   if (state.view === "playlist" && current()) renderSleeve();
+  if (state.view === "home") renderIntro();
+  // A favorite rebuilding right now (by the button or on schedule): follow it until it ends.
+  for (const playlist of state.overview.playlists) {
+    if (playlist.favorite.running) watchFavorite(playlist.favorite.id);
+  }
 }
 
 /** Who is in the room now, the language, the tour and the sign-out button (each friend uses their own Spotify). */
@@ -272,10 +290,10 @@ function shelfKeys() {
 }
 
 async function select(key) {
-  const playlists = state.overview.playlists;
-  if (!playlists.length) return openView("sensations");  // a friend with no playlists yet starts exploring
+  if (!state.overview.playlists.some((playlist) => playlist.key === key)) return openView("home");
   state.view = "playlist";
-  state.selected = playlists.some((playlist) => playlist.key === key) ? key : playlists[0].key;
+  state.selected = key;
+  state.confirmRemove = null;
   memory.set("selected", state.selected);
   history.replaceState(null, "", `#${encodeURIComponent(state.selected)}`);
   state.detail = null;
@@ -327,7 +345,7 @@ function renderShelf() {
     current: onPlaylist && playlist.key === state.selected,
     number: index + 1,
   }));
-  const explore = Object.entries(VIEWS).map(([key, label], index) => item({
+  const room = Object.entries(VIEWS).map(([key, label], index) => item({
     key,
     label: t(label),
     explore: true,
@@ -339,8 +357,8 @@ function renderShelf() {
     items);
   const emptyShelf = !playlists.length && h("span", { class: "nav-empty" }, t("nav.none_yet"));
   $("#shelf").replaceChildren(
-    group(t("nav.playlists"), playlists.length ? playlists : [emptyShelf]),
-    group(t("nav.explore"), explore),
+    group(t("nav.favorites"), playlists.length ? playlists : [emptyShelf]),
+    group(t("nav.room"), room),
   );
   markPlaying();
 }
@@ -366,11 +384,7 @@ function renderSleeve() {
   const count = items ? items.length : playlist.total;
   const meta = [t(playlist.kind === "podcasts" ? "count.episodes" : "count.tracks", { count })];
   if (items?.length) meta.push(longDuration(items.reduce((sum, item) => sum + item.duration_ms, 0)));
-  const lines = [h("p", { class: "meta" }, meta.join(", "))];
-  if (playlist.kind === "podcasts") {
-    const line = scheduleLine(state.overview.schedule);
-    if (line) lines.push(h("p", { class: line.warning ? "meta is-warning" : "meta" }, line.text));
-  }
+  const lines = [h("p", { class: "meta" }, meta.join(", ")), ...favoriteLines(playlist.favorite)];
   if (playlist.kind === "mix") {
     lines.push(h("p", { class: "meta" }, t("sleeve.mix", { sources: listFormat.format(playlist.sources) })));
   }
@@ -379,18 +393,20 @@ function renderSleeve() {
     ? h("img", { class: "cover", src: playlist.image, alt: t("sleeve.cover", { name: playlist.name }) })
     : h("div", { class: "cover cover-empty", "aria-hidden": "true" }, playlist.name.charAt(0));
 
-  const isOwner = Boolean(state.overview.me?.is_owner);
-  const refresh = refreshLabel(playlist);
-  // The Tech Radar shows are picked by the owner; friends add tracks only to their own copy.
-  const canAdd = playlist.uri && (["music", "library"].includes(playlist.kind) || (playlist.kind === "podcasts" && isOwner));
-  // The owner's curated shelf is curated automatically; playlists from one's own account aren't.
-  const curated = playlist.kind !== "library";
+  const fav = playlist.favorite;
+  const curated = fav.curated;
+  // Curated playlists keep a base selection (playlists.json); the others get new songs on every update.
+  const canAdd = curated && playlist.uri && ["music", "podcasts"].includes(playlist.kind);
   const actions = h("div", { class: "actions" },
     h("button", { class: "play-button", type: "button", disabled: !playlist.uri, onclick: () => play(playlist.uri) },
       playIcon(), t("action.play")),
     playlist.uri && h("a", { class: "ghost-button", href: playlist.uri }, t("sleeve.open_app")),
-    curated && h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refresh),
+    curated
+      ? h("button", { class: "ghost-button", type: "button", onclick: () => startJob(false) }, refreshLabel(playlist))
+      : h("button", { class: "ghost-button", type: "button", disabled: Boolean(fav.running), onclick: () => refreshFavorite(fav) },
+        t("sleeve.update_now")),
     curated && h("button", { class: "text-button", type: "button", onclick: () => startJob(true) }, t("sleeve.preview")),
+    everyControl(fav),
     canAdd && h("button", {
       class: "text-button",
       type: "button",
@@ -398,6 +414,8 @@ function renderSleeve() {
       "aria-controls": "adder",
       onclick: toggleAdder,
     }, t(playlist.kind === "podcasts" ? "sleeve.follow_show" : "sleeve.add_track")),
+    !curated && h("button", { class: "text-button", type: "button", onclick: () => removeFavorite(fav) },
+      t(state.confirmRemove === fav.id ? "fav.remove_confirm" : "fav.remove")),
   );
 
   $("#sleeve").replaceChildren(cover, h("div", { class: "sleeve-text" },
@@ -406,6 +424,97 @@ function renderSleeve() {
     lines,
     actions,
   ));
+}
+
+/** When it updates, how the last update went, or what it is doing right now. */
+function favoriteLines(fav) {
+  if (fav.running) {
+    const percent = fav.running.total ? Math.max(4, Math.round((fav.running.progress / fav.running.total) * 100)) : 4;
+    return [
+      h("p", { class: "meta" }, t("fav.running", { message: fav.running.message })),
+      h("div", { class: "progress", "aria-hidden": "true" }, h("i", { style: `width: ${percent}%` })),
+    ];
+  }
+  const lines = [h("p", { class: "meta" }, t("fav.line", { every: t(`every.${fav.every}`), when: whenText(fav.next_run) }))];
+  if (fav.status !== "ok" && fav.message) lines.push(h("p", { class: "meta is-warning" }, fav.message));
+  else if (fav.last_run) lines.push(h("p", { class: "meta" }, t("fav.last", { when: whenText(fav.last_run, false) })));
+  return lines;
+}
+
+function everyControl(fav) {
+  const select = h("select", { class: "filter-control every-select", id: "every-select" },
+    EVERY.map((every) => h("option", { value: every, selected: every === fav.every }, capitalize(t(`every.${every}`)))));
+  select.addEventListener("change", () => setEvery(fav.id, select.value));
+  return h("label", { class: "every-control", for: "every-select" }, t("fav.every_label"), select);
+}
+
+function favoriteChanged(id, view) {
+  const playlist = state.overview?.playlists.find((item) => item.favorite.id === id);
+  if (!playlist) return;
+  playlist.favorite = view;
+  if (state.view === "playlist" && current() === playlist) renderSleeve();
+  if (state.view === "home") renderIntro();
+}
+
+async function refreshFavorite(fav) {
+  try {
+    favoriteChanged(fav.id, await api(`/api/favorites/${fav.id}/refresh`, {}));
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  watchFavorite(fav.id);
+}
+
+/** Follows a favorite's update until it ends, then shows the result and the new songs. */
+async function watchFavorite(id) {
+  if (state.watching.has(id)) return;
+  state.watching.add(id);
+  try {
+    for (;;) {
+      await sleep(1500);
+      const view = await api(`/api/favorites/${id}`);
+      favoriteChanged(id, view);
+      if (!view.running) {
+        if (view.message) toast(view.message, view.status !== "ok");
+        break;
+      }
+    }
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.watching.delete(id);
+  }
+  await loadOverview();
+  if (state.view === "playlist" && current()?.favorite.id === id) loadDetail();
+}
+
+async function setEvery(id, every) {
+  try {
+    const view = await api(`/api/favorites/${id}`, { every });
+    favoriteChanged(id, view);
+    toast(view.notice);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+/** Two clicks: the first asks, the second takes it off the bar (the playlist stays on Spotify). */
+async function removeFavorite(fav) {
+  if (state.confirmRemove !== fav.id) {
+    state.confirmRemove = fav.id;
+    renderSleeve();
+    return;
+  }
+  try {
+    toast((await api(`/api/favorites/${fav.id}/remove`, {})).message);
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  state.confirmRemove = null;
+  await loadOverview();
+  go("home");
 }
 
 function refreshLabel(playlist) {
@@ -422,8 +531,8 @@ function renderTracks() {
   }
   const items = state.detail.items;
   if (!items.length) {
-    let message = playlist.kind === "library"
-      ? t("tracks.empty_library", { button: t("sleeve.add_track") })
+    let message = playlist.kind === "favorite"
+      ? t("tracks.empty_favorite", { button: t("sleeve.update_now") })
       : t("tracks.empty_curated", { button: t("sleeve.redo") });
     if (!playlist.uri) message = t("tracks.not_created", { button: t("sleeve.create") });
     else if (playlist.kind === "podcasts") message = t("tracks.no_episodes", { button: t("sleeve.update_now") });
@@ -537,7 +646,8 @@ async function openView(key) {
   $("#adder").hidden = true;
   scrollToTop();
   renderShelf();
-  if (key === "sensations" && !state.sensations) {
+  if (key === "home") loadRecent();
+  if ((key === "sensations" || key === "home") && !state.sensations) {
     try {
       state.sensations = await api("/api/sensations");
     } catch (error) {
@@ -549,7 +659,16 @@ async function openView(key) {
   state.huntSignature = "";
   renderIntro();
   renderHunt();
-  loadBlocked();
+  if (key !== "home") loadBlocked();
+}
+
+async function loadRecent() {
+  try {
+    state.recent = (await api("/api/recent")).finds;
+  } catch {
+    state.recent = [];  // the list is an extra on the home screen
+  }
+  if (state.view === "home") renderIntro();
 }
 
 async function loadBlocked() {
@@ -571,8 +690,9 @@ function huntHere() {
 function renderIntro() {
   const sleeve = $("#sleeve");
   sleeve.className = "sleeve is-plain";
-  setMood(huntHere()?.color || ROOM_LIGHT);
-  const intro = { sensations: senseIntro, discover: discoverIntro, news: newsIntro }[state.view];
+  const moment = state.view === "home" ? momentPreset() : null;
+  setMood(huntHere()?.color || moment?.color || ROOM_LIGHT);
+  const intro = { home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro }[state.view];
   sleeve.replaceChildren(...intro());
 }
 
@@ -756,6 +876,143 @@ function newsIntro() {
       h("button", { class: "play-button", type: "submit" }, t("news.search")),
       genreList()),
   ];
+}
+
+// ---------- Home
+
+/** The ready-made sensation for this time of day (Friday and Saturday evenings are for a party). */
+function momentPreset(now = new Date()) {
+  const presets = state.sensations?.sensations || [];
+  const hour = now.getHours();
+  let id = "wind-down";
+  for (const [from, preset] of MOMENTS) if (hour >= from) id = preset;
+  if (hour >= 18 && hour < 21 && [5, 6].includes(now.getDay())) id = "house-party";
+  return presets.find((preset) => preset.id === id) || null;
+}
+
+function homeView() {
+  const hour = new Date().getHours();
+  const greeting = hour >= 5 && hour < 12 ? "home.morning" : hour >= 12 && hour < 18 ? "home.afternoon" : "home.evening";
+  const section = (title, body) => h("section", { class: "home-section" }, h("h2", { class: "section-title" }, title), body);
+  return [h("div", { class: "home" },
+    h("h1", { class: "title home-title" }, t(greeting, { name: state.overview.me.name })),
+    h("div", { class: "home-top" }, momentCard(), nowCard()),
+    section(t("home.favorites"), favoriteCards()),
+    section(t("home.discover"), shortcutCards()),
+    section(t("home.recent"), recentList()))];
+}
+
+/** "For right now": the sensation for this time of day; plays it at once if it's already a favorite. */
+function momentCard() {
+  const preset = momentPreset();
+  if (!preset) return h("section", { class: "moment" }, h("p", { class: "meta" }, t("common.loading")));
+  const made = state.overview.playlists.find((playlist) =>
+    playlist.uri && playlist.favorite.recipe?.kind === "sense" && playlist.favorite.recipe.id === preset.id);
+  const action = made
+    ? h("button", { class: "play-button", type: "button", onclick: () => play(made.uri) },
+      playIcon(), t("home.play_fav", { name: made.name }))
+    : h("button", {
+      class: "play-button",
+      type: "button",
+      disabled: !state.sensations.tempo_ready,
+      onclick: () => go("sensations").then(() => startHunt({ kind: "sense", id: preset.id, ...sizeBody() })),
+    }, t("home.build"));
+  return h("section", { class: "moment", style: `--tone: ${preset.color}` },
+    h("div", null,
+      h("p", { class: "home-label" }, t("home.now_label")),
+      h("h2", { class: "moment-name" }, preset.name),
+      h("p", { class: "moment-text" }, preset.description),
+      h("div", { class: "actions" }, action,
+        h("button", { class: "text-button", type: "button", onclick: () => go("sensations") }, t("home.other_moment")))),
+    h("img", { class: "moment-art", src: "/mascot-sensations.webp", alt: "", width: "132", height: "132" }));
+}
+
+function nowCard() {
+  const player = state.player || {};
+  const item = player.item;
+  if (!item) {
+    return h("section", { class: "now-card is-empty", id: "home-now" },
+      h("div", { class: "now-card-text" },
+        h("p", { class: "home-label" }, t("home.playing_label")),
+        h("p", { class: "now-card-title" }, t("home.nothing")),
+        h("p", { class: "meta" }, t(player.needs_scope ? "player.auth_text" : "home.nothing_hint"))));
+  }
+  return h("section", { class: "now-card", id: "home-now" },
+    item.image ? h("img", { class: "now-card-art", src: item.image, alt: "" }) : h("span", { class: "now-card-art" }),
+    h("div", { class: "now-card-text" },
+      h("p", { class: "home-label" }, t("home.playing_label")),
+      h("p", { class: "now-card-title" }, item.title),
+      h("p", { class: "meta" }, item.subtitle),
+      player.device?.name && h("p", { class: "meta" }, t("player.on_device", { name: player.device.name })),
+      h("button", { class: "ghost-button is-small", type: "button", onclick: togglePlay },
+        t(player.is_playing ? "player.pause" : "player.play"))));
+}
+
+function favoriteCards() {
+  const playlists = state.overview.playlists;
+  if (!playlists.length) {
+    return h("div", { class: "home-empty" },
+      h("img", { class: "home-empty-art", src: "/mascot-shelf.webp", alt: "", width: "120", height: "120" }),
+      h("div", null,
+        h("p", null, t("home.favorites_empty")),
+        h("button", { class: "ghost-button is-small", type: "button", onclick: () => go("sensations") }, t("home.go_sense"))));
+  }
+  return h("ul", { class: "fav-grid" }, playlists.map((playlist) => {
+    const fav = playlist.favorite;
+    const next = fav.running ? t("home.updating") : t("fav.next_short", { when: whenText(fav.next_run) });
+    return h("li", { class: "fav-card", style: `--spine: ${colorOf(playlist)}` },
+      h("button", { class: "fav-card-open", type: "button", onclick: () => go(playlist.key) },
+        playlist.image
+          ? h("img", { class: "fav-card-art", src: playlist.image, alt: "", loading: "lazy" })
+          : h("span", { class: "fav-card-art is-empty", "aria-hidden": "true" }, playlist.name.charAt(0)),
+        h("span", { class: "fav-card-name" }, playlist.name),
+        h("span", { class: "fav-card-meta" }, `${capitalize(t(`every.${fav.every}`))}. ${next}`)),
+      playlist.uri && h("button", {
+        class: "fav-card-play",
+        type: "button",
+        "aria-label": t("action.play_title", { title: playlist.name }),
+        onclick: () => play(playlist.uri),
+      }, playIcon()));
+  }));
+}
+
+function shortcutCards() {
+  const genre = (state.filters.newsGenre || "").trim();
+  const card = (tone, name, text, label, onclick) => h("section", { class: "shortcut", style: `--tone: ${tone}` },
+    h("h3", { class: "shortcut-name" }, name),
+    h("p", { class: "shortcut-text" }, text),
+    h("button", { class: "ghost-button is-small", type: "button", onclick }, label));
+  const startIn = (view, body) => () => go(view).then(() => startHunt({ ...body, ...sizeBody() }));
+  return h("div", { class: "shortcuts" },
+    card("#F2C14E", t("discover.roulette"), t("home.roulette_text"), t("discover.spin"),
+      startIn("discover", { kind: "roulette", genre: state.filters.rouletteGenre })),
+    card("#9DB4E6", t("discover.rabbit"), t("home.rabbit_text"), t("discover.enter"),
+      startIn("discover", { kind: "rabbit", seed: "" })),
+    genre
+      ? card("#E3909E", t("home.news_title", { genre }), t(`period.${state.filters.days || "30"}`), t("news.search"),
+        startIn("news", { kind: "news", genre, days: state.filters.days }))
+      : card("#E3909E", t("view.news"), t("home.news_pick_text"), t("home.news_pick"), () => go("news")));
+}
+
+function recentList() {
+  const finds = state.recent;
+  if (!finds) return h("p", { class: "meta" }, t("common.loading"));
+  if (!finds.length) return h("p", { class: "meta" }, t("home.recent_empty"));
+  const shown = finds.slice(0, 8);
+  return h("ol", { class: "tracks recent-list" }, shown.map((find, index) => h("li", { class: "track", "data-uri": find.uri },
+    h("button", {
+      class: "track-button",
+      type: "button",
+      title: t("action.play_title", { title: find.title }),
+      onclick: () => playFinds(shown, find.uri),
+    },
+      h("span", { class: "track-index" }, String(index + 1)),
+      find.image ? h("img", { class: "track-art", src: find.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
+      h("span", { class: "track-text" },
+        h("span", { class: "track-title" }, find.title),
+        h("span", { class: "track-sub" }, find.subtitle)),
+      h("span", { class: "recent-where" }, t("home.recent_in", { playlist: find.playlist })),
+      h("span", { class: "track-time" }, clock(find.duration_ms || 0))))));
 }
 
 // ---------- The roulette's crate digger
@@ -1074,6 +1331,9 @@ function openPicker(anchor, finds, mode) {
     uris: finds.map((find) => find.uri),
     label: finds.length === 1 ? finds[0].title : t("count.songs", { count: finds.length }),
     name: finds.length > 1 && hunt ? defaultPlaylistName(hunt) : "",
+    // Only the whole discovery can update itself: the recipe rebuilds all of it.
+    canRepeat: Boolean(hunt) && finds.length > 1 && finds.length === hunt.finds.length,
+    every: "weekly",
     busy: false,
     conflict: null,
     rect: anchor.getBoundingClientRect(),
@@ -1182,9 +1442,16 @@ function newPlaylistForm(picker) {
     event.preventDefault();
     createPlaylist(false);
   };
+  const every = picker.canRepeat && h("select", { class: "picker-input", id: "picker-every" },
+    [["", t("picker.every_never")], ...EVERY.map((value) => [value, capitalize(t(`every.${value}`))])]
+      .map(([value, label]) => h("option", { value, selected: value === picker.every }, label)));
+  every?.addEventListener("change", () => { picker.every = every.value; });
   return [h("form", { class: "picker-form", onsubmit: submit },
     h("label", { class: "filter-label", for: "picker-name" }, t("picker.name_label")),
     input,
+    every && h("label", { class: "filter-label", for: "picker-every" }, t("picker.every_label")),
+    every,
+    every && h("p", { class: "picker-hint" }, t("picker.every_hint")),
     h("div", { class: "picker-actions" },
       h("button", { class: "play-button is-small", type: "submit", disabled: picker.busy }, t("picker.create")),
       picker.from === "list"
@@ -1229,12 +1496,13 @@ async function createPlaylist(replace) {
   picker.busy = true;
   renderPicker();
   try {
-    const { message } = await api("/api/playlists/new", { name, uris: picker.uris, replace });
+    const every = picker.canRepeat ? picker.every || null : null;
+    const { message, favorite } = await api("/api/playlists/new", { name, uris: picker.uris, replace, every });
     markAdded(picker.uris);
     state.myPlaylists = null;
     toast(message);
     closePicker();
-    if (!state.overview.me.is_owner) loadOverview();  // a friend's shelf shows their own playlists
+    if (favorite) loadOverview();  // it's on the bar now
   } catch (error) {
     picker.busy = false;
     if (error.data?.exists) {
@@ -1459,6 +1727,7 @@ function renderPlayer() {
     paintRange(volume);
   }
   $("#device").textContent = player.device?.name ? t("player.on_device", { name: player.device.name }) : "";
+  $("#home-now")?.replaceWith(nowCard());
   tick();
   markPlaying();
 }
@@ -1568,6 +1837,10 @@ function bindPlayer() {
 
 function bindGlobal() {
   $("#console-close").addEventListener("click", () => { $("#console").hidden = true; });
+  $(".brand").addEventListener("click", (event) => {
+    event.preventDefault();
+    go("home");
+  });
   $("#adder-input").addEventListener("input", (event) => {
     clearTimeout(state.searchTimer);
     const query = event.target.value;

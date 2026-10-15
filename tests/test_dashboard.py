@@ -8,7 +8,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import auth, config, dashboard, i18n
+from spotify_assistant import auth, config, dashboard, favorites, i18n
 from spotify_assistant.config import Settings
 
 CONFIG = {
@@ -150,7 +150,6 @@ class ServerTest(unittest.TestCase):
         patches = [
             mock.patch.object(config, "PLAYLISTS_FILE", data / "playlists.json"),
             mock.patch.object(config, "DATA_DIR", data),
-            mock.patch.object(dashboard, "read_schedule", return_value=None),
             # Unaffected by real Spotify pauses recorded on this machine.
             mock.patch.object(dashboard.gate, "remaining", return_value=0),
         ]
@@ -210,19 +209,100 @@ class ServerTest(unittest.TestCase):
                          ("spotify:playlist:pl-jazz", "mosaic", 1, "#D4A84B"))
         self.assertEqual(data["playlists"][0]["uri"], None)  # not created yet
         self.assertEqual(data["playlists"][2]["sources"], ["Jazz"])
+        # The owner's curated playlists are favorites: the podcasts weekly, the rest monthly.
+        self.assertEqual([p["favorite"]["every"] for p in data["playlists"]], ["weekly", "monthly", "monthly"])
         friend = json.loads(self.request("/api/overview", as_user="ana")[1])
         self.assertEqual(friend["me"], {"id": "ana", "name": "Ana", "is_owner": False})
 
-    def test_friend_sees_only_own_playlists(self):
+    def test_bar_has_only_favorites(self):
+        # A friend without favorites: nothing from the owner's shelf, and her ordinary playlists stay off the bar.
         friend = json.loads(self.request("/api/overview", as_user="ana")[1])
-        # Nothing from the owner's shelf (Tech, Jazz, Mix), and no merely followed playlists: only the ones she created.
-        self.assertEqual([p["name"] for p in friend["playlists"]], ["Mix da Ana"])
-        mix = friend["playlists"][0]
-        self.assertEqual((mix["key"], mix["kind"], mix["total"], mix["description"]),
-                         ("id:anamix", "library", 3, "S'ó as boas"))
-        self.assertIsNone(friend["schedule"])
+        self.assertEqual(friend["playlists"], [])
         owner = json.loads(self.request("/api/overview")[1])
-        self.assertNotIn("Mix da Ana", [p["name"] for p in owner["playlists"]])
+        self.assertEqual([p["name"] for p in owner["playlists"]], ["Tech", "Jazz", "Mix"])
+
+    def discovery_for(self, user_id):
+        from spotify_assistant.discovery import Find, Hunt
+
+        hunt = Hunt("roulette", "Roleta", status="done", color=None, finds=[
+            Find("spotify:track:7", "Shy Moon", "Caetano Veloso", "art", 1000, artists=["Caetano Veloso"]),
+            Find("spotify:track:8", "Pullopantti", "Slim Mill", None, 2000, artists=["Slim Mill"]),
+        ])
+        hunt.recipe = {"kind": "roulette", "genre": "zamrock", "min_fans": None, "max_fans": None}
+        self.server.app.profile(user_id).hunt = hunt
+        return hunt
+
+    def make_favorite(self, user_id="ana", name="Roleta da Ana", every="weekly"):
+        self.discovery_for(user_id)
+        body = {"name": name, "uris": ["spotify:track:7", "spotify:track:8"], "every": every}
+        return self.post("/api/playlists/new", body, as_user=user_id)
+
+    def test_a_playlist_from_a_discovery_can_update_itself(self):
+        status, data = self.make_favorite()
+        self.assertEqual(status, 200, data)
+        self.assertTrue(data["favorite"])
+        self.assertIn("se atualiza toda semana", data["message"])
+        fav = favorites.load("ana")[0]
+        self.assertEqual((fav["kind"], fav["playlist_id"], fav["every"], fav["color"]),
+                         ("discovery", "new1", "weekly", "#F2C14E"))
+        self.assertEqual(fav["recipe"]["genre"], "zamrock")
+        bar = json.loads(self.request("/api/overview", as_user="ana")[1])["playlists"]
+        self.assertEqual([(p["key"], p["kind"], p["name"]) for p in bar], [(f"fav:{fav['id']}", "favorite", "Roleta da Ana")])
+        self.assertEqual(self.request(f"/api/playlists/fav%3A{fav['id']}", as_user="ana")[0], 200)
+        # The songs saved show up among the recent finds on the home screen.
+        recent = json.loads(self.request("/api/recent", as_user="ana")[1])["finds"]
+        self.assertEqual([(f["uri"], f["playlist"]) for f in recent][:1], [("spotify:track:7", "Roleta da Ana")])
+
+    def test_updating_by_itself_needs_a_whole_discovery(self):
+        body = {"name": "Solta", "uris": ["spotify:track:7"], "every": "weekly"}
+        self.assertEqual(self.post("/api/playlists/new", body, as_user="ana")[0], 400)  # no discovery on screen
+        self.discovery_for("ana")
+        self.assertEqual(self.post("/api/playlists/new", {**body, "every": "hourly"}, as_user="ana")[0], 400)
+        self.assertEqual(self.post("/api/playlists/new", {**body, "uris": ["spotify:track:99"]}, as_user="ana")[0], 400)
+        self.assertEqual(favorites.load("ana"), [])
+
+    def test_favorites_have_a_limit(self):
+        with mock.patch.object(favorites, "MAX_FAVORITES", 1):
+            self.assertEqual(self.make_favorite(name="Uma")[0], 200)
+            status, data = self.make_favorite(name="Outra")
+        self.assertEqual(status, 409, data)
+
+    def test_frequency_and_removal(self):
+        self.make_favorite()
+        fav_id = favorites.load("ana")[0]["id"]
+        status, data = self.post(f"/api/favorites/{fav_id}", {"every": "daily"}, as_user="ana")
+        self.assertEqual((status, data["every"]), (200, "daily"))
+        self.assertEqual(self.post(f"/api/favorites/{fav_id}", {"every": "hourly"}, as_user="ana")[0], 400)
+        self.assertEqual(self.post(f"/api/favorites/{fav_id}", {"every": "daily"})[0], 404)  # not the owner's
+        self.assertEqual(self.post(f"/api/favorites/{fav_id}/remove", {}, as_user="ana")[0], 200)
+        self.assertEqual(favorites.load("ana"), [])
+        curated = json.loads(self.request("/api/overview")[1])["playlists"][0]["favorite"]["id"]
+        self.assertEqual(self.post(f"/api/favorites/{curated}/remove", {})[0], 409)
+
+    def test_scheduler_rebuilds_the_most_overdue_favorite_with_its_recipe(self):
+        from spotify_assistant.discovery import Find, Hunt
+
+        self.make_favorite()
+        favorites.change("ana", lambda items: items[0].update(last_run=1))  # long overdue
+        asked = []
+
+        def fake_hunt_task(app, user, sp, recipe, rng):
+            asked.append((user.id, recipe["genre"]))
+            hunt = Hunt("roulette", "Roleta")
+            return hunt, lambda: hunt.finds.append(Find("spotify:track:9", "Nova", "X", None, 1))
+
+        self.fake.replaced.clear()
+        app = self.server.app
+        with mock.patch.object(dashboard.App, "_hunt_task", fake_hunt_task):
+            with mock.patch.object(dashboard.gate, "remaining", return_value=3600):
+                self.assertIsNone(app.run_due())  # Spotify pause: waits
+            fav_id = app.run_due()
+            self.assertIsNone(app.run_due())  # nothing else is due
+        self.assertEqual(asked, [("ana", "zamrock")])
+        self.assertEqual(self.fake.replaced, [("new1", ["spotify:track:9"])])
+        fav = favorites.load("ana")[0]
+        self.assertEqual((fav["id"], fav["status"]), (fav_id, "ok"))
+        self.assertGreater(fav["last_run"], 0)
 
     def test_playlist_detail_with_encoded_name(self):
         status, body = self.request("/api/playlists/Jazz")

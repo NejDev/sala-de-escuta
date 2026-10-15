@@ -247,6 +247,7 @@ class Hunt:
     chains: list[dict] = field(default_factory=list)
     cancelled: bool = False
     spec: dict | None = None  # the sensation's parameters (used for the playlist description)
+    recipe: dict | None = None  # what rebuilds this discovery later (a favorite's automatic updates)
 
     def snapshot(self) -> dict:
         return {

@@ -14,17 +14,16 @@ import json
 import logging
 import random
 import re
-import subprocess
 import threading
 import time
 import urllib.parse
 import webbrowser
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from . import accounts, config, curation, discovery, i18n, tempo
+from . import accounts, config, curation, discovery, favorites, i18n, tempo
 from .api import Spotify, SpotifyError, gate
 from .auth import AuthRequest, TokenManager, exchange_code, missing_scopes, start_authorization
 from .config import (
@@ -50,11 +49,11 @@ PLAYLIST_PATH = re.compile(r"/api/playlists/(?P<name>[^/]+)(?P<items>/items)?")
 # The "finds" playlist is stored under a fixed key, so switching languages doesn't create a second one.
 FINDS_KEY = "_finds"
 FINDS_NAMES = {i18n.MESSAGES[lang]["finds.name"] for lang in i18n.LANGUAGES}
-TASK_NAME = "Spotify Assistant - Tech Radar BR"  # same name as in scripts/agendar-semanal.ps1
-SCHEDULE_TTL_S = 60
+FAVORITE_PATH = re.compile(r"/api/favorites/(?P<id>[a-f0-9]{1,32})(?:/(?P<action>refresh|remove))?")
+SCHEDULER_FIRST_S = 120  # let the panel settle after startup
+SCHEDULER_TICK_S = 600  # at most one favorite rebuilt per tick, to spread Spotify requests out
 MAX_BODY_BYTES = 64_000
 COOKIE_NAME = "sala"
-LIBRARY_SHELF_SIZE = 12  # playlists from their own account that a friend sees on the shelf
 LIBRARY_KEY = re.compile(r"id:(?P<id>[A-Za-z0-9]{1,64})")
 TRACK_URI = re.compile(r"spotify:track:[A-Za-z0-9]{1,64}")
 PLAYLIST_NAME_MAX = 100
@@ -226,7 +225,9 @@ class App:
         self._profiles: dict[str, Profile] = {}
         self._profiles_lock = threading.Lock()
         self._pending: dict[str, AuthRequest] = {}
-        self._schedule: tuple[float, dict | None] = (float("-inf"), None)
+        self._refreshing: dict[str, Hunt] = {}  # favorite id -> rebuild in progress
+        self._refreshing_lock = threading.Lock()
+        self._refresh_slot = threading.Lock()  # one rebuild at a time, manual or scheduled
 
     # People and sign-in
 
@@ -270,62 +271,57 @@ class App:
     # Reading
 
     def overview(self, user: Profile) -> dict:
-        sp = self.spotify(user)
-        library = list(sp.my_playlists())
-        # The curated shelf (playlists.json) is the owner's only; each friend sees their own account's playlists.
-        playlists = self._curated_shelf(user, library) if user.is_owner else self._library_shelf(user, library)
+        library = list(self.spotify(user).my_playlists())
         return {
             "me": {"id": user.id, "name": accounts.display_name(user.id), "is_owner": user.is_owner},
-            "playlists": playlists,
+            "playlists": self._shelf(user, library),
+            "max_favorites": favorites.MAX_FAVORITES,
             "player_ready": not missing_scopes(user.paths.token),
             "search_paused_s": gate.remaining("search"),
-            "schedule": self.schedule() if user.is_owner else None,
         }
 
-    @staticmethod
-    def _library_shelf(user: Profile, library: list[dict]) -> list[dict]:
-        mine = [playlist for playlist in library if (playlist.get("owner") or {}).get("id") == user.id]
-        return [
-            {
-                "key": f"id:{playlist['id']}",
-                "name": playlist["name"],
-                "kind": "library",
-                "description": html.unescape(playlist.get("description") or ""),
-                "color": None,
-                "uri": playlist["uri"],
-                "image": pick_image(playlist.get("images"), 300),
-                "total": (playlist.get("items") or playlist.get("tracks") or {}).get("total", 0),
-            }
-            for playlist in mine[:LIBRARY_SHELF_SIZE]
-        ]
-
-    @staticmethod
-    def _curated_shelf(user: Profile, library: list[dict]) -> list[dict]:
+    def _shelf(self, user: Profile, library: list[dict]) -> list[dict]:
+        """The bar: only favorites, the playlists the Sala rebuilds by itself."""
         owned = {playlist["id"]: playlist for playlist in library}
         ids = load_state(user.paths.state).get("playlists", {})
-        playlists = []
-        for spec in load_playlists()["playlists"]:
-            remote = owned.get(ids.get(spec["name"]))
-            summary = {
-                "key": spec["name"],
-                "name": spec["name"],
-                "kind": playlist_kind(spec),
-                "description": spec.get("description", ""),
-                "color": spec.get("color"),
-                "uri": None,
-                "image": None,
-                "total": 0,
-            }
-            if "mix" in spec:
-                summary["sources"] = spec["mix"]["from"]
+        specs = {spec["name"]: spec for spec in load_playlists()["playlists"]} if user.is_owner else {}
+        shelf, gone = [], set()
+        for fav in self._favorites(user):
+            if fav["kind"] == "curated":
+                spec = specs[fav["name"]]
+                remote = owned.get(ids.get(spec["name"]))
+                item = {
+                    "key": spec["name"],
+                    "name": spec["name"],
+                    "kind": playlist_kind(spec),
+                    "description": spec.get("description", ""),
+                    "color": spec.get("color"),
+                }
+                if "mix" in spec:
+                    item["sources"] = spec["mix"]["from"]
+            else:
+                remote = owned.get(fav["playlist_id"])
+                if remote is None:  # deleted in the Spotify app: it leaves the bar
+                    gone.add(fav["id"])
+                    continue
+                item = {
+                    "key": f"fav:{fav['id']}",
+                    "name": remote["name"],
+                    "kind": "favorite",
+                    "description": html.unescape(remote.get("description") or ""),
+                    "color": fav.get("color"),
+                }
+            item.update(uri=None, image=None, total=0, favorite=self._favorite_view(user, fav))
             if remote:
-                summary.update(
+                item.update(
                     uri=remote["uri"],
                     image=pick_image(remote.get("images"), 300),
                     total=(remote.get("items") or remote.get("tracks") or {}).get("total", 0),
                 )
-            playlists.append(summary)
-        return playlists
+            shelf.append(item)
+        if gone:
+            favorites.change(user.id, lambda items: items.__setitem__(slice(None), [f for f in items if f["id"] not in gone]))
+        return shelf
 
     @staticmethod
     def _require_owner(user: Profile) -> None:
@@ -336,6 +332,8 @@ class App:
     def playlist(self, user: Profile, name: str) -> dict:
         if match := LIBRARY_KEY.fullmatch(name):
             playlist_id = match["id"]
+        elif name.startswith("fav:"):
+            playlist_id = self._favorite(user, name[4:])["playlist_id"]
         else:
             self._require_owner(user)
             find_spec(load_playlists(), name)
@@ -371,13 +369,6 @@ class App:
                 }
             results.append(row)
         return {"results": results}
-
-    def schedule(self) -> dict | None:
-        cached_at, value = self._schedule
-        if time.monotonic() - cached_at > SCHEDULE_TTL_S:
-            value = read_schedule()
-            self._schedule = (time.monotonic(), value)
-        return value
 
     # Player
 
@@ -455,14 +446,28 @@ class App:
                 return localized(spec)
         raise UserError(t("err.sensation_not_found"), 404)
 
-    def start_hunt(self, user: Profile, body: dict) -> dict:
-        # Every discovery ends up finding songs through Spotify search: if it's paused, say so now.
+    @staticmethod
+    def _check_search() -> None:
+        """Every discovery ends up finding songs through Spotify search: if it's paused, say so now."""
         paused = gate.remaining("search")
         if paused:
             raise UserError(pause_message(SpotifyError(429, "paused", retry_after=paused, family="search")), 429)
+
+    def start_hunt(self, user: Profile, body: dict) -> dict:
+        self._check_search()
+        hunt, task = self._hunt_task(user, self.spotify(user), body, random.Random())
+        with user.lock:
+            if user.hunt:
+                user.hunt.cancelled = True  # the previous discovery stops at its next step
+            user.hunt = hunt
+        threading.Thread(target=self._run_hunt, args=(hunt, task, i18n.current()), daemon=True).start()
+        return hunt.snapshot()
+
+    def _hunt_task(self, user: Profile, sp: Spotify, body: dict, rng: random.Random) -> tuple[Hunt, Callable[[], None]]:
+        """Checks what the panel (or a favorite's recipe) asked for and prepares the discovery."""
         kind = body.get("kind")
-        sp = self.spotify(user)
-        rng = random.Random()
+        size = fan_range(body)
+        recipe = {"kind": kind, "min_fans": size.min or None, "max_fans": size.max}
         if kind == "sense":
             text = " ".join((body.get("text") or "").split())
             if len(text) > FEELING_MAX_CHARS:
@@ -470,7 +475,7 @@ class App:
             spec = discovery.spec_from_text(text) if text else self._preset(body)
             if not tempo.available():
                 raise UserError(t("err.tempo_missing"), 409)
-            size = fan_range(body)
+            recipe.update({"text": text} if text else {"id": spec.get("id")})
             hunt = Hunt("sense", spec["name"], color=spec.get("color"), spec=spec)
             cache = discovery.TempoCache()
 
@@ -480,40 +485,37 @@ class App:
                 finally:
                     cache.save()
         elif kind == "roulette":
-            genre, size = genre_from(body), fan_range(body)
+            genre = genre_from(body)
+            recipe["genre"] = genre
             hunt = Hunt("roulette", t("label.roulette_genre", genre=genre) if genre else t("label.roulette"))
 
             def task() -> None:
                 discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked, genre=genre, size=size)
         elif kind == "rabbit":
             seed = (body.get("seed") or "").strip()
-            size = fan_range(body)
+            recipe["seed"] = seed
             hunt = Hunt("rabbit", t("label.rabbit"))
 
             def task() -> None:
                 seeds = [seed] if seed else self._seed_artists(user, sp)
                 discovery.rabbit_hole(hunt, sp, self.deezer, rng, seeds, blocked=user.blocked, size=size)
         elif kind == "news":
-            genre, size = genre_from(body, required=True), fan_range(body)
+            genre = genre_from(body, required=True)
             try:
                 days = int(body.get("days") or 30)
             except (TypeError, ValueError):
                 days = 0
             if days not in NEWS_PERIODS:
                 raise UserError(t("err.period"))
+            recipe.update(genre=genre, days=days)
             hunt = Hunt("news", t("label.news", genre=genre))
 
             def task() -> None:
                 discovery.news(hunt, sp, self.deezer, genre, size, days, blocked=user.blocked)
         else:
             raise UserError(t("err.hunt_kind"))
-
-        with user.lock:
-            if user.hunt:
-                user.hunt.cancelled = True  # the previous discovery stops at its next step
-            user.hunt = hunt
-        threading.Thread(target=self._run_hunt, args=(hunt, task, i18n.current()), daemon=True).start()
-        return hunt.snapshot()
+        hunt.recipe = recipe
+        return hunt, task
 
     @staticmethod
     def current_hunt(user: Profile) -> dict | None:
@@ -695,17 +697,52 @@ class App:
         uris = self._track_uris(body)
         if user.is_owner and any(spec["name"] == name for spec in load_playlists()["playlists"]):
             raise UserError(t("save.curated_name", name=name), 409)
+        every = body.get("every") or None
+        hunt = user.hunt
+        if every:
+            if every not in favorites.EVERY:
+                raise UserError(t("fav.bad_every"))
+            if not hunt or not hunt.recipe or not set(uris) <= {find.uri for find in hunt.finds}:
+                raise UserError(t("fav.needs_discovery"))
         sp = self.spotify(user)
         same = next((playlist for playlist in self._owned(user, sp) if playlist["name"] == name), None)
+        if every and not (same and self._favorite_for(user, same["id"])):
+            made = sum(1 for fav in favorites.load(user.id) if fav["kind"] == "discovery")
+            if made >= favorites.MAX_FAVORITES:
+                raise UserError(t("fav.too_many", max=favorites.MAX_FAVORITES), 409)
         if same:
             # Same name: the songs are only swapped if the person confirms (the old list is gone).
             if not body.get("replace"):
                 raise UserError(t("save.exists", name=name), 409, exists=True)
             sp.replace_items(same["id"], uris)
-            return {"message": t("save.replaced", name=name, count=len(uris)), "uri": same["uri"], "id": same["id"]}
-        created = sp.create_playlist(name, self._description(user, uris), False)
-        sp.replace_items(created["id"], uris)
-        return {"message": t("save.created", name=name, count=len(uris)), "uri": created["uri"], "id": created["id"]}
+            playlist, message = same, t("save.replaced", name=name, count=len(uris))
+        else:
+            playlist = sp.create_playlist(name, self._description(user, uris), False)
+            sp.replace_items(playlist["id"], uris)
+            message = t("save.created", name=name, count=len(uris))
+        if every:
+            self._make_favorite(user, playlist["id"], name, every, hunt)
+            message += " " + t("fav.added", every=t(f"every.{every}"))
+        self._remember(user, uris, name)
+        return {"message": message, "uri": playlist["uri"], "id": playlist["id"], "favorite": bool(every)}
+
+    def _make_favorite(self, user: Profile, playlist_id: str, name: str, every: str, hunt: Hunt) -> None:
+        color = hunt.color or favorites.KIND_COLORS.get(hunt.kind)
+        fav = favorites.new("discovery", name, every, playlist_id=playlist_id, recipe=hunt.recipe, color=color,
+                            lang=i18n.current())
+
+        def add(items: list[dict]) -> None:
+            # The same playlist again (replaced by name): it keeps one entry with the new recipe.
+            items[:] = [item for item in items if item.get("playlist_id") != playlist_id or item["kind"] == "curated"]
+            items.append(fav)
+
+        favorites.change(user.id, add)
+
+    @staticmethod
+    def _remember(user: Profile, uris: list[str], playlist: str) -> None:
+        """Recent finds on the home screen: only songs that came from a discovery (we know their details)."""
+        finds = {find.uri: find for find in (user.hunt.finds if user.hunt else [])}
+        favorites.remember(user.id, [asdict(finds[uri]) for uri in uris if uri in finds], playlist)
 
     def add_to_playlist(self, user: Profile, body: dict) -> dict:
         uris = self._track_uris(body)
@@ -726,6 +763,7 @@ class App:
             sp.add_items(playlist_id, fresh[start : start + ITEMS_PER_ADD])
         if fresh:
             self._remember_in_curation(user, playlist_id, fresh)
+        self._remember(user, uris, name)
         return {"message": self._added_message(name, len(uris), len(fresh)), "added": len(fresh)}
 
     @staticmethod
@@ -758,6 +796,172 @@ class App:
             if entry and entry not in entries:
                 entries.append(entry)
         save_playlists(config_data)
+
+    # Favorites: the bar's playlists, rebuilt by themselves
+
+    def _favorites(self, user: Profile) -> list[dict]:
+        if user.is_owner:
+            return favorites.sync_curated(user.id, load_playlists()["playlists"])
+        return favorites.load(user.id)
+
+    def _favorite(self, user: Profile, fav_id: str) -> dict:
+        fav = next((fav for fav in self._favorites(user) if fav["id"] == fav_id), None)
+        if fav is None:
+            raise UserError(t("fav.not_found"), 404)
+        return fav
+
+    @staticmethod
+    def _favorite_for(user: Profile, playlist_id: str) -> dict | None:
+        return next((fav for fav in favorites.load(user.id) if fav.get("playlist_id") == playlist_id), None)
+
+    def _favorite_view(self, user: Profile, fav: dict) -> dict:
+        running = self._refreshing.get(fav["id"])
+        job = user.job
+        if fav["kind"] == "curated" and job and job.status == "running" and job.name == fav["name"]:
+            running = Hunt("refresh", fav["name"], message=(job.lines or [job.label])[-1])
+        recipe = fav.get("recipe") or {}
+        return {
+            "id": fav["id"],
+            "curated": fav["kind"] == "curated",
+            "every": fav["every"],
+            "last_run": int(fav["updated"] * 1000) if fav.get("updated") else None,
+            "next_run": int(favorites.next_run(fav) * 1000),
+            "status": fav.get("status", "ok"),
+            "message": fav.get("message", ""),
+            "recipe": {"kind": recipe.get("kind"), "id": recipe.get("id")} if recipe else None,
+            "running": {"message": running.message, "progress": running.progress, "total": running.total}
+            if running else None,
+        }
+
+    def favorite_status(self, user: Profile, fav_id: str) -> dict:
+        return self._favorite_view(user, self._favorite(user, fav_id))
+
+    def set_every(self, user: Profile, fav_id: str, body: dict) -> dict:
+        every = body.get("every")
+        if every not in favorites.EVERY:
+            raise UserError(t("fav.bad_every"))
+        self._favorite(user, fav_id)
+
+        def edit(items: list[dict]) -> None:
+            for fav in items:
+                if fav["id"] == fav_id:
+                    fav["every"] = every
+
+        favorites.change(user.id, edit)
+        return {**self.favorite_status(user, fav_id), "notice": t("fav.every_set", every=t(f"every.{every}"))}
+
+    def remove_favorite(self, user: Profile, fav_id: str) -> dict:
+        fav = self._favorite(user, fav_id)
+        if fav["kind"] == "curated":
+            raise UserError(t("fav.curated_stays"), 409)
+        favorites.change(user.id, lambda items: items.__setitem__(slice(None), [f for f in items if f["id"] != fav_id]))
+        return {"message": t("fav.removed", name=fav["name"])}
+
+    def refresh_favorite(self, user: Profile, fav_id: str) -> dict:
+        """'Update now': curated ones go through the update console; the others rebuild in the background."""
+        fav = self._favorite(user, fav_id)
+        if fav["kind"] == "curated":
+            return {"job": self.start_job(user, {"playlist": fav["name"]})}
+        self._check_search()
+        with self._refreshing_lock:
+            if fav_id in self._refreshing:
+                raise UserError(t("fav.already_running"), 409)
+            self._refreshing[fav_id] = Hunt("refresh", fav["name"], message=t("fav.queued"))
+        threading.Thread(target=self._refresh_in_background, args=(user, fav_id, i18n.current()), daemon=True).start()
+        return self.favorite_status(user, fav_id)
+
+    def _refresh_in_background(self, user: Profile, fav_id: str, lang: str) -> None:
+        i18n.use(lang)
+        try:
+            self._refresh(user, fav_id)
+        except Exception:
+            log.exception("Favorite update failed")
+        finally:
+            with self._refreshing_lock:
+                self._refreshing.pop(fav_id, None)
+
+    def _refresh(self, user: Profile, fav_id: str) -> None:
+        """Rebuilds one favorite: a fresh selection replaces the songs. One at a time, to spare Spotify."""
+        with self._refresh_slot:
+            fav = self._favorite(user, fav_id)
+            sp = self.spotify(user)
+            status, message = "ok", ""
+            try:
+                if fav["kind"] == "curated":
+                    run(sp, load_playlists(), load_state(user.paths.state), only=[fav["name"]])
+                    message = t("fav.updated_curated")
+                else:
+                    hunt, task = self._hunt_task(user, sp, fav["recipe"], random.Random())
+                    with self._refreshing_lock:
+                        self._refreshing[fav_id] = hunt  # the bar shows this discovery's progress
+                    try:
+                        task()
+                    finally:
+                        discovery.matches.save()
+                    if hunt.finds:
+                        sp.replace_items(fav["playlist_id"], [find.uri for find in hunt.finds])
+                        message = t("fav.updated", count=len(hunt.finds))
+                    else:
+                        status, message = "empty", hunt.message  # keeps the current songs
+            except SpotifyError as err:
+                status = {429: "paused", 404: "missing"}.get(err.status, "error")
+                message = t("fav.missing") if status == "missing" else spotify_message(err)
+            except (DeezerError, UserError) as err:
+                status, message = "error", t("err.discovery_failed", error=err)
+            except SystemExit as exc:
+                status, message = "error", str(exc.code)
+            self._mark_run(user.id, lambda item: item["id"] == fav_id, status, message)
+
+    @staticmethod
+    def _mark_run(user_id: str, which: Callable[[dict], bool], status: str, message: str) -> None:
+        def edit(items: list[dict]) -> None:
+            for fav in items:
+                if which(fav):
+                    fav["status"], fav["message"] = status, message
+                    if status != "paused":  # a Spotify pause: try again on the next round
+                        fav["last_run"] = time.time()
+                    if status == "ok":
+                        fav["updated"] = fav["last_run"]
+
+        favorites.change(user_id, edit)
+
+    def run_due(self, now: float | None = None) -> str | None:
+        """Rebuilds the most overdue favorite of anyone in the room (one per call). Returns its id."""
+        if gate.remaining("search"):
+            return None  # every rebuild searches Spotify; wait for the pause to end
+        now = time.time() if now is None else now
+        due = []
+        for user_id in config.list_users():
+            try:
+                user = self.profile(user_id)
+                items = self._favorites(user)
+            except UserError:
+                continue  # signed out: nothing to rebuild with
+            ids = load_state(user.paths.state).get("playlists", {})
+            for fav in items:
+                exists = fav.get("playlist_id") or (fav["kind"] == "curated" and ids.get(fav["name"]))
+                if exists and fav["id"] not in self._refreshing and favorites.is_due(fav, now):
+                    due.append((favorites.next_run(fav), user, fav))
+        if not due:
+            return None
+        _, user, fav = min(due, key=lambda item: item[0])
+        i18n.use(fav.get("lang"))
+        self._refresh(user, fav["id"])
+        return fav["id"]
+
+    def scheduler(self) -> None:
+        """Runs inside the panel: as long as it's open, favorites rebuild themselves on time."""
+        time.sleep(SCHEDULER_FIRST_S)
+        while True:
+            try:
+                self.run_due()
+            except Exception:
+                log.exception("Scheduled update failed")
+            time.sleep(SCHEDULER_TICK_S)
+
+    @staticmethod
+    def recent_finds(user: Profile) -> dict:
+        return {"finds": favorites.recent(user.id)}
 
     # Editing
 
@@ -817,6 +1021,8 @@ class App:
         try:
             run(sp, load_playlists(), load_state(user.paths.state), only=[name], dry_run=job.dry_run)
             job.status = "done"
+            if not job.dry_run:
+                App._mark_run(user.id, lambda fav: fav["kind"] == "curated" and fav["name"] == name, "ok", "")
         except SystemExit as exc:
             job.lines.append(str(exc.code))
             job.status = "error"
@@ -828,32 +1034,6 @@ class App:
             job.status = "error"
         finally:
             logger.removeHandler(handler)
-
-
-def read_schedule() -> dict | None:
-    """Next/last run of the weekly task in the Windows Task Scheduler."""
-    script = (
-        f"$i = Get-ScheduledTaskInfo -TaskName '{TASK_NAME}' -ErrorAction Stop; "
-        "@{ next = if ($i.NextRunTime) { $i.NextRunTime.ToString('s') } else { $null }; "
-        "last = if ($i.LastRunTime) { $i.LastRunTime.ToString('s') } else { $null }; "
-        "result = $i.LastTaskResult } | ConvertTo-Json -Compress"
-    )
-    try:
-        result = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return {"scheduled": False}
-    data = json.loads(result.stdout)
-    # 0 = success; 0x41301 = running now; 0x41303 = hasn't run yet
-    ok = data["result"] in (0, 0x41301, 0x41303)
-    return {"scheduled": True, "next": data["next"], "last": data["last"], "ok": ok}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -968,6 +1148,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.blocked_artists(user)
         if method == "POST" and path == "/api/blocked":
             return app.set_blocked(user, body)
+        if method == "GET" and path == "/api/recent":
+            return app.recent_finds(user)
+        if match := FAVORITE_PATH.fullmatch(path):
+            fav_id, action = match["id"], match["action"]
+            if method == "GET" and not action:
+                return app.favorite_status(user, fav_id)
+            if method == "POST" and not action:
+                return app.set_every(user, fav_id, body)
+            if method == "POST" and action == "refresh":
+                return app.refresh_favorite(user, fav_id)
+            if method == "POST" and action == "remove":
+                return app.remove_favorite(user, fav_id)
         if method == "GET" and path == "/api/my-playlists":
             return app.my_playlists(user)
         if method == "POST" and path == "/api/playlists/new":
@@ -1094,7 +1286,7 @@ def serve(settings: Settings, open_browser: bool = True) -> None:
         if open_browser:
             webbrowser.open(url)
         return
-    threading.Thread(target=app.schedule, daemon=True).start()  # PowerShell takes ~1s; get it ready now
+    threading.Thread(target=app.scheduler, daemon=True).start()
     log.info("Panel open at %s  (Ctrl+C or close this window to stop)", url)
     if settings.public_url:
         log.info("Address for friends: %s", settings.public_url)

@@ -10,8 +10,10 @@ in Portuguese or English.
 - **Discover**: a roulette of barely-played records from all over the world, and a rabbit hole that
   hops from an artist you like toward lesser-known ones.
 - **New releases**: what just came out in a genre, only from artists of the size you choose.
-- **Keep what you like**: turn any selection into a playlist, or add a song to one of yours.
-- **Curated shelf** (owner): 5 playlists kept up to date, including a weekly podcast playlist.
+- **Favorites that update themselves**: turn a selection into a playlist that gets new songs every
+  day, week or month. Only these special playlists go on the top bar.
+- **Home**: a suggestion for this time of day, what's playing, your favorites, shortcuts and recent finds.
+- **Curated shelf** (owner): 5 playlists from `playlists.json`, including a weekly podcast playlist.
 
 Python 3.12. Everything uses only the standard library, except measuring BPM in Sensations,
 which needs an MP3 decoder (`pip install -r requirements.txt`).
@@ -40,8 +42,13 @@ The panel opens at http://127.0.0.1:8888 and stays up while the black window is 
 The first visit shows a short tour with the mascot; **How it works** at the top opens it again.
 **PT / EN** switches the language for that person (the server's messages follow it).
 
-- **Shelf**: at the top, in two sections, "Playlists" and "Explore". Each playlist is a colored
-  spine, and the selected one becomes the panel's light.
+- **Bar**: at the top, "Favorites" (only playlists that update themselves) and "Room" (Home,
+  Sensations, Discover, New releases). Each favorite is a colored spine, and the selected one becomes
+  the panel's light. The mascot next to the name also goes back Home.
+- **Home**: "For right now" suggests a sensation for this time of day (morning, afternoon, evening;
+  a party on Friday and Saturday nights) and plays it at once if it's already a favorite; "Now playing";
+  your favorites with their next update; shortcuts to the roulette, the rabbit hole and the latest
+  releases of your last genre; and the songs you saved most recently.
 - **Player**: play, pause, skip, shuffle, repeat (off, all, this track), volume and progress.
   Click a track to play from it. Works with Spotify open on your PC or phone (requires Premium).
   The first time, click **Authorize on Spotify** in the bottom bar.
@@ -95,12 +102,19 @@ Above every result:
 
 - **Create playlist**: everything that showed up becomes a playlist with the name you choose
   (it comes filled in, e.g. "Sensation: Deep focus"). If you already have one with that name, the
-  room asks before replacing its songs.
+  room asks before replacing its songs. **Update by itself** (every day, week or month) turns it into
+  a favorite: it goes on the bar and, on each update, the same discovery runs again and its songs are
+  replaced with a fresh selection.
 - **Add to a playlist**: sends everything to `Finds from the Sala` (created the first time) or to
   any playlist of yours. Songs already there aren't repeated.
 
 Each song has its own **Add**, with the same choices. Playlists the room rebuilds by itself
 (the weekly podcasts and the mix) don't show up there, since anything added would be lost.
+
+On a favorite's page: **Update now**, the frequency, and **Remove from the bar** (the playlist stays on
+Spotify; it just stops updating). Up to 8 favorites per person. Updates run inside the panel, one at a
+time and at most one every 10 minutes, to spare Spotify's request limits; while Spotify has search paused,
+they wait. If the PC was off at the time, the update runs once the panel is back.
 
 Each song's ⓘ shows why it showed up (measured BPM and energy, the genre or year drawn, the hops in
 the rabbit hole, the release date) and has **Don't show again**: the artist disappears right away and
@@ -111,13 +125,15 @@ denomination (`RELIGIOUS_WORDS` in `spotify_assistant/discovery.py`).
 
 ### Curated shelf (owner)
 
-| Playlist | Contents | Updates |
+| Playlist | Contents | Updates (default) |
 |---|---|---|
-| Tech Radar BR | recent episodes of Brazilian tech podcasts | weekly (automatic) |
-| Midnight in Monaco | refined jazz | `setup` |
-| Deep Focus — Lo-Fi | lo-fi for coding (shuffled) | `setup` |
-| The Classical Room | classical, from contemplative to grand | `setup` |
-| The Study Collection | jazz + lo-fi + classical, alternating | `setup` |
+| Tech Radar BR | recent episodes of Brazilian tech podcasts | every week |
+| Midnight in Monaco | refined jazz | every month |
+| Deep Focus — Lo-Fi | lo-fi for coding (shuffled) | every month |
+| The Classical Room | classical, from contemplative to grand | every month |
+| The Study Collection | jazz + lo-fi + classical, alternating | every month |
+
+The curated playlists are the owner's favorites; the frequency can be changed on each page.
 
 - **Update now / Redo selection** runs the curation with the log showing live; **See preview**
   shows the result without changing anything.
@@ -133,9 +149,8 @@ panel respects), BPM is measured on your PC and free text is read locally.
 
 ## A room for friends
 
-Each person signs in with their own Spotify and has their own player, discoveries, Finds, blocked
-artists and copies of the playlists ("Create in my Spotify"). Friends don't see each other's
-playlists or searches. The panel runs on the owner's PC and is made public with
+Each person signs in with their own Spotify and has their own player, discoveries, favorites, Finds
+and blocked artists. Friends don't see each other's playlists or searches. The panel runs on the owner's PC and is made public with
 [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), at a fixed address `https://<pc>.<network>.ts.net`.
 
 1. Set `SALA_PUBLIC_URL` in `.env` to the Funnel address (`tailscale funnel status` shows it).
@@ -152,8 +167,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-with-windows.ps1       
 powershell -ExecutionPolicy Bypass -File .\scripts\start-with-windows.ps1 -Remove   # undo
 ```
 
-With it on, `open-panel.cmd` just opens the room in the browser. `weekly` updates the Tech Radar of
-everyone who created it.
+With it on, `open-panel.cmd` just opens the room in the browser, and favorites update themselves.
 
 ## Command line
 
@@ -163,17 +177,11 @@ python -m spotify_assistant check            # shows the owner and who's in the 
 python -m spotify_assistant setup --dry-run  # shows what would be created, without changing anything
 python -m spotify_assistant setup            # creates/recreates the 5 playlists
 python -m spotify_assistant setup --only "Midnight in Monaco"
-python -m spotify_assistant weekly           # updates only Tech Radar BR
+python -m spotify_assistant refresh          # updates now every favorite that is due, for everyone
 ```
 
-`SALA_LANG` in `.env` (`en` or `pt`) sets the language of the command line and of the weekly task.
-
-Schedule the weekly update (Monday at 09:00; if the PC is off, it runs once it's turned on):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1 -Day Friday -Time 18:30
-```
+`refresh` is only needed if you don't keep the panel open (the panel does it by itself).
+`SALA_LANG` in `.env` (`en` or `pt`) sets the language of the command line and of automatic updates.
 
 ## Customize
 
@@ -193,6 +201,7 @@ Interface texts are in `spotify_assistant/static/i18n.js` (browser) and `spotify
 
 - `users/<id>/token.json`: each person's access token. Don't share it.
 - `users/<id>/state.json`, `blocked.json`, `profile.json`: playlist IDs, blocked artists and display name.
+- `users/<id>/favorites.json`, `recent.json`: favorites (recipe, frequency, last update) and recent finds.
 - `owner.txt`, `sessions.json`: who owns the room and the browser sessions.
 - `tempo-cache.json`, `spotify-matches.json`, `spotify-pauses.json`: measured BPMs, tracks already
   located on Spotify and Spotify's request pauses.

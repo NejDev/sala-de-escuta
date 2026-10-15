@@ -57,6 +57,7 @@ class CatalogTest(unittest.TestCase):
         used |= {f"hunt.again.{kind}" for kind in ("sense", "roulette", "rabbit", "news")}
         used |= {f"period.{days}" for days in (7, 14, 30, 90)}
         used |= {f"player.repeat_{mode}" for mode in ("off", "context", "track")}
+        used |= {f"every.{every}" for every in ("daily", "weekly", "monthly")}
         tour = re.search(r"const TOUR = \[(.*?)\];", app, re.S).group(1)
         used |= {f"tour.{key}.{part}" for key in re.findall(r'key: "(\w+)"', tour) for part in ("title", "text")}
         page = (STATIC / "index.html").read_text(encoding="utf-8")

@@ -3,7 +3,8 @@
 The browser keeps the person's choice in the "lang" cookie (falling back to
 Accept-Language). Each request, and each discovery running in the background,
 sets the language for its own thread with use(); t() then reads messages from
-MESSAGES. The CLI and the weekly task use SALA_LANG from .env.
+MESSAGES. The command line uses SALA_LANG from .env; a favorite's automatic
+updates use the language of whoever created it.
 """
 from __future__ import annotations
 
@@ -75,6 +76,26 @@ def clock(moment: datetime) -> str:
 # Placeholders must match across languages (tests/test_i18n.py checks it).
 MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
     "pt": {
+        # Favorites (the bar)
+        "every.daily": "todo dia",
+        "every.weekly": "toda semana",
+        "every.monthly": "todo mês",
+        "fav.bad_every": "Frequência inválida.",
+        "fav.needs_discovery": "Só dá para atualizar sozinha uma playlist feita de uma descoberta inteira.",
+        "fav.too_many": "Você já tem {max} favoritas que se atualizam. Tire uma da barra para pôr outra.",
+        "fav.added": "Ela fica na barra e se atualiza {every}.",
+        "fav.not_found": "Favorita não encontrada.",
+        "fav.every_set": "Agora ela se atualiza {every}.",
+        "fav.curated_stays": "As playlists da curadoria ficam na barra; para tirar uma, edite o playlists.json.",
+        "fav.removed": "{name} saiu da barra e não se atualiza mais. A playlist continua no seu Spotify.",
+        "fav.already_running": "Essa playlist já está se atualizando.",
+        "fav.queued": "Na fila para atualizar…",
+        "fav.updated_curated": "Atualizada.",
+        "fav.updated": ("Atualizada com 1 música.", "Atualizada com {count} músicas."),
+        "fav.missing": "A playlist foi apagada no Spotify.",
+        "cli.refresh": "atualiza agora as favoritas no prazo, de todos da sala",
+        "cli.weekly": "o mesmo que refresh (nome antigo)",
+        "cli.refreshed": ("1 favorita atualizada.", "{count} favoritas atualizadas."),
         # Sign-in and tokens
         "auth.bad_state": "Resposta de login inválida (state não confere). Tente de novo.",
         "auth.refused": "Login recusado pelo Spotify: {error}",
@@ -109,7 +130,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "cli.no_browser": "só sobe o servidor, sem abrir o navegador",
         "cli.setup": "cria/recria as playlists do playlists.json na conta do dono",
         "cli.only": "só esta playlist (pode repetir)",
-        "cli.weekly": "atualiza as playlists semanais de todos da sala",
         "cli.dry_run": "mostra o que seria feito, sem alterar nada",
         "cli.logged_in": "Login feito como {name}. Agora rode: python -m spotify_assistant check",
         "cli.nobody": "Ninguém entrou na sala ainda. Rode: python -m spotify_assistant login",
@@ -121,7 +141,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
             "(2) o e-mail da conta está em User Management no app do Spotify for Developers; "
             "(3) entre de novo se mudou as permissões."
         ),
-        "cli.weekly_failed": "Não deu para atualizar {name}: {error}",
         # Configuration and requests
         "err.not_in_config": "{name} não está no playlists.json.",
         "err.mix_add": "{name} é montada com faixas das outras playlists. Adicione em uma delas.",
@@ -260,6 +279,26 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.none": "A toca não levou a lugar nenhum desta vez. Tente de novo, outro artista ou outro tamanho.",
     },
     "en": {
+        # Favorites (the bar)
+        "every.daily": "every day",
+        "every.weekly": "every week",
+        "every.monthly": "every month",
+        "fav.bad_every": "Invalid frequency.",
+        "fav.needs_discovery": "Only a playlist made from a whole discovery can update itself.",
+        "fav.too_many": "You already have {max} self-updating favorites. Take one off the bar to add another.",
+        "fav.added": "It's on the bar and updates itself {every}.",
+        "fav.not_found": "Favorite not found.",
+        "fav.every_set": "It now updates itself {every}.",
+        "fav.curated_stays": "Curated playlists stay on the bar; to remove one, edit playlists.json.",
+        "fav.removed": "{name} left the bar and won't update anymore. The playlist stays on your Spotify.",
+        "fav.already_running": "This playlist is already updating.",
+        "fav.queued": "Waiting to update…",
+        "fav.updated_curated": "Updated.",
+        "fav.updated": ("Updated with 1 song.", "Updated with {count} songs."),
+        "fav.missing": "The playlist was deleted on Spotify.",
+        "cli.refresh": "updates the favorites that are due now, for everyone in the room",
+        "cli.weekly": "same as refresh (old name)",
+        "cli.refreshed": ("1 favorite updated.", "{count} favorites updated."),
         # Sign-in and tokens
         "auth.bad_state": "Invalid sign-in response (state doesn't match). Try again.",
         "auth.refused": "Spotify refused the sign-in: {error}",
@@ -294,7 +333,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "cli.no_browser": "only starts the server, without opening the browser",
         "cli.setup": "creates/recreates the playlists from playlists.json on the owner's account",
         "cli.only": "only this playlist (can be repeated)",
-        "cli.weekly": "updates the weekly playlists of everyone in the room",
         "cli.dry_run": "shows what would be done, without changing anything",
         "cli.logged_in": "Signed in as {name}. Now run: python -m spotify_assistant check",
         "cli.nobody": "Nobody has signed in yet. Run: python -m spotify_assistant login",
@@ -306,7 +344,6 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
             "(2) the account's e-mail is under User Management in the Spotify for Developers app; "
             "(3) you signed in again if you changed permissions."
         ),
-        "cli.weekly_failed": "Couldn't update {name}: {error}",
         # Configuration and requests
         "err.not_in_config": "{name} isn't in playlists.json.",
         "err.mix_add": "{name} is built from the other playlists' tracks. Add it to one of them.",

@@ -89,6 +89,7 @@ body.is-gated .console { display: none; }
   line-height: 1;
 }
 .brand-mark { width: 34px; height: 34px; border-radius: 50%; }
+a.brand { color: inherit; text-decoration: none; }
 
 /* Language: two letters, the chosen one lit. */
 .lang-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; }
@@ -114,7 +115,8 @@ body.is-gated .console { display: none; }
   min-width: 0;
 }
 
-.nav-group { display: flex; flex: none; align-items: center; gap: 2px; }
+/* Many favorites wrap onto a second line instead of running into the account. */
+.nav-group { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 2px; min-width: 0; }
 
 .account {
   display: flex;
@@ -920,6 +922,129 @@ body.is-gated .console { display: none; }
 .line.is-item { padding-left: 1.25rem; color: var(--smoke); }
 .line.is-warning { padding-left: 1.25rem; color: var(--warn); }
 
+/* ---------- Home: hello, the moment, what's playing, favorites, shortcuts, recent finds */
+
+.home { display: grid; gap: 44px; max-width: var(--content); }
+.home-title { margin: 0; }
+.home-top { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 1000px) {
+  .home-top { grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
+}
+.home-label { margin: 0 0 6px; color: var(--smoke); font-size: .8125rem; }
+.section-title { margin: 0 0 16px; font-size: 1.75rem; font-stretch: 62%; font-weight: 800; line-height: 1; }
+
+/* The moment: a sensation's own spine and light. */
+.moment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 22px 26px 24px 30px;
+  border-radius: 8px;
+  background: var(--velvet);
+  box-shadow: inset 4px 0 0 var(--tone);
+}
+.moment-name { margin: 0; color: var(--tone); font-size: 2.75rem; font-stretch: 62%; font-weight: 850; line-height: 1; }
+.moment-text { max-width: 52ch; margin: 8px 0 0; color: color-mix(in srgb, var(--linen) 86%, transparent); }
+.moment .actions { margin-top: 18px; }
+.moment .play-button { --mood: var(--tone); }
+.moment-art { width: 132px; height: 132px; border-radius: 12px; object-fit: cover; object-position: 50% 30%; }
+
+.now-card {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+  border-radius: 8px;
+  background: var(--velvet);
+}
+.now-card.is-empty { grid-template-columns: minmax(0, 1fr); }
+.now-card-art { width: 112px; height: 112px; border-radius: 4px; object-fit: cover; background: var(--line); }
+.now-card-text { min-width: 0; }
+.now-card-title {
+  margin: 0 0 2px;
+  overflow: hidden;
+  font-size: 1.375rem;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.now-card .ghost-button { margin-top: 12px; }
+
+/* Favorites: covers on spines, like the bar. */
+.fav-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fav-card { position: relative; }
+.fav-card-open {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 12px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--velvet);
+  box-shadow: inset 0 -3px 0 var(--spine);
+  color: var(--linen);
+  text-align: left;
+  cursor: pointer;
+}
+.fav-card-open:hover { background: var(--velvet-raised); }
+.fav-card-art { width: 100%; aspect-ratio: 1; margin-bottom: 8px; border-radius: 4px; object-fit: cover; }
+.fav-card-art.is-empty { display: grid; place-items: center; background: var(--spine); color: var(--ink); font-size: 4rem; font-stretch: 62%; font-weight: 900; }
+.fav-card-name { overflow: hidden; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.fav-card-meta { color: var(--smoke); font-size: .8125rem; }
+.fav-card-play {
+  position: absolute;
+  top: 22px;
+  right: 22px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--spine);
+  color: var(--ink);
+  box-shadow: 0 10px 24px -8px rgb(0 0 0 / .7);
+  cursor: pointer;
+}
+.fav-card-play svg { width: 20px; height: 20px; }
+
+.home-empty { display: flex; flex-wrap: wrap; align-items: center; gap: 20px 28px; max-width: 760px; }
+.home-empty p { max-width: 52ch; margin: 0 0 12px; color: color-mix(in srgb, var(--linen) 86%, transparent); }
+.home-empty-art { width: 120px; height: 120px; border-radius: 12px; object-fit: cover; }
+
+.shortcuts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.shortcut {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 18px 20px 20px 24px;
+  border-radius: 8px;
+  background: var(--velvet);
+  box-shadow: inset 4px 0 0 var(--tone);
+}
+.shortcut-name { margin: 0; color: var(--tone); font-size: 1.75rem; font-stretch: 62%; font-weight: 850; line-height: 1; }
+.shortcut-text { margin: 0 0 8px; color: var(--smoke); }
+
+.recent-list { margin-top: 0; }
+.recent-list .track-button { grid-template-columns: 2rem 44px minmax(0, 1fr) auto auto; }
+.recent-where { overflow: hidden; max-width: 22ch; color: var(--smoke); font-size: .8125rem; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A favorite's page: how often it updates. */
+.every-control { display: inline-flex; align-items: center; gap: 8px; color: var(--smoke); font-size: .875rem; }
+.every-select { min-width: 0; padding: 7px 10px; }
+
 /* ---------- Where the songs go: a small panel next to the button (a bottom sheet on phones) */
 
 .picker {
@@ -1014,6 +1139,7 @@ body.is-gated .console { display: none; }
 .picker-input:focus-visible { outline: none; border-color: var(--mood); }
 .picker-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 4px; }
 .picker-conflict { margin: 0; }
+.picker-hint { margin: -4px 0 0; color: var(--smoke); font-size: .8125rem; }
 
 /* ---------- How it works: one step at a time, with the mascot's scene beside it */
 
@@ -1142,7 +1268,7 @@ body.is-gated .console { display: none; }
   /* min-width: 0 lets each line scroll inside instead of widening the page (and hiding the player). */
   .topbar { min-width: 0; }
   .shelf { flex-direction: column; align-items: stretch; gap: 6px; width: 100%; min-width: 0; }
-  .nav-group { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .nav-group { flex-wrap: nowrap; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   .nav-group + .nav-group { padding-left: 0; border-left: 0; }
   .nav-label { flex: none; min-width: 60px; margin-right: 4px; }
   .nav-item { padding: 0 9px 0 8px; }
@@ -1158,6 +1284,14 @@ body.is-gated .console { display: none; }
   .view-art,
   .sense-main .view-art { width: 84px; height: 84px; border-radius: 10px; }
   .add-button { padding: 6px 10px; }
+  .moment-name { font-size: 2.25rem; }
+  .moment-art { display: none; }
+  .now-card { grid-template-columns: 72px minmax(0, 1fr); gap: 14px; padding: 14px; }
+  .now-card-art { width: 72px; height: 72px; }
+  .fav-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .fav-card-play { top: 18px; right: 18px; width: 38px; height: 38px; }
+  .recent-list .track-button { grid-template-columns: 1.5rem 40px minmax(0, 1fr) auto; }
+  .recent-where { display: none; }
 
   .picker.is-sheet {
     inset: auto 0 0 0;

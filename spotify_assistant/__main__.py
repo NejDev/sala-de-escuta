@@ -1,4 +1,4 @@
-"""CLI: python -m spotify_assistant {login,check,ui,setup,weekly}"""
+"""CLI: python -m spotify_assistant {login,check,ui,setup,refresh}"""
 from __future__ import annotations
 
 import argparse
@@ -6,11 +6,11 @@ import logging
 import sys
 
 from . import accounts, config
-from .i18n import t
 from .api import Spotify, SpotifyError
 from .auth import TokenManager, login
 from .config import DATA_DIR, LOG_FILE, load_playlists, load_settings, load_state
-from .dashboard import serve
+from .dashboard import App, serve
+from .i18n import t
 from .playlists import run
 
 log = logging.getLogger("spotify_assistant")
@@ -26,9 +26,9 @@ def main(argv: list[str] | None = None) -> int:
     ui.add_argument("--no-browser", action="store_true", help=t("cli.no_browser"))
     setup = commands.add_parser("setup", help=t("cli.setup"))
     setup.add_argument("--only", action="append", metavar="NAME", help=t("cli.only"))
-    weekly = commands.add_parser("weekly", help=t("cli.weekly"))
-    for command in (setup, weekly):
-        command.add_argument("--dry-run", action="store_true", help=t("cli.dry_run"))
+    setup.add_argument("--dry-run", action="store_true", help=t("cli.dry_run"))
+    commands.add_parser("refresh", help=t("cli.refresh"))
+    commands.add_parser("weekly", help=t("cli.weekly"))  # the old scheduled task still calls it
     args = parser.parse_args(argv)
 
     try:
@@ -41,8 +41,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "ui":
             serve(settings, open_browser=not args.no_browser)
             return 0
-        if args.command == "weekly":
-            return weekly_for_everyone(settings, dry_run=args.dry_run)
+        if args.command in ("refresh", "weekly"):
+            return refresh_everyone(settings)
 
         owner = config.owner_id()
         if not owner:
@@ -73,24 +73,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
 
-def weekly_for_everyone(settings: config.Settings, dry_run: bool = False) -> int:
-    """Updates the weekly playlists of everyone who has already created one of them."""
-    playlists_config = load_playlists()
-    weekly_names = {spec["name"] for spec in playlists_config["playlists"] if spec.get("refresh") == "weekly"}
-    failures = 0
-    for user_id in config.list_users():
-        paths = config.user_paths(user_id)
-        state = load_state(paths.state)
-        if not weekly_names & set(state.get("playlists", {})):
-            continue  # never created the Tech Radar: we don't create anything unless the person asks
-        log.info("== %s", accounts.display_name(user_id))
-        try:
-            sp = Spotify(TokenManager(settings, paths.token), market=playlists_config.get("market", "BR"))
-            run(sp, playlists_config, state, weekly=True, dry_run=dry_run)
-        except (SystemExit, SpotifyError) as err:
-            failures += 1
-            log.error(t("cli.weekly_failed", name=accounts.display_name(user_id), error=getattr(err, "code", err)))
-    return 1 if failures else 0
+def refresh_everyone(settings: config.Settings) -> int:
+    """Rebuilds every favorite that is due, for everyone (the panel does this by itself while it's open)."""
+    app = App(settings)
+    count = 0
+    while app.run_due():
+        count += 1
+    log.info(t("cli.refreshed", count=count))
+    return 0
 
 
 def _configure_logging() -> None:

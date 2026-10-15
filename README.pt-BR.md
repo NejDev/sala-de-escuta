@@ -10,8 +10,10 @@ em português ou inglês.
 - **Descobrir**: uma roleta de discos pouco ouvidos do mundo todo e uma toca do coelho que pula de
   um artista que você curte para os menos conhecidos.
 - **Novidades**: o que acabou de sair num gênero, só de artistas do tamanho que você escolher.
-- **Guarde o que gostou**: transforme qualquer seleção em playlist, ou adicione uma música a uma sua.
-- **Estante curada** (dono): 5 playlists mantidas em dia, incluindo uma semanal de podcasts.
+- **Favoritas que se atualizam sozinhas**: transforme uma seleção numa playlist que ganha músicas
+  novas todo dia, toda semana ou todo mês. Só essas playlists especiais ficam na barra do topo.
+- **Início**: uma sugestão para a hora do dia, o que está tocando, suas favoritas, atalhos e achados recentes.
+- **Estante curada** (dono): 5 playlists do `playlists.json`, incluindo uma semanal de podcasts.
 
 Python 3.12. Tudo usa só a biblioteca padrão, menos a medição de BPM das Sensações, que precisa de
 um decodificador de MP3 (`pip install -r requirements.txt`).
@@ -40,8 +42,13 @@ O painel abre em http://127.0.0.1:8888 e fica no ar enquanto a janela preta esti
 Na primeira visita aparece uma apresentação curta com o mascote; **Como funciona**, no topo, abre de novo.
 **PT / EN** troca o idioma daquela pessoa (as mensagens do servidor acompanham).
 
-- **Estante**: no topo, em duas seções, "Playlists" e "Explorar". Cada playlist é uma lombada
-  colorida, e a escolhida vira a luz do painel.
+- **Barra**: no topo, "Favoritas" (só playlists que se atualizam sozinhas) e "Sala" (Início,
+  Sensações, Descobrir, Novidades). Cada favorita é uma lombada colorida, e a escolhida vira a luz do
+  painel. O mascote ao lado do nome também volta para o Início.
+- **Início**: "Pra agora" sugere uma sensação para a hora do dia (manhã, tarde, noite; festa nas noites
+  de sexta e sábado) e toca na hora se ela já for favorita; "Tocando agora"; suas favoritas com a
+  próxima atualização; atalhos para a roleta, a toca e as novidades do último gênero que você buscou;
+  e as músicas que você guardou por último.
 - **Player**: tocar, pausar, pular, aleatório, repetir (desligado, tudo, esta faixa), volume e
   progresso. Clique numa faixa para tocar a partir dela. Funciona com o Spotify aberto no PC ou no
   celular (exige Premium). Na primeira vez, clique em **Autorizar no Spotify** na barra de baixo.
@@ -95,12 +102,20 @@ Acima de cada resultado:
 
 - **Criar playlist**: tudo o que apareceu vira uma playlist com o nome que você escolher (já vem
   preenchido, ex.: "Sensação: Foco profundo"). Se você já tem uma com esse nome, a sala pergunta
-  antes de trocar as músicas dela.
+  antes de trocar as músicas dela. **Atualizar sozinha** (todo dia, toda semana ou todo mês) a
+  transforma em favorita: ela vai para a barra e, a cada atualização, a mesma descoberta roda de novo
+  e as músicas são trocadas por uma seleção nova.
 - **Adicionar a uma playlist**: manda tudo para `Achados da Sala` (criada na primeira vez) ou para
   qualquer playlist sua. Músicas que já estão lá não se repetem.
 
 Cada música tem o próprio **Adicionar**, com as mesmas opções. Playlists que a sala remonta sozinha
 (a semanal de podcasts e a mistura) não aparecem ali, porque o que entrasse nelas se perderia.
+
+Na página de uma favorita: **Atualizar agora**, a frequência e **Tirar da barra** (a playlist
+continua no Spotify; só para de se atualizar). Até 8 favoritas por pessoa. As atualizações rodam
+dentro do painel, uma de cada vez e no máximo uma a cada 10 minutos, para poupar os limites da
+Spotify; enquanto a Spotify estiver com a busca pausada, elas esperam. Se o PC estava desligado na
+hora, a atualização roda assim que o painel voltar.
 
 O ⓘ de cada música mostra por que ela apareceu (BPM e energia medidos, o gênero ou ano sorteado,
 os pulos da toca, a data do lançamento) e tem **Não mostrar mais**: o artista some na hora e nunca
@@ -112,13 +127,15 @@ qualquer denominação (`RELIGIOUS_WORDS` em `spotify_assistant/discovery.py`).
 
 ### Estante curada (dono)
 
-| Playlist | Conteúdo | Atualiza |
+| Playlist | Conteúdo | Atualiza (padrão) |
 |---|---|---|
-| Tech Radar BR | episódios recentes de podcasts de tecnologia em PT-BR | toda semana (automático) |
-| Midnight in Monaco | jazz sofisticado | `setup` |
-| Deep Focus — Lo-Fi | lo-fi para programar (embaralhado) | `setup` |
-| The Classical Room | clássico, do contemplativo ao grandioso | `setup` |
-| The Study Collection | jazz + lo-fi + clássico, alternados | `setup` |
+| Tech Radar BR | episódios recentes de podcasts de tecnologia em PT-BR | toda semana |
+| Midnight in Monaco | jazz sofisticado | todo mês |
+| Deep Focus — Lo-Fi | lo-fi para programar (embaralhado) | todo mês |
+| The Classical Room | clássico, do contemplativo ao grandioso | todo mês |
+| The Study Collection | jazz + lo-fi + clássico, alternados | todo mês |
+
+As playlists curadas são as favoritas do dono; a frequência muda na página de cada uma.
 
 - **Atualizar agora / Refazer seleção** roda a curadoria com o log aparecendo ao vivo; **Ver prévia**
   mostra o resultado sem alterar nada.
@@ -134,8 +151,8 @@ painel respeita), o BPM é medido no seu PC e o texto livre é lido localmente.
 
 ## Sala para amigos
 
-Cada pessoa entra com o próprio Spotify e tem player, descobertas, Achados, bloqueados e cópias das
-playlists só dela ("Criar no meu Spotify"). Ninguém vê as playlists nem as buscas dos outros. O painel
+Cada pessoa entra com o próprio Spotify e tem player, descobertas, favoritas, Achados e bloqueados
+só dela. Ninguém vê as playlists nem as buscas dos outros. O painel
 roda no PC do dono e fica público pelo [Tailscale Funnel](https://tailscale.com/kb/1223/funnel), num
 endereço fixo `https://<pc>.<rede>.ts.net`.
 
@@ -153,8 +170,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-with-windows.ps1       
 powershell -ExecutionPolicy Bypass -File .\scripts\start-with-windows.ps1 -Remove   # desfaz
 ```
 
-Com isso ligado, `open-panel.cmd` só abre a sala no navegador. O `weekly` atualiza a Tech Radar de
-todos que a criaram.
+Com isso ligado, `open-panel.cmd` só abre a sala no navegador, e as favoritas se atualizam sozinhas.
 
 ## Linha de comando
 
@@ -164,17 +180,11 @@ python -m spotify_assistant check            # mostra o dono e quem está na sal
 python -m spotify_assistant setup --dry-run  # mostra o que seria criado, sem alterar nada
 python -m spotify_assistant setup            # cria/recria as 5 playlists
 python -m spotify_assistant setup --only "Midnight in Monaco"
-python -m spotify_assistant weekly           # atualiza só a Tech Radar BR
+python -m spotify_assistant refresh          # atualiza agora as favoritas no prazo, de todos
 ```
 
-`SALA_LANG` no `.env` (`en` ou `pt`) define o idioma da linha de comando e da tarefa semanal.
-
-Agende a atualização semanal (segunda às 09:00; se o PC estiver desligado, roda assim que ligar):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1
-powershell -ExecutionPolicy Bypass -File .\scripts\schedule-weekly.ps1 -Day Friday -Time 18:30
-```
+O `refresh` só é necessário se você não deixa o painel aberto (o painel faz isso sozinho).
+`SALA_LANG` no `.env` (`en` ou `pt`) define o idioma da linha de comando e das atualizações automáticas.
 
 ## Personalizar
 
@@ -194,6 +204,7 @@ Os textos da interface ficam em `spotify_assistant/static/i18n.js` (navegador) e
 
 - `users/<id>/token.json`: o token de acesso de cada pessoa. Não compartilhe.
 - `users/<id>/state.json`, `blocked.json`, `profile.json`: IDs das playlists, artistas bloqueados e nome.
+- `users/<id>/favorites.json`, `recent.json`: favoritas (receita, frequência, última atualização) e achados recentes.
 - `owner.txt`, `sessions.json`: quem é o dono da sala e as sessões dos navegadores.
 - `tempo-cache.json`, `spotify-matches.json`, `spotify-pauses.json`: BPMs medidos, faixas já
   localizadas no Spotify e as pausas de pedidos da Spotify.
