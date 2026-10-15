@@ -478,6 +478,29 @@ class NewsTest(FreshMatches):
         self.assertEqual(hunt.finds, [])
         self.assertIn("Nenhum lançamento", hunt.message)
 
+    def test_only_playlists_named_after_the_genre_count(self):
+        # Searching "new Lo-fi" brought a hardcore playlist that never says lo-fi (a real case: Cro-Mags).
+        deezer = FakeDeezer(
+            playlists={
+                "new Lo-fi": [{"id": "gta", "nb_tracks": 19, "title": "GTA Liberty City Hardcore"}],
+                "Lo-fi": [{"id": "chill", "nb_tracks": 90, "title": "chill lofi"},
+                          {"id": "study", "nb_tracks": 50, "title": "Lo Fi - New Playlist"}],
+            },
+            tracks={"gta": [song(1, "x", 10, "Cro-Mags")], "chill": [song(2, "x", 20, "Blue Wednesday")],
+                    "study": [song(3, "x", 30, "Arlos")]},
+        )
+        self.assertEqual({a["name"] for a in discovery.genre_artists(deezer, "Lo-fi")}, {"Blue Wednesday", "Arlos"})
+
+    def test_a_genre_counts_however_the_title_spells_it(self):
+        named = [("chill lofi", "Lo-fi"), ("Lo Fi - New Playlist", "Lo-fi"), ("R&B Hits", "R&B"),
+                 ("Pagodes 2026 - Lançamentos", "Pagode"), ("Pagodelícia", "Pagode"), ("Eletrônica 2026", "Eletrônica")]
+        for title, genre in named:
+            self.assertTrue(discovery.named_after(title, genre), title)
+        others = [("GTA Liberty City Hardcore", "Lo-fi"), ("Hip Hop 2000", "Rap"), ("Memórias", "Emo"),
+                  ("Lighthouse Family", "House"), ("Popular Brasil", "Pop")]
+        for title, genre in others:
+            self.assertFalse(discovery.named_after(title, genre), title)
+
 
 def sized_track(track_id, bpm, artist_id):
     track = dz_track(track_id, bpm, artist=f"Artista {artist_id}")

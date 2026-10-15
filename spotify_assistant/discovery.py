@@ -934,11 +934,23 @@ def roulette(
 # ---------- New releases
 
 
+def named_after(title: str, genre: str) -> bool:
+    """Whether a playlist's title names the genre, however it's spelled ("Lo Fi", "lofi" and "lo-fi" alike)."""
+    wanted = curation.normalize(genre).replace(" ", "")
+    words = curation.normalize(title).split()
+    if any("".join(words[i:j]) == wanted for i in range(len(words)) for j in range(i + 1, len(words) + 1)):
+        return True
+    # Like _mentions: from 4 letters on, a longer word counts too ("Pagodes", "Pagodelícia").
+    return len(wanted) >= 4 and any(word.startswith(wanted) for word in words)
+
+
 def genre_artists(dz: Deezer, genre: str, blocked: Collection[str] = frozenset()) -> list[dict]:
     """Artists that show up in the genre's playlists, including new-release ones."""
     artists: dict[int, dict] = {}
     for query in (f"{genre} new releases", f"{genre} lançamentos", f"new {genre}", genre):
-        playlists = [p for p in dz.search_playlists(query, limit=5) if p.get("nb_tracks", 0) >= 10][:2]
+        # The search matches loosely ("new Lo-fi" once brought a hardcore playlist): the title has to name the genre.
+        playlists = [p for p in dz.search_playlists(query, limit=5)
+                     if p.get("nb_tracks", 0) >= 10 and named_after(p.get("title", ""), genre)][:2]
         for playlist in playlists:
             listed = dz.playlist_tracks(playlist["id"])
             if religious_collection(playlist.get("title", ""), listed, playlist.get("user", {}).get("name", "")):
