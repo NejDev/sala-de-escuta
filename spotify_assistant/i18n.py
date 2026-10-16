@@ -350,6 +350,7 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "reason.song_hop": "Passo {hop} de {hops} a partir de “{title}”.",
         "reason.song_end": "Fim da trilha: {hops} músicas depois de “{title}”.",
         "err.rabbit_song": "Digite uma música para começar a descer a toca.",
+        "err.song_what": "Qual música? Faltou o artista ou o título.",
         # Achievements (the medal names come from medal_names.py, merged at the end of this file)
         "medal.game.how": "Ouviu música de {game}.",
         "title.marathoner": "Maratonista",
@@ -643,6 +644,7 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "reason.song_hop": "Step {hop} of {hops} from “{title}”.",
         "reason.song_end": "End of the trail: {hops} songs after “{title}”.",
         "err.rabbit_song": "Type a song to start down the rabbit hole.",
+        "err.song_what": "Which song? The artist or the title is missing.",
         # Achievements (the medal names come from medal_names.py, merged at the end of this file)
         "medal.game.how": "Played music from {game}.",
         "title.marathoner": "Marathoner",

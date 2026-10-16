@@ -5,8 +5,10 @@ are asked once every 30 days per track and remembered in data/lastfm-cache.json.
 """
 from __future__ import annotations
 
+import html
 import http.client
 import json
+import re
 import threading
 import time
 import unicodedata
@@ -27,6 +29,10 @@ LIMIT_PAUSE_S = 10 * 60  # after Last.fm says "rate limit exceeded"
 FRESH_S = 30 * 86400  # listener counts grow: ask again after a month
 MAX_ENTRIES = 100_000  # about 15 MB; Last.fm's terms cap stored data at 100 MB
 NOT_FOUND = 6
+MAX_TAGS = 5
+MAX_TAG_CHARS = 30
+NOISE_TAGS = {"seen live", "favorite", "favorites", "favourite", "favourites", "love", "loved", "awesome",
+              "beautiful", "my favorite", "albums i own"}  # tags about the listener, not the music
 KEY_ERRORS = {10, 26}  # invalid or suspended key
 RATE_LIMITED = 29
 
@@ -43,6 +49,15 @@ class Similar:
     title: str
     match: float  # 1.0 is the closest
     playcount: int
+
+
+@dataclass(frozen=True)
+class TrackInfo:
+    listeners: int
+    playcount: int
+    url: str | None
+    tags: tuple[str, ...]
+    summary: str  # the wiki's summary as plain text ("" when nobody wrote one)
 
 
 class LastFmError(RuntimeError):
@@ -88,6 +103,29 @@ class LastFm:
         except (TypeError, ValueError):
             count = 0
         return Listeners(count, track.get("url"))
+
+    def info(self, artist: str, title: str) -> TrackInfo | None:
+        """Listeners, plays, tags and the wiki's summary; None when Last.fm has no record of the track."""
+        data = self._ask("track.getInfo", artist, title)
+        if data is None:
+            return None
+        track = data.get("track")
+        if not isinstance(track, dict):
+            raise LastFmError("down")
+
+        def number(key: str) -> int:
+            try:
+                return int(track.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        names = [(tag.get("name") or "").strip() for tag in (track.get("toptags") or {}).get("tag") or []
+                 if isinstance(tag, dict)]
+        tags = tuple(name for name in names
+                     if name and len(name) <= MAX_TAG_CHARS and name.casefold() not in NOISE_TAGS)[:MAX_TAGS]
+        summary = ((track.get("wiki") or {}).get("summary") or "").split("<a ", 1)[0]  # drops "Read more on Last.fm"
+        summary = html.unescape(re.sub(r"<[^>]+>", "", summary)).strip()
+        return TrackInfo(number("listeners"), number("playcount"), track.get("url"), tags, summary)
 
     def similar(self, artist: str, title: str, limit: int = 50) -> list[Similar] | None:
         """Tracks like this one, closest first; None when Last.fm has no record of the track."""
@@ -203,6 +241,10 @@ class ListenerCounts:
     def similar(self, artist: str, title: str) -> list[Similar] | None:
         """Tracks like this one, straight from Last.fm (a rabbit hole asks about each song once)."""
         return self.client.similar(artist, title)
+
+    def info(self, artist: str, title: str) -> TrackInfo | None:
+        """What Last.fm says about a track, straight from it (the panel keeps the answer while it runs)."""
+        return self.client.info(artist, title)
 
     def cached(self, artist: str, title: str) -> Listeners | None:
         """What the cache holds, however old; None when the track was never asked about. Never asks Last.fm."""

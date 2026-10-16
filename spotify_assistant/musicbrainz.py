@@ -1,4 +1,4 @@
-"""MusicBrainz: who is in a band (members and subunits) and their Spotify profiles.
+"""MusicBrainz: who is in a band (members and subunits) and their Spotify profiles; who wrote and produced a song.
 
 Spotify doesn't say who is in a group; MusicBrainz (open data, no key) does, and it often
 links each artist to their Spotify profile, which avoids guessing by name. Its rules: at most
@@ -108,6 +108,46 @@ class MusicBrainz:
         """Name, Spotify id and, for a band, its members and subunits."""
         return self._cached(f"artist:{mbid}", lambda: parse_artist(
             self._fetch(f"{API}/artist/{mbid}?inc=artist-rels+url-rels&fmt=json")))
+
+
+    def credits(self, isrc: str) -> dict | None:
+        """Who wrote, produced and mixed a recording, found by its ISRC; None when MusicBrainz doesn't know it."""
+        def load() -> dict | None:
+            try:
+                found = self._fetch(f"{API}/isrc/{isrc}?fmt=json")
+            except MusicBrainzError as err:
+                if "404" in str(err):
+                    return None
+                raise
+            recordings = found.get("recordings") or []
+            if not recordings:
+                return None
+            mbid = recordings[0]["id"]
+            return parse_credits(mbid, self._fetch(
+                f"{API}/recording/{mbid}?inc=artist-rels+work-rels+work-level-rels&fmt=json"))
+
+        return self._cached(f"credits:{isrc}", load)
+
+
+# Relations that say who made a song: on the recording (producer, mix) or on the work it performs (the rest).
+CREDIT_ROLES = {"composer": "music", "writer": "music", "lyricist": "lyrics", "producer": "produced", "mix": "mixed"}
+
+
+def parse_credits(mbid: str, data: dict) -> dict:
+    credits: dict = {"recording": mbid, "music": [], "lyrics": [], "produced": [], "mixed": []}
+
+    def take(relations: list | None) -> None:
+        for relation in relations or []:
+            role = CREDIT_ROLES.get(relation.get("type"))
+            name = (relation.get("artist") or {}).get("name")
+            if role and name and name not in credits[role]:
+                credits[role].append(name)
+
+    take(data.get("relations"))
+    for relation in data.get("relations") or []:
+        if relation.get("target-type") == "work":
+            take((relation.get("work") or {}).get("relations"))
+    return credits
 
 
 def latin_name(name: str, sort_name: str) -> str:

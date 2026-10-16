@@ -101,6 +101,19 @@ class ClientTest(unittest.TestCase):
             self.assertEqual(counts.similar("Miles Davis", "So What"), [lastfm.Similar("John Coltrane", "Naima", 1.0, 5)])
         self.assertEqual(len(server.urls), 2)
 
+    def test_what_last_fm_says_about_a_track(self):
+        payload = {"track": {"name": "So What", "url": PAGE, "listeners": "1234", "playcount": "56789",
+                             "toptags": {"tag": [{"name": "jazz"}, {"name": "seen live"}, {"name": "Modal Jazz"},
+                                                 {"name": "favorites"}, {"name": "x" * 40}]},
+                             "wiki": {"summary": "Opens &quot;Kind of Blue&quot;.\n <a href=\"" + PAGE + "\">Read more on Last.fm</a>. User-contributed text."}}}
+        server = LastFmServer((payload, 200))
+        found = client(server).info("Miles Davis", "So What")
+        self.assertEqual(found, lastfm.TrackInfo(1234, 56789, PAGE, ("jazz", "Modal Jazz"), 'Opens "Kind of Blue".'))
+        self.assertIn("method=track.getInfo", server.urls[0])
+        self.assertIsNone(client(LastFmServer(({"error": 6}, 200))).info("X", "Y"))
+        bare = client(LastFmServer(({"track": {"url": PAGE}}, 200))).info("X", "Y")
+        self.assertEqual(bare, lastfm.TrackInfo(0, 0, PAGE, (), ""))
+
     def test_unexpected_answers_are_down(self):
         for payload in (b"<html>maintenance</html>", [1, 2], {"something": "else"}):
             with self.subTest(payload=payload), self.assertRaises(lastfm.LastFmError) as caught:

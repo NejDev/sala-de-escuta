@@ -24,7 +24,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import accounts, achievements, artists, config, curation, discovery, favorites, i18n, lastfm, reviews, social, tempo
+from . import (accounts, achievements, artists, config, curation, discovery, favorites, i18n, lastfm, lyrics, reviews,
+               social, tempo)
 from .api import Spotify, SpotifyError, gate
 from .auth import (
     LIBRARY_SCOPES, PLAYER_SCOPES, SOCIAL_SCOPES, TASTE_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes,
@@ -37,7 +38,7 @@ from .deezer import Deezer, DeezerError
 from .discovery import Hunt
 from .i18n import t
 from .lastfm import LastFmError
-from .musicbrainz import MusicBrainz
+from .musicbrainz import MusicBrainz, MusicBrainzError
 from .playlists import owned_playlists, run
 from .views import album_view, item_row, pick_image
 
@@ -70,6 +71,8 @@ SAVE_MAX_TRACKS = 500
 ITEMS_PER_ADD = 100  # Spotify's limit per request
 FEELING_MAX_CHARS = 60
 SONG_MAX_CHARS = 200  # a song for the rabbit hole: what was typed, or its artist and title
+ISRC_LIKE = re.compile(r"[A-Z]{2}[A-Z0-9]{3}\d{7}")
+SONG_INFO_KEPT = 500  # what Last.fm said about the latest songs, kept in memory
 REPEAT_MODES = ("off", "context", "track")
 PENDING_LOGIN_TTL_S = 15 * 60
 
@@ -211,6 +214,14 @@ def listener_cap(body: dict, counts: lastfm.ListenerCounts | None) -> discovery.
     return discovery.ListenerCap(value, counts.get)
 
 
+def song_query(query: dict, *keys: str) -> dict:
+    """A song's fields from a query string; artist and title are required, the album may be empty."""
+    fields = {key: " ".join(str(query.get(key) or "").split()) for key in keys}
+    if not fields.get("artist") or not fields.get("title") or any(len(v) > SONG_MAX_CHARS for v in fields.values()):
+        raise UserError(t("err.song_what"))
+    return fields
+
+
 def song_from(body: dict) -> dict | None:
     """The song a rabbit hole starts from when it came from the screen ({"artist", "title"}), or None."""
     song = body.get("song")
@@ -265,6 +276,8 @@ class App:
         self.sessions = accounts.Sessions()
         self.deezer = Deezer()
         self.musicbrainz = MusicBrainz()
+        self.lyrics = lyrics.Lyrics(lyrics.Lrclib())
+        self._song_info: dict[str, lastfm.TrackInfo | None] = {}
         # Song listeners for the discoveries' filter: only when the room has a Last.fm key.
         self.listener_counts = (lastfm.ListenerCounts(lastfm.LastFm(settings.lastfm_key))
                                 if settings.lastfm_key else None)
@@ -462,6 +475,46 @@ class App:
             "context_uri": (data.get("context") or {}).get("uri"),
             "device": {"name": device.get("name"), "volume": device.get("volume_percent")},
         }
+
+    # The song playing: its lyrics and what's known about it
+
+    def song_lyrics(self, query: dict) -> dict:
+        track_id = query.get("id", "")
+        if not lyrics.TRACK_ID.fullmatch(track_id):
+            raise UserError(t("err.song_what"))
+        song = song_query(query, "artist", "title", "album")
+        try:
+            duration_ms = int(query.get("duration_ms") or 0) or None
+        except ValueError:
+            duration_ms = None
+        try:
+            return self.lyrics.get(track_id, song["artist"], song["title"], song["album"], duration_ms)
+        except lyrics.LyricsError as err:
+            log.warning("Lyrics: %s", err.kind)
+            return {"status": err.kind}
+
+    def song_about(self, query: dict) -> dict:
+        """Last.fm's numbers, tags and summary (with a key) and who wrote and produced it (MusicBrainz, by ISRC)."""
+        song = song_query(query, "artist", "title")
+        info = None
+        if self.listener_counts:
+            key = lastfm.cache_key(song["artist"], song["title"])
+            try:
+                if key not in self._song_info:
+                    self._song_info[key] = self.listener_counts.info(song["artist"], song["title"])
+                    while len(self._song_info) > SONG_INFO_KEPT:
+                        self._song_info.pop(next(iter(self._song_info)))
+                info = self._song_info[key]
+            except LastFmError as err:
+                log.warning("About a song: Last.fm %s", err.kind)
+        credits = None
+        isrc = query.get("isrc", "").strip().upper()
+        if ISRC_LIKE.fullmatch(isrc):
+            try:
+                credits = self.musicbrainz.credits(isrc)
+            except MusicBrainzError as err:
+                log.warning("About a song: MusicBrainz %s", err)
+        return {"lastfm": {**asdict(info), "tags": list(info.tags)} if info else None, "credits": credits}
 
     @staticmethod
     def _liked(user: Profile, sp: Spotify, uri: str) -> bool | None:
@@ -1651,6 +1704,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.player(user)
         if method == "POST" and path == "/api/player":
             return app.player_action(user, body)
+        if method == "GET" and path == "/api/lyrics":
+            return app.song_lyrics(query)
+        if method == "GET" and path == "/api/song":
+            return app.song_about(query)
         if method == "GET" and path == "/api/search":
             return app.search(user, query.get("q", ""), query.get("kind", "track"))
         if method == "POST" and path == "/api/jobs":

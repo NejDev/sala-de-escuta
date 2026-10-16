@@ -2801,6 +2801,314 @@ function lineClass(line) {
   return "line";
 }
 
+// ---------- The song playing: synced lyrics (LRCLIB), what's known about it, and where to go from it
+
+const LYRICS_LEAD_MS = 200;  // a line lights up a moment before it's sung
+const canTranslate = () => "Translator" in self && "LanguageDetector" in self;  // Chrome's built-in translator
+
+function toggleSong() {
+  if (state.song?.open) closeSong();
+  else openSong();
+}
+
+function openSong() {
+  state.song = { ...(state.song || {}), open: true, tab: state.song?.tab || "lyrics", follow: true, current: -1 };
+  if (!$("#song-panel")) document.body.append(h("aside", { class: "song-panel", id: "song-panel", "aria-label": t("song.label") }));
+  document.body.classList.add("has-song");
+  $("#btn-lyrics").setAttribute("aria-pressed", "true");
+  clearInterval(state.songTimer);
+  state.songTimer = setInterval(syncLyrics, 200);
+  loadSong(true);
+}
+
+function closeSong() {
+  if (!state.song?.open) return;
+  state.song.open = false;
+  clearInterval(state.songTimer);
+  $("#song-panel")?.remove();
+  document.body.classList.remove("has-song");
+  $("#btn-lyrics").setAttribute("aria-pressed", "false");
+}
+
+/** Follows the player: a new song brings its lyrics and what's known about it (asked once per song). */
+function loadSong(render = false) {
+  const song = state.song;
+  if (!song?.open) return;
+  const item = state.player?.item || null;
+  if ((item?.uri || null) !== (song.uri ?? null)) {
+    Object.assign(song, { uri: item?.uri || null, item, lyrics: null, about: null, translation: null, follow: true,
+      current: -1 });
+    if (item?.type === "track" && item.artists?.length) {
+      fetchLyrics(song.uri);
+      fetchAbout(song.uri);
+    }
+    render = true;
+  }
+  if (render) renderSong();
+}
+
+async function fetchLyrics(uri) {
+  const item = state.song.item;
+  const params = new URLSearchParams({ id: uri.split(":")[2], artist: item.artists[0], title: item.title,
+    album: item.album || "", duration_ms: String(item.duration_ms || "") });
+  let lyrics;
+  try {
+    lyrics = await api(`/api/lyrics?${params}`);
+  } catch (error) {
+    lyrics = { status: "down", message: error.message };
+  }
+  if (state.song?.uri !== uri) return;  // another song started meanwhile
+  Object.assign(state.song, { lyrics, current: -1 });
+  renderSong();
+}
+
+async function fetchAbout(uri) {
+  const item = state.song.item;
+  const params = new URLSearchParams({ artist: item.artists[0], title: item.title, isrc: item.isrc || "" });
+  let about;
+  try {
+    about = await api(`/api/song?${params}`);
+  } catch {
+    about = { lastfm: null, credits: null };
+  }
+  if (state.song?.uri !== uri) return;
+  state.song.about = about;
+  if (state.song.tab === "about") renderSong();
+}
+
+function retryLyrics() {
+  state.song.lyrics = null;
+  renderSong();
+  fetchLyrics(state.song.uri);
+}
+
+function renderSong() {
+  const song = state.song;
+  const panel = $("#song-panel");
+  if (!song?.open || !panel) return;
+  const item = song.item;
+  const tab = (key, label) => h("button", {
+    class: "song-tab",
+    type: "button",
+    role: "tab",
+    "aria-selected": String(song.tab === key),
+    onclick: () => { Object.assign(song, { tab: key, current: -1, follow: true }); renderSong(); },
+  }, label);
+  const synced = song.tab === "lyrics" && song.lyrics?.status === "synced";
+  panel.replaceChildren(...[
+    h("header", { class: "song-head" },
+      item?.image ? h("img", { class: "song-art", src: item.image, alt: "" }) : h("span", { class: "song-art" }),
+      h("div", { class: "song-text" },
+        h("p", { class: "song-title" }, item ? item.title : t("player.nothing")),
+        item && h("p", { class: "song-artist" }, item.subtitle)),
+      h("button", { class: "icon-button", type: "button", "aria-label": t("common.close"), title: t("common.close"),
+        onclick: () => { closeSong(); $("#btn-lyrics").focus(); } }, icon(CLOSE_ICON))),
+    item?.type === "track" && h("div", { class: "song-tabs", role: "tablist" },
+      tab("lyrics", t("song.tab_lyrics")), tab("about", t("song.tab_about"))),
+    h("div", { class: "song-body", id: "song-body" }, song.tab === "about" ? songAbout() : songLyrics()),
+    synced && h("button", { class: "ghost-button is-small song-follow", id: "song-follow", type: "button",
+      hidden: song.follow, onclick: followLyrics }, t("song.follow")),
+  ].filter(Boolean));
+  if (synced) {
+    // Scrolling by hand stops the lyrics from following the song, until "back to the current line".
+    const stop = () => {
+      if (!song.follow) return;
+      song.follow = false;
+      $("#song-follow").hidden = false;
+    };
+    $("#song-body").addEventListener("wheel", stop, { passive: true });
+    $("#song-body").addEventListener("touchmove", stop, { passive: true });
+    syncLyrics();
+  }
+}
+
+function songNote(text) {
+  return h("p", { class: "song-note" }, text);
+}
+
+function songLyrics() {
+  const song = state.song;
+  const item = song.item;
+  if (!item) return songNote(t("song.nothing"));
+  if (item.type !== "track") return songNote(t("song.episode"));
+  const lyrics = song.lyrics;
+  if (!lyrics) return songNote(t("common.loading"));
+  const credit = h("p", { class: "song-credit" },
+    h("a", { class: "text-button", href: "https://lrclib.net/", target: "_blank", rel: "noopener" }, t("song.credit")));
+  const retry = h("button", { class: "text-button", type: "button", onclick: retryLyrics }, t("song.retry"));
+  const translated = song.translation?.state === "done" ? song.translation.lines : [];
+  const under = (index) => translated[index] && h("span", { class: "lyric-translation" }, translated[index]);
+  if (lyrics.status === "synced") {
+    return [
+      translateBar(),
+      h("ol", { class: "lyrics" }, lyrics.lines.map(([ms, text], index) => h("li", null,
+        h("button", { class: "lyric-line", type: "button", title: t("song.seek"), onclick: () => seekLyrics(ms) },
+          h("span", null, text || "♪"), under(index))))),
+      credit,
+    ];
+  }
+  if (lyrics.status === "plain") {
+    return [
+      songNote(t("song.plain")),
+      translateBar(),
+      h("div", { class: "lyrics is-plain" }, lyrics.text.split("\n").map((line, index) =>
+        h("p", { class: "lyric-line" }, h("span", null, line || "\u00a0"), under(index)))),
+      credit,
+    ];
+  }
+  if (lyrics.status === "instrumental") return [songNote(t("song.instrumental")), credit];
+  if (lyrics.status === "missing") {
+    const query = encodeURIComponent(`${item.artists[0]} ${item.title}`);
+    return [
+      songNote(t("song.missing")),
+      h("a", { class: "text-button", href: `https://genius.com/search?q=${query}`, target: "_blank", rel: "noopener" },
+        t("song.search_lyrics")),
+      credit,
+    ];
+  }
+  return [songNote(lyrics.status === "busy" ? t("song.busy") : lyrics.message || t("song.down")), retry];
+}
+
+function seekLyrics(ms) {
+  Object.assign(state.song, { follow: true, current: -1 });
+  const follow = $("#song-follow");
+  if (follow) follow.hidden = true;
+  command({ action: "seek", value: ms }, () => syncProgress(ms));
+  syncLyrics();
+}
+
+function followLyrics() {
+  Object.assign(state.song, { follow: true, current: -1 });
+  $("#song-follow").hidden = true;
+  syncLyrics();
+}
+
+/** Lights the line being sung (and dims the ones already sung); keeps it in sight while following. */
+function syncLyrics() {
+  const song = state.song;
+  if (!song?.open || song.tab !== "lyrics" || song.lyrics?.status !== "synced") return;
+  const lines = song.lyrics.lines;
+  const now = position() + LYRICS_LEAD_MS;
+  let index = -1;
+  while (index + 1 < lines.length && lines[index + 1][0] <= now) index += 1;
+  if (index === song.current) return;
+  song.current = index;
+  const items = document.querySelectorAll("#song-body .lyric-line");
+  items.forEach((line, i) => {
+    line.classList.toggle("is-now", i === index);
+    line.classList.toggle("is-past", i < index);
+  });
+  const body = $("#song-body");
+  const line = items[Math.max(index, 0)];
+  if (song.follow && body && line) {
+    const top = line.offsetTop - body.clientHeight * 0.38 + line.offsetHeight / 2;
+    const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    body.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "auto" });
+  }
+}
+
+function languageName(code) {
+  try {
+    return new Intl.DisplayNames([LOCALE], { type: "language" }).of(code);
+  } catch {
+    return code;
+  }
+}
+
+function translateBar() {
+  if (!canTranslate()) return null;
+  const translation = state.song.translation;
+  if (translation?.state === "working") return songNote(t("song.translating"));
+  if (translation?.state === "done") {
+    return h("p", { class: "song-note" }, t("song.translated", { language: languageName(translation.from) }), " ",
+      h("button", { class: "text-button", type: "button", onclick: () => { state.song.translation = null; renderSong(); } },
+        t("song.untranslate")));
+  }
+  if (translation?.state === "same") return songNote(t("song.same_language"));
+  if (translation?.state === "unavailable") return songNote(t("song.cant_translate"));
+  return h("button", { class: "ghost-button is-small song-translate", type: "button", onclick: translateLyrics },
+    t("song.translate"));
+}
+
+/** Line by line, on this device (the browser's own translator: nothing leaves it). */
+async function translateLyrics() {
+  const song = state.song;
+  const { uri, lyrics } = song;
+  const lines = lyrics.status === "synced" ? lyrics.lines.map(([, text]) => text) : lyrics.text.split("\n");
+  song.translation = { state: "working" };
+  renderSong();
+  let result;
+  try {
+    const detector = await LanguageDetector.create();
+    const [best] = await detector.detect(lines.filter(Boolean).join("\n"));
+    const from = best?.detectedLanguage;
+    if (!from || from === "und") {
+      result = { state: "unavailable" };
+    } else if (from.split("-")[0] === LANG) {
+      result = { state: "same" };
+    } else if (await Translator.availability({ sourceLanguage: from, targetLanguage: LANG }) === "unavailable") {
+      result = { state: "unavailable" };
+    } else {
+      const translator = await Translator.create({ sourceLanguage: from, targetLanguage: LANG });
+      const out = [];
+      for (const line of lines) out.push(line.trim() ? await translator.translate(line) : "");
+      result = { state: "done", lines: out, from };
+    }
+  } catch {
+    result = { state: "unavailable" };
+  }
+  if (state.song?.uri !== uri) return;
+  Object.assign(song, { translation: result, current: -1 });
+  renderSong();
+}
+
+function songAbout() {
+  const song = state.song;
+  const item = song.item;
+  if (!item) return songNote(t("song.nothing"));
+  const actions = h("div", { class: "song-actions" },
+    item.artists?.length > 0 && h("button", { class: "ghost-button is-small", type: "button",
+      onclick: () => rabbitFrom(item.artists[0], item.title) }, t("find.rabbit")),
+    item.album_id && h("button", { class: "ghost-button is-small", type: "button", onclick: () => openReview(item.album_id) },
+      t("player.review")));
+  const about = song.about;
+  if (!about) return [songNote(t("common.loading")), actions];
+  const { lastfm, credits } = about;
+  const roles = [["music", "song.music"], ["lyrics", "song.lyrics_by"], ["produced", "song.produced"], ["mixed", "song.mixed"]]
+    .filter(([key]) => credits?.[key]?.length);
+  const counts = lastfm && t("song.listeners", { listeners: compactNumber.format(lastfm.listeners),
+    plays: compactNumber.format(lastfm.playcount) });
+  return [
+    item.album && h("p", { class: "meta" }, t("song.album", { name: item.album })),
+    lastfm && h("section", { class: "song-section" },
+      // Last.fm's terms: its numbers always come with its name and a link.
+      lastfm.url ? h("a", { class: "text-button", href: lastfm.url, target: "_blank", rel: "noopener" }, counts)
+        : h("p", { class: "meta" }, counts),
+      lastfm.tags.length > 0 && h("p", { class: "song-label" }, t("song.tags")),
+      lastfm.tags.length > 0 && h("div", { class: "genre-row" }, lastfm.tags.map((tag) =>
+        h("button", { class: "genre-chip", type: "button", onclick: () => rouletteFrom(tag) }, tag))),
+      lastfm.summary && h("p", { class: "song-summary" }, lastfm.summary, " ",
+        lastfm.url && h("a", { class: "text-button", href: lastfm.url, target: "_blank", rel: "noopener" },
+          t("song.read_more")))),
+    roles.length > 0 && h("section", { class: "song-section" },
+      h("h3", { class: "song-label" }, t("song.credits")),
+      h("dl", { class: "song-credits" }, roles.flatMap(([key, label]) =>
+        [h("dt", null, t(label)), h("dd", null, listFormat.format(credits[key]))])),
+      h("a", { class: "text-button", href: `https://musicbrainz.org/recording/${encodeURIComponent(credits.recording)}`,
+        target: "_blank", rel: "noopener" }, t("song.credits_source"))),
+    !lastfm && !roles.length && songNote(t("song.unknown")),
+    actions,
+  ];
+}
+
+/** A Last.fm tag becomes the roulette's genre (the person spins when they want). */
+async function rouletteFrom(genre) {
+  state.filters.rouletteGenre = genre;
+  saveFilters();
+  if (state.view === "discover") renderIntro();
+  else await go("discover");
+}
+
 // ---------- Player
 
 async function refreshPlayer() {
@@ -2867,6 +3175,8 @@ function renderPlayer() {
   like.setAttribute("aria-label", likeLabel);
   like.title = likeLabel;
   $("#btn-review").hidden = !item?.album_id;
+  $("#btn-lyrics").hidden = !item;
+  loadSong();
   const repeat = $("#btn-repeat");
   const mode = player.repeat || "off";
   repeat.dataset.mode = mode;
@@ -2980,6 +3290,7 @@ function bindPlayer() {
   $("#btn-play").addEventListener("click", togglePlay);
   $("#btn-like").addEventListener("click", toggleLike);
   $("#btn-review").addEventListener("click", () => state.player?.item?.album_id && openReview(state.player.item.album_id));
+  $("#btn-lyrics").addEventListener("click", toggleSong);
   $("#btn-prev").addEventListener("click", () => command({ action: "previous" }));
   $("#btn-next").addEventListener("click", () => command({ action: "next" }));
   $("#btn-shuffle").addEventListener("click", () => {
@@ -3031,6 +3342,7 @@ function bindGlobal() {
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "Escape") {
       if (state.picker) closePicker();
+      else if (state.song?.open && !document.querySelector("dialog[open]")) closeSong();
       else $("#console").hidden = true;
       return;
     }

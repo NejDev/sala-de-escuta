@@ -67,6 +67,51 @@ class MusicBrainzTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
 
 
+# Shape of a real recording lookup (inc=artist-rels+work-rels+work-level-rels), trimmed.
+RECORDING = {
+    "id": "teen-spirit",
+    "relations": [
+        {"type": "engineer", "target-type": "artist", "artist": {"name": "Butch Vig"}},
+        {"type": "mix", "target-type": "artist", "artist": {"name": "Andy Wallace"}},
+        {"type": "producer", "target-type": "artist", "artist": {"name": "Nirvana"}},
+        {"type": "producer", "target-type": "artist", "artist": {"name": "Butch Vig"}},
+        {"type": "vocal", "target-type": "artist", "artist": {"name": "Kurt Cobain"}},
+        {"type": "performance", "target-type": "work", "work": {"title": "Smells Like Teen Spirit", "relations": [
+            {"type": "composer", "target-type": "artist", "artist": {"name": "Kurt Cobain"}},
+            {"type": "composer", "target-type": "artist", "artist": {"name": "Dave Grohl"}},
+            {"type": "writer", "target-type": "artist", "artist": {"name": "Krist Novoselic"}},
+            {"type": "lyricist", "target-type": "artist", "artist": {"name": "Kurt Cobain"}},
+            {"type": "based on", "target-type": "work", "work": {"title": "Other"}},
+        ]}},
+    ],
+}
+
+
+class CreditsTest(unittest.TestCase):
+    setUp = MusicBrainzTest.setUp
+
+    def test_who_wrote_and_produced_a_recording(self):
+        answers = {"isrc/USGF19942501": {"recordings": [{"id": "teen-spirit"}]}, "recording/teen-spirit": RECORDING}
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            return next(value for key, value in answers.items() if f"/{key}?" in url)
+
+        found = musicbrainz.MusicBrainz(fetch).credits("USGF19942501")
+        self.assertEqual(found, {"recording": "teen-spirit", "music": ["Kurt Cobain", "Dave Grohl", "Krist Novoselic"],
+                                 "lyrics": ["Kurt Cobain"], "produced": ["Nirvana", "Butch Vig"], "mixed": ["Andy Wallace"]})
+        self.assertIn("inc=artist-rels+work-rels+work-level-rels", calls[1])
+        musicbrainz.MusicBrainz(fetch).credits("USGF19942501")
+        self.assertEqual(len(calls), 2)  # kept on disk
+
+    def test_an_isrc_musicbrainz_doesnt_know(self):
+        def fetch(url):
+            raise musicbrainz.MusicBrainzError("HTTP 404")
+        self.assertIsNone(musicbrainz.MusicBrainz(fetch).credits("BRXXX0000001"))
+        self.assertIsNone(musicbrainz.MusicBrainz(lambda url: {"recordings": []}).credits("BRXXX0000002"))
+
+
 def album(album_id, name, date, kind="album", artist="TWICE", images=()):
     return {"id": album_id, "uri": f"spotify:album:{album_id}", "name": name, "release_date": date,
             "album_type": kind, "artists": [{"name": artist}], "images": list(images), "total_tracks": 5}

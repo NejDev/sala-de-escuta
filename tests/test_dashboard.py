@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import achievements, auth, config, dashboard, favorites, i18n, social
+from spotify_assistant import achievements, auth, config, dashboard, favorites, i18n, lastfm, lyrics, social
 from spotify_assistant.config import Settings
 from spotify_assistant.lastfm import LastFmError, Listeners
 
@@ -154,6 +154,11 @@ class FakeCounts:
 
     def similar(self, artist, title):
         return None
+
+    def info(self, artist, title):
+        if title == "Sumida":
+            return None
+        return lastfm.TrackInfo(1234, 56789, "https://www.last.fm/x", ("jazz", "modal"), "Opens the album.")
 
     def save(self):
         self.saved += 1
@@ -664,6 +669,44 @@ class ServerTest(unittest.TestCase):
         self.fake.playing["item"] = {"type": "episode", "uri": "spotify:episode:9", "name": "Ep", "show": {"name": "Pod"}}
         item = json.loads(self.request("/api/player")[1])["item"]
         self.assertEqual((item["artists"], item["album"], item["isrc"]), ([], None, None))
+
+    def test_lyrics_of_a_track(self):
+        asked = []
+
+        class Library:
+            def get(self, track_id, artist, title, album, duration_ms):
+                asked.append((track_id, artist, title, album, duration_ms))
+                if title == "Ocupada":
+                    raise lyrics.LyricsError("busy")
+                return {"status": "synced", "lines": [[1000, "Primeira"]]}
+
+        self.server.app.lyrics = Library()
+        song = "id=abc123&artist=Miles%20Davis&title=So%20What&album=Kind%20of%20Blue&duration_ms=562000"
+        status, raw = self.request(f"/api/lyrics?{song}")
+        self.assertEqual((status, json.loads(raw)["lines"]), (200, [[1000, "Primeira"]]))
+        self.assertEqual(asked[-1], ("abc123", "Miles Davis", "So What", "Kind of Blue", 562000))
+        self.assertEqual(json.loads(self.request("/api/lyrics?id=abc&artist=A&title=Ocupada")[1]), {"status": "busy"})
+        self.assertEqual(asked[-1][3:], ("", None))  # no album, no length
+        for bad in ("id=../x&artist=A&title=B", "id=abc&artist=&title=B", "id=abc&artist=A&title=" + "x" * 201):
+            with self.subTest(bad=bad):
+                self.assertEqual(self.request(f"/api/lyrics?{bad}")[0], 400)
+
+    def test_what_is_known_about_a_song(self):
+        credits = {"recording": "r", "music": ["Miles Davis"], "lyrics": [], "produced": ["Teo Macero"], "mixed": []}
+        looked_up = []
+        self.server.app.musicbrainz = mock.Mock(credits=lambda isrc: looked_up.append(isrc) or credits)
+        about = lambda query: json.loads(self.request(f"/api/song?{query}")[1])
+        found = about("artist=Miles%20Davis&title=So%20What&isrc=ussm15900113")
+        self.assertEqual(found, {"lastfm": None, "credits": credits})  # this room has no Last.fm key
+        self.assertEqual(looked_up, ["USSM15900113"])
+        self.server.app.listener_counts = FakeCounts()
+        found = about("artist=Miles%20Davis&title=So%20What&isrc=nonsense")
+        self.assertEqual(found["lastfm"], {"listeners": 1234, "playcount": 56789, "url": "https://www.last.fm/x",
+                                           "tags": ["jazz", "modal"], "summary": "Opens the album."})
+        self.assertIsNone(found["credits"])
+        self.assertEqual(looked_up, ["USSM15900113"])  # a malformed ISRC isn't looked up
+        self.assertEqual(about("artist=X&title=Sumida"), {"lastfm": None, "credits": None})
+        self.assertEqual(self.request("/api/song?artist=&title=Y")[0], 400)
 
     def test_player_keeps_working_without_the_library_permission(self):
         token = {"scope": auth.PLAYER_SCOPES + " playlist-read-private", "access_token": "x", "refresh_token": "y",
