@@ -477,6 +477,25 @@ class CloseMonthTest(Room):
         months = achievements.view("ana", False, no_fans, now=at(month=11, day=1))["months"]
         self.assertEqual([month["month"] for month in months], ["2026-10"])
 
+    def test_past_months_show_only_current_participants(self):
+        self.join("paulo", "ana")
+        room = {"since": "2026-08", "months": {
+            "2026-09": {"marathoner": {"users": ["ana"], "value": 300}, "night-owl": {"users": ["ana", "paulo"], "value": 80},
+                        "duo": {"users": ["ana", "paulo"], "value": 12}},
+            "2026-08": {"explorer": {"users": ["ana"], "value": 9}}}}
+        (self.data / "achievements.json").write_text(json.dumps(room), encoding="utf-8")
+
+        def shown():
+            months = achievements.view("paulo", False, no_fans, now=at())["months"]
+            return {month["month"]: {title["id"]: title["holders"] for title in month["titles"]} for month in months}
+
+        self.assertEqual(shown(), {"2026-09": {"marathoner": ["Ana"], "night-owl": ["Ana", "Paulo"],
+                                               "duo": ["Ana", "Paulo"]},
+                                   "2026-08": {"explorer": ["Ana"]}})
+        achievements.set_on("ana", False)
+        self.assertEqual(shown(), {"2026-09": {"night-owl": ["Paulo"]}})
+        self.assertEqual(json.loads((self.data / "achievements.json").read_text(encoding="utf-8")), room)  # kept
+
     def test_only_participants_compete(self):
         self.join("paulo", "ana")
         achievements.close_month({"paulo": [], "ana": []}, no_fans, False, now=at(day=20))  # sets the first month

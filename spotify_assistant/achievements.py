@@ -495,13 +495,23 @@ def _titles_view(titles: dict[str, dict]) -> list[dict]:
     return shown
 
 
-def _past_months() -> list[dict]:
+def _past_months(people: set[str]) -> list[dict]:
+    """Closed months as the current participants see them: someone who left isn't listed (the file keeps them for a
+    return) and a duo shows only while both are in."""
     try:
         months = _read_room()["months"]
     except Unreadable:
         return []
-    closed = [(month, titles) for month, titles in sorted(months.items(), reverse=True) if titles]
-    return [{"month": month, "titles": _titles_view(titles)} for month, titles in closed[:MONTHS_SHOWN]]
+    shown = []
+    for month, titles in sorted(months.items(), reverse=True):
+        kept = {}
+        for title, held in titles.items():
+            users = [user_id for user_id in held["users"] if user_id in people]
+            if users and (title != "duo" or len(users) == len(held["users"])):
+                kept[title] = {**held, "users": users}
+        if kept:
+            shown.append({"month": month, "titles": _titles_view(kept)})
+    return shown[:MONTHS_SHOWN]
 
 
 def note(user_id: str, event: str, lastfm: bool = False, **detail) -> list[str]:
@@ -637,5 +647,5 @@ def view(viewer: str, lastfm: bool, fans, now: float | None = None) -> dict:
         "people": [person(user_id, False) for user_id in datas if user_id != viewer],
         "race": _titles_view(monthly.standings(monthly.month_of(now), {user_id: social.plays(user_id) for user_id in datas},
                                                {user_id: data["stats"]["artists"] for user_id, data in datas.items()}, fans)),
-        "months": _past_months(),
+        "months": _past_months(set(datas)),
     }
