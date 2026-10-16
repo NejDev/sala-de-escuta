@@ -1001,7 +1001,8 @@ function friendsView() {
     achievementsSwitch(),
     h("p", { class: "meta friends-me" }, t("friends.me", { count: data.me.plays_7d }), " ", t("friends.updates"), " ",
       h("button", { class: "text-button", type: "button", onclick: leaveFriends },
-        t(state.confirmLeave ? "friends.leave_confirm" : "friends.leave"))),
+        t(!state.confirmLeave ? "friends.leave"
+          : state.overview?.achievements?.on ? "friends.leave_confirm_medals" : "friends.leave_confirm"))),
     accessSection(data.access),
   ];
 }
