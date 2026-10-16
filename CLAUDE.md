@@ -38,6 +38,8 @@ Static files are read from disk on each request (images are cached by browsers f
   `data/users/<id>/achievements.json`, the closed months in `data/achievements.json`, worked out by the collector loop
   (plays, Last.fm listeners, artist fans in `data/fans-cache.json`, matches). `medals.py` and `medal_names.py` are the
   catalog: spoilers the owner chose not to read; don't name medals to the owner, in commits or in docs.
+  `medal_names.py` is generated from the catalog by `scripts/make_medal_names.py` (`python scripts/make_medal_names.py`):
+  regenerate it after every catalog edit.
 - `reviews.py`: album reviews (`data/users/<id>/reviews.json`); private ones never reach anyone else.
 - `favorites.py`: `data/users/<id>/favorites.json` (curated, discovery with recipe + frequency, or pinned) and `recent.json`.
 - `api.py`: Spotify client with a request gate and persisted pauses (`data/spotify-pauses.json`).
