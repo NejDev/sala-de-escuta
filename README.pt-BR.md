@@ -148,6 +148,14 @@ O dono decide quem pode usar o Amigos (**Quem pode usar o Amigos**, no fim da p�
 uma chave por pessoa, e se quem entrar na sala depois já começa com ele. Quem estiver sem Amigos não
 vê a aba, e o histórico dessa pessoa é apagado.
 
+### Conquistas
+
+Dentro do Amigos, cada pessoa também pode participar das conquistas: mais de 100 medalhas escondidas (e uma para cada
+jogo de trilha marcante) que aparecem conforme você ouve, e oito títulos do mês disputados entre os participantes.
+Ninguém sabe o que libera uma medalha até ganhar; só quem ganhou vê como. Os participantes veem as medalhas uns dos
+outros e a música que liberou cada uma. Tudo é calculado no fundo, a partir do que o Amigos já coleta (sem pedidos a
+mais ao Spotify); as medalhas de músicas raras precisam da chave do Last.fm.
+
 ### Guardar o que gostou
 
 Acima de cada resultado:

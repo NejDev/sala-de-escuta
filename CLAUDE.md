@@ -34,6 +34,10 @@ Static files are read from disk on each request (images are cached by browsers f
 - `artists.py` / `musicbrainz.py`: the Artists search (band members and their Spotify profiles from MusicBrainz).
 - `social.py`: Friends (opt-in): recently played history, affinity, matches; who may use it (data/room.json).
   Never expose a non-member's data, and never what a member played alone (only matches show songs).
+- `achievements.py` / `medal_rules.py` / `monthly.py`: Achievements (opt-in inside Friends): each person's medals in
+  `data/users/<id>/achievements.json`, the closed months in `data/achievements.json`, worked out by the collector loop
+  (plays, Last.fm listeners, artist fans in `data/fans-cache.json`, matches). `medals.py` and `medal_names.py` are the
+  catalog: spoilers the owner chose not to read; don't name medals to the owner, in commits or in docs.
 - `reviews.py`: album reviews (`data/users/<id>/reviews.json`); private ones never reach anyone else.
 - `favorites.py`: `data/users/<id>/favorites.json` (curated, discovery with recipe + frequency, or pinned) and `recent.json`.
 - `api.py`: Spotify client with a request gate and persisted pauses (`data/spotify-pauses.json`).
@@ -53,6 +57,8 @@ Static files are read from disk on each request (images are cached by browsers f
   no logo) wherever its numbers show: its terms require it.
 - Keep the religious-content filter (`RELIGIOUS_WORDS`) and per-person blocked artists working everywhere.
 - Each person's data stays private: friends never see the owner's curation or each other's playlists.
+- Achievements: participants see each other's medals and the song behind each one; nothing for non-participants; a
+  medal nobody has earned never reaches the browser, and only whoever earned a medal sees how.
 - Spotify rate limits are serious: a burst of searches once paused search for ~20 hours, and one big band
   in Artists (~36 requests in 9 s) paused `/artists` for ~23 hours. Artists still reads everything (every
   old release and feature), but `/artists` calls go 2 s apart and each list is saved page by page in

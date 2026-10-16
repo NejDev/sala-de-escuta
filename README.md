@@ -146,6 +146,14 @@ The owner decides who can use Friends (**Who can use Friends**, at the bottom of
 page): a switch per person, and whether people who join the room later start with it. Someone without
 Friends doesn't see the tab, and their history is deleted.
 
+### Achievements
+
+Inside Friends, each person can also take part in achievements: more than 100 hidden medals (plus one per game with a
+memorable soundtrack) that turn up as you listen, and eight monthly titles the participants compete for. Nobody knows
+what unlocks a medal until they earn it; only whoever earned it sees how. Participants see each other's medals and
+the song behind each one. Everything is worked out in the background from what Friends already collects (no extra
+Spotify requests); medals about rare songs need the Last.fm key.
+
 ### Keeping what you like
 
 Above every result:
