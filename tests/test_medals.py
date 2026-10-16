@@ -1,9 +1,17 @@
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from spotify_assistant import curation, i18n, medals
 
 OWN = [medal for medal in medals.MEDALS if medal.family != "games"]
+ROOT = Path(__file__).resolve().parent.parent
+CATALOG = Path("docs/superpowers/specs/2026-10-15-achievements-catalog.md")
+NAMES = Path("spotify_assistant/medal_names.py")
 
 
 class CatalogTest(unittest.TestCase):
@@ -52,6 +60,17 @@ class CatalogTest(unittest.TestCase):
                 for name in game.names + game.artists:
                     self.assertEqual(name, curation.normalize(name))
                 self.assertIn(f"game-{game.slug}", medals.BY_ID)
+
+    def test_the_names_module_is_what_the_generator_makes_from_the_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / CATALOG).parent.mkdir(parents=True)
+            shutil.copyfile(ROOT / CATALOG, root / CATALOG)
+            (root / NAMES).parent.mkdir()
+            subprocess.run([sys.executable, "-I", str(ROOT / "scripts" / "make_medal_names.py"), str(root)],
+                           check=True, capture_output=True)
+            made = (root / NAMES).read_text(encoding="utf-8")
+        self.assertEqual(made, (ROOT / NAMES).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
