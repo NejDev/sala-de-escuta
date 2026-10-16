@@ -197,7 +197,8 @@ def _artist_name(play: dict) -> str:
 def context(user_id: str, counts: ListenerCounts | None, fans) -> Context:
     """What the person's medals look at besides plays. `fans` answers cached(name) (ArtistFans)."""
     first = curation.normalize(accounts.display_name(user_id)).split()
-    made = {f"spotify:playlist:{fav['playlist_id']}" for fav in favorites.load(user_id) if fav.get("playlist_id")}
+    made = {f"spotify:playlist:{fav['playlist_id']}" for fav in favorites.load(user_id)
+            if fav.get("playlist_id") and fav.get("kind") in ("discovery", "curated")}  # a pinned one is the person's own
 
     def listeners(play: dict):
         name = _artist_name(play)
@@ -538,8 +539,10 @@ def note(user_id: str, event: str, lastfm: bool = False, **detail) -> list[str]:
                 stats["made"][detail["uri"]] = 1
         elif event in ("favorite", "block"):
             bump(event)
-        elif event == "review":
-            mine = list(reviews.mine(user_id).values())
+        elif event == "review":  # only reviews written since joining
+            joined = data["joined"] or 0
+            mine = [review for review in reviews.mine(user_id).values()
+                    if isinstance(review, dict) and _number(review.get("at")) and review["at"] >= joined]
             events["reviews"] = len(mine)
             events["review_five"] = int(any(review.get("rating") == 5 for review in mine))
             events["review_long"] = int(any(review.get("public") and len(review.get("text") or "") >= 500

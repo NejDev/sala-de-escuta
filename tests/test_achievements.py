@@ -165,14 +165,32 @@ class EventsTest(Room):
 
     def test_review_medals_follow_the_reviews(self):
         self.join("ana")
-        reviews.save("ana", {"id": "a" * 22, "name": "Kind of Blue"}, 5, "x" * 500, True)
+        reviews.save("ana", {"id": "a" * 22, "name": "Kind of Blue"}, 5, "x" * 500, True, now=at(day=2))
         self.assertEqual(achievements.note("ana", "review"), ["review-1", "review-five", "review-long"])
+
+    def test_reviews_written_before_joining_dont_count(self):
+        reviews.save("ana", {"id": "a" * 22, "name": "Kind of Blue"}, 5, "x" * 500, True, now=at(month=9, day=1))
+        self.join("ana")  # on October 1st
+        self.assertEqual(achievements.note("ana", "review"), [])
+        self.assertEqual(achievements.load("ana")["stats"]["events"]["reviews"], 0)
+        reviews.save("ana", {"id": "b" * 22, "name": "Blue Train"}, 4, "Bom.", False, now=at(day=2))
+        self.assertEqual(achievements.note("ana", "review"), ["review-1"])
 
     def test_playlists_made_in_the_panel_count_for_later_plays(self):
         self.join("ana")
         achievements.note("ana", "playlist", uri="spotify:playlist:p1")
         from_it = play(context={"type": "playlist", "uri": "spotify:playlist:p1"})
         self.assertIn("panel-playlist", achievements.process("ana", [from_it], Context(), False))
+
+    def test_a_pinned_playlist_is_not_one_the_panel_made(self):
+        self.join("ana")
+        kept = [{"id": "f1", "kind": "pinned", "name": "Minha", "playlist_id": "mine"},
+                {"id": "f2", "kind": "discovery", "name": "Achados", "playlist_id": "built"}]
+        (self.data / "users" / "ana" / "favorites.json").write_text(json.dumps({"favorites": kept}), encoding="utf-8")
+        ctx = achievements.context("ana", None, None)
+        self.assertEqual(ctx.playlists, frozenset({"spotify:playlist:built"}))
+        pinned = play(context={"type": "playlist", "uri": "spotify:playlist:mine"})
+        self.assertNotIn("panel-playlist", achievements.process("ana", [pinned], ctx, False))
 
 
 class ViewTest(Room):
