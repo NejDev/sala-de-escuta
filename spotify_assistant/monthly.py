@@ -16,6 +16,7 @@ from .social import MATCH_WINDOW_S
 MIN_PLAYS = 50  # fewer plays in the month: out of the race
 MIN_FANS_KNOWN = 20  # "most alternative" needs fans for this many of the month's artists
 TREND_S = 30 * 86400
+SETTLE_S = 30 * 86400  # first-heard times this close to the start of someone's history don't count
 
 
 def month_of(at: float) -> str:
@@ -25,6 +26,15 @@ def month_of(at: float) -> str:
 def previous_month(at: float) -> str:
     first = local(at).date().replace(day=1)
     return (first - timedelta(days=1)).strftime("%Y-%m")
+
+
+def settled(firsts: dict[str, float]) -> dict[str, float]:
+    """First-heard times that mean something: at the start of a person's known history every artist looks new, so
+    the first 30 days after their earliest first-heard time are left out."""
+    if not firsts:
+        return {}
+    start = min(firsts.values())
+    return {artist: first for artist, first in firsts.items() if first > start + SETTLE_S}
 
 
 def picked_up(mine: dict[str, float], theirs: dict[str, float]) -> list[str]:
@@ -46,21 +56,22 @@ def standings(month: str, plays_by_user: dict[str, list[dict]], firsts_by_user: 
     month_plays = {uid: [item for item in plays if month_of(item["at"]) == month] for uid, plays in plays_by_user.items()}
     eligible = sorted(uid for uid, plays in month_plays.items() if len(plays) >= MIN_PLAYS)
     values: dict[str, dict[str, float]] = {title: {} for title in TITLES}
+    known = {uid: settled(firsts_by_user.get(uid, {})) for uid in plays_by_user}
     for uid in eligible:
         plays = month_plays[uid]
         hours = [local(item["at"]).hour for item in plays]
-        firsts = firsts_by_user.get(uid, {})
+        firsts = known[uid]
         values["marathoner"][uid] = len(plays)
         values["night-owl"][uid] = sum(hour < 5 for hour in hours)
         values["early-bird"][uid] = sum(5 <= hour < 8 for hour in hours)
         values["explorer"][uid] = sum(month_of(first) == month for first in firsts.values())
         values["time-traveler"][uid] = len({found[0] // 10 for item in plays if (found := release(item))})
         names = {first_artist(item).get("name", "") for item in plays}
-        known = [count for count in (fans(name) for name in names if name) if count is not None]
-        if len(known) >= MIN_FANS_KNOWN:
-            values["alternative"][uid] = statistics.median(known)
+        counted = [count for count in (fans(name) for name in names if name) if count is not None]
+        if len(counted) >= MIN_FANS_KNOWN:
+            values["alternative"][uid] = statistics.median(counted)
         started = {artist: first for artist, first in firsts.items() if month_of(first) == month}
-        others = [firsts_by_user.get(other, {}) for other in plays_by_user if other != uid]
+        others = [known[other] for other in plays_by_user if other != uid]
         values["trendsetter"][uid] = len({artist for theirs in others for artist in picked_up(started, theirs)})
     for index, first in enumerate(eligible):
         for second in eligible[index + 1:]:

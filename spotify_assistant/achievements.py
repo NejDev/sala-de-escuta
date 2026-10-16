@@ -398,7 +398,7 @@ def room_pass(plays_by_user: dict[str, list[dict]], lastfm: bool, now: float | N
                             stats["room"]["sync"] = 1
                         if at >= latest.get(me, (0, None))[0]:
                             latest[me] = (at, mine)
-        firsts = {user_id: datas[user_id]["stats"]["artists"] for user_id in people}
+        firsts = {user_id: monthly.settled(datas[user_id]["stats"]["artists"]) for user_id in people}
         new = {}
         for me in people:
             stats = datas[me]["stats"]

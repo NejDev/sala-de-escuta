@@ -288,14 +288,28 @@ class RoomTest(Room):
 
     def test_picking_up_artists_after_someone(self):
         self.join("paulo", "ana")
-        paulo = [play(uri=f"p{n}", artists=(f"Novo {n}",), when=at(day=1) + n) for n in range(5)]
-        ana = [play(uri=f"a{n}", artists=(f"Novo {n}",), when=at(day=10) + n) for n in range(5)]
+        older = [play(uri="old", artists=("Antigo",), when=at(month=8, day=1))]  # both histories began in August
+        paulo = older + [play(uri=f"p{n}", artists=(f"Novo {n}",), when=at(day=1) + n) for n in range(5)]
+        ana = older + [play(uri=f"a{n}", artists=(f"Novo {n}",), when=at(day=10) + n) for n in range(5)]
         achievements.process("paulo", paulo, Context(), False)
         achievements.process("ana", ana, Context(), False)
         new = achievements.room_pass({"paulo": paulo, "ana": ana}, False, now=at(day=10, hour=20))
         self.assertIn("trendsetter", new["paulo"])
         self.assertIn("follower", new["ana"])
         self.assertIsNone(achievements.load("paulo")["earned"]["trendsetter"]["song"])
+
+    def test_the_first_thirty_days_of_history_set_no_trend(self):
+        self.join("paulo", "ana")
+        start = [play(uri="base", artists=("Base",), when=at(day=1))]  # both histories begin on the same day
+        paulo = start + [play(uri=f"p{n}", artists=(f"Novo {n}",), when=at(day=2) + n) for n in range(5)]
+        ana = start + [play(uri=f"a{n}", artists=(f"Novo {n}",), when=at(day=10) + n) for n in range(5)]
+        achievements.process("paulo", paulo, Context(), False)
+        achievements.process("ana", ana, Context(), False)
+        new = achievements.room_pass({"paulo": paulo, "ana": ana}, False, now=at(day=10, hour=20))
+        self.assertNotIn("trendsetter", new["paulo"])
+        self.assertNotIn("follower", new["ana"])
+        self.assertEqual((achievements.load("paulo")["stats"]["room"]["trend"],
+                          achievements.load("ana")["stats"]["room"]["follow"]), (0, 0))
 
 
 def month_of_plays(prefix, count, hour=12, release="2020-01-01", artists=25):
@@ -325,11 +339,27 @@ class StandingsTest(unittest.TestCase):
         shared = [play(uri=f"s{n}", when=at(day=5, hour=10) + n * 60) for n in range(5)]
         plays = {"paulo": month_of_plays("p", 55) + shared, "ana": month_of_plays("a", 55) + shared,
                  "bia": month_of_plays("b", 60)}
-        firsts = {"paulo": {"x": at(day=2), "y": at(day=3)}, "ana": {"x": at(day=9), "y": at(day=12)}, "bia": {}}
+        old = at(month=8, day=1)  # their histories began in August
+        firsts = {"paulo": {"o": old, "x": at(day=2), "y": at(day=3)}, "ana": {"o": old, "x": at(day=9), "y": at(day=12)},
+                  "bia": {}}
         result = monthly.standings("2026-10", plays, firsts, no_fans)
         self.assertEqual(result["duo"], {"users": ["ana", "paulo"], "value": 5})
         self.assertEqual(result["explorer"], {"users": ["ana", "paulo"], "value": 2})  # two new artists each
         self.assertEqual(result["trendsetter"], {"users": ["paulo"], "value": 2})  # Ana picked up both after Paulo did
+
+    def test_the_first_thirty_days_of_history_are_not_first_heard(self):
+        plays = {"paulo": month_of_plays("p", 60), "ana": month_of_plays("a", 60)}
+        # Both histories begin on October 1st: what they heard that month only looks new because collecting began.
+        firsts = {"paulo": {"x": at(day=1), "y": at(day=2), "z": at(day=3)},
+                  "ana": {"x": at(day=1, hour=13), "y": at(day=9), "z": at(day=12)}}
+        result = monthly.standings("2026-10", plays, firsts, no_fans)
+        self.assertNotIn("explorer", result)
+        self.assertNotIn("trendsetter", result)
+        firsts["paulo"]["old"] = at(month=8, day=15)  # Paulo's history began earlier
+        result = monthly.standings("2026-10", plays, firsts, no_fans)
+        self.assertEqual(result["explorer"], {"users": ["paulo"], "value": 3})
+        self.assertNotIn("trendsetter", result)  # Ana's October is still her first 30 days
+        self.assertEqual(monthly.settled({}), {})
 
 
 class CloseMonthTest(Room):
