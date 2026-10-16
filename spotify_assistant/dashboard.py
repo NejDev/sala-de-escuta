@@ -313,9 +313,16 @@ class App:
             "player_ready": not missing_scopes(user.paths.token, PLAYER_SCOPES),
             "search_paused_s": gate.remaining("search"),
             "lastfm": self.listener_counts is not None,
-            "achievements": (achievements.summary(user.id, self.listener_counts is not None)
-                             if social.allowed(user.id) else None),
+            "achievements": self._medal_summary(user) if social.allowed(user.id) else None,
         }
+
+    def _medal_summary(self, user: Profile) -> dict:
+        """The tab's dot; a broken achievements file never takes the panel down."""
+        try:
+            return achievements.summary(user.id, self.listener_counts is not None)
+        except Exception:
+            log.exception("Achievements: no summary for %s", user.id)
+            return {"on": False, "new": 0}
 
     def _shelf(self, user: Profile, library: list[dict]) -> list[dict]:
         """The bar: only favorites, the playlists the Sala rebuilds by itself."""
@@ -1188,12 +1195,21 @@ class App:
                 friends.append({"id": uid, "name": names[uid],
                                 "affinity": social.affinity(profiles.get(user.id, {}), profiles[uid], artist_names),
                                 "plays_7d": numbers["plays_7d"],  # not what they played: only matches show songs
-                                "medals": achievements.highlights_of(uid, lastfm_on) if medals_on else []})
+                                "medals": self._highlights(uid, lastfm_on) if medals_on else []})
         friends.sort(key=lambda friend: -(friend["affinity"] or {}).get("percent", -1))
         me = {**social.stats(mine), "top": not missing_scopes(user.paths.token, TASTE_SCOPES),
               "taste": bool(tastes.get(user.id))}
         return {"sharing": True, "ready": ready, "me": me, "friends": friends,
                 "feed": social.feed(everyone, names, user.id), **owner}
+
+    @staticmethod
+    def _highlights(user_id: str, lastfm_on: bool) -> list[dict]:
+        """A friend's highlighted medals; a broken achievements file shows none instead of breaking Friends."""
+        try:
+            return achievements.highlights_of(user_id, lastfm_on)
+        except Exception:
+            log.exception("Achievements: no highlights for %s", user_id)
+            return []
 
     @staticmethod
     def _friends_access() -> dict:

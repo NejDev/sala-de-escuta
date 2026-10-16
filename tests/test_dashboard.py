@@ -848,6 +848,22 @@ class ServerTest(unittest.TestCase):
         self.assertTrue({"first-play", "saudade", "fans-100"} <= set(achievements.load("paulo")["earned"]))
         self.assertTrue((self.data / "fans-cache.json").exists())
 
+    def test_a_broken_achievements_file_never_takes_the_panel_down(self):
+        self.post("/api/friends", {"share": True}, as_user="ana")
+        self.post("/api/achievements", {"on": True}, as_user="ana")
+        path = self.data / "users" / "ana" / "achievements.json"
+        path.write_text(json.dumps({"on": True, "stats": None}), encoding="utf-8")
+        status, raw = self.request("/api/overview", as_user="ana")
+        self.assertEqual((status, json.loads(raw)["achievements"]), (200, {"on": False, "new": 0}))
+        with mock.patch.object(dashboard.achievements, "summary", side_effect=OSError("disk")):
+            status, raw = self.request("/api/overview", as_user="ana")
+        self.assertEqual((status, json.loads(raw)["achievements"]), (200, {"on": False, "new": 0}))
+        self.post("/api/friends", {"share": True})
+        with mock.patch.object(dashboard.achievements, "taking_part", return_value=True), \
+                mock.patch.object(dashboard.achievements, "highlights_of", side_effect=achievements.Unreadable("ana")):
+            status, raw = self.request("/api/friends")
+        self.assertEqual((status, json.loads(raw)["friends"][0]["medals"]), (200, []))
+
     def test_the_achievements_loop_never_raises(self):
         with mock.patch.object(dashboard.achievements, "participants", side_effect=RuntimeError("boom")):
             self.server.app._achievements_loop()

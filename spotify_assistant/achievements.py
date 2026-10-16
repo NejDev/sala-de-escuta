@@ -69,8 +69,20 @@ def load(user_id: str) -> dict:
     if not isinstance(data, dict):
         raise Unreadable(f"{user_id}: not an object")
     full = {**_empty(), **data}
+    if not _well_formed(full):
+        raise Unreadable(f"{user_id}: a field has the wrong type")
     full["stats"] = {**medal_rules.new_stats(), **full["stats"]}  # numbers added in later versions start empty
     return full
+
+
+def _number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _well_formed(data: dict) -> bool:
+    return (isinstance(data["on"], bool) and (data["joined"] is None or _number(data["joined"]))
+            and all(isinstance(data[key], dict) for key in ("earned", "seen", "stats"))
+            and isinstance(data["highlights"], list) and _number(data["through"]) and _number(data["rich_through"]))
 
 
 def _write(path: Path, data: dict) -> None:

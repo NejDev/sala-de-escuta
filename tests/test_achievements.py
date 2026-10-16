@@ -89,6 +89,25 @@ class ParticipationTest(Room):
         self.assertFalse(achievements.taking_part("paulo"))
         self.assertEqual(path.read_text(encoding="utf-8"), "{oops")
 
+    def test_a_field_of_the_wrong_type_makes_the_file_unreadable(self):
+        self.join("paulo", "ana")
+        path = self.data / "users" / "ana" / "achievements.json"
+        broken = json.dumps({"on": True, "stats": None})
+        path.write_text(broken, encoding="utf-8")
+        self.assertFalse(achievements.taking_part("ana"))
+        self.assertEqual(achievements.participants(), ["paulo"])
+        self.assertEqual(achievements.view("paulo", False, no_fans, now=at())["people"], [])
+        self.assertEqual(achievements.note("ana", "block"), [])
+        self.assertEqual(path.read_text(encoding="utf-8"), broken)  # left as it is
+        for wrong in ({"on": "yes"}, {"joined": "2026-10-01"}, {"joined": True}, {"earned": []}, {"seen": None},
+                      {"highlights": {}}, {"stats": []}, {"through": None}, {"rich_through": "0"}):
+            with self.subTest(field=wrong):
+                path.write_text(json.dumps({"on": True, **wrong}), encoding="utf-8")
+                with self.assertRaises(achievements.Unreadable):
+                    achievements.load("ana")
+        path.write_text(json.dumps({"on": True, "joined": 1.5, "through": 2, "rich_through": 0.0}), encoding="utf-8")
+        self.assertTrue(achievements.load("ana")["on"])
+
 
 class EventsTest(Room):
     def test_panel_events_count_for_participants_only(self):
