@@ -19,18 +19,20 @@ from collections import Counter
 from pathlib import Path
 from typing import Callable
 
-from . import accounts, config, curation, favorites, medal_rules, reviews, social
+from . import accounts, config, curation, favorites, i18n, medal_rules, monthly, reviews, social
 from .deezer import Deezer, DeezerError
 from .i18n import t
 from .lastfm import LastFmError, ListenerCounts
 from .medal_rules import Context, first_artist
-from .medals import BY_ID, GAMES_BY_SLUG, MEDALS, Medal
+from .medals import BY_ID, GAMES_BY_SLUG, MEDALS, TITLES, Medal
 
 MAX_HIGHLIGHTS = 10
 LOOKUPS_PER_LOOP = 300  # Last.fm and fans lookups of each kind per person per loop; the rest wait for the next one
 FANS_FILE = "fans-cache.json"
 FANS_FRESH_S = 30 * 86400
 FANS_MAX_ENTRIES = 100_000
+SYNC_S = 5 * 60  # two plays of a song this close together count as "in sync"
+MONTHS_SHOWN = 12
 
 log = logging.getLogger(__name__)
 _lock = threading.RLock()
@@ -351,6 +353,124 @@ def rich_pass(user_id: str, plays: list[dict], ctx: Context, lastfm: bool, count
         return new
 
 
+def _plays_by_song(plays_by_user: dict[str, list[dict]], people: list[str], now: float) -> dict[str, list[tuple]]:
+    """The last week's plays of each song: (at, person, play), oldest first."""
+    heard: dict[str, list[tuple]] = {}
+    for user_id in people:
+        for item in plays_by_user.get(user_id, []):
+            if item["at"] >= now - social.MATCH_DAYS * 86400:
+                heard.setdefault(item["uri"], []).append((item["at"], user_id, item))
+    for entries in heard.values():
+        entries.sort(key=lambda entry: entry[0])
+    return heard
+
+
+def room_pass(plays_by_user: dict[str, list[dict]], lastfm: bool, now: float | None = None) -> dict[str, list[str]]:
+    """Matches among participants (the same song within 6 hours, as in Friends) into each one's medals."""
+    now = time.time() if now is None else now
+    with _lock:
+        datas = {}
+        for user_id in plays_by_user:
+            try:
+                datas[user_id] = load(user_id)
+            except Unreadable as err:
+                log.warning("Achievements left alone: %s", err)
+        people = [user_id for user_id, data in datas.items() if data["on"]]
+        latest: dict[str, tuple[float, dict]] = {}
+        trio: dict[str, dict] = {}
+        for uri, entries in _plays_by_song(plays_by_user, people, now).items():
+            for index, (start, first, first_play) in enumerate(entries):
+                window = [(user_id, item) for at, user_id, item in entries[index:] if at - start <= social.MATCH_WINDOW_S]
+                if len({user_id for user_id, _ in window}) >= 3:
+                    for user_id, item in window:
+                        datas[user_id]["stats"]["room"]["trio"] = 1
+                        trio[user_id] = item
+                for at, second, second_play in entries[index + 1:]:
+                    if at - start > social.MATCH_WINDOW_S:
+                        break
+                    if second == first:
+                        continue
+                    for me, other, mine in ((first, second, first_play), (second, first, second_play)):
+                        stats = datas[me]["stats"]
+                        stats["distinct"].setdefault("matched", {})[uri] = 1
+                        stats["matched_with"][other] = 1
+                        if at - start <= SYNC_S:
+                            stats["room"]["sync"] = 1
+                        if at >= latest.get(me, (0, None))[0]:
+                            latest[me] = (at, mine)
+        firsts = {user_id: datas[user_id]["stats"]["artists"] for user_id in people}
+        new = {}
+        for me in people:
+            stats = datas[me]["stats"]
+            others = set(people) - {me}
+            if len(others) >= 2 and others <= set(stats["matched_with"]):
+                stats["room"]["everyone"] = 1
+            stats["room"]["trend"] = len({artist for other in others for artist in monthly.picked_up(firsts[me], firsts[other])})
+            stats["room"]["follow"] = len({artist for other in others for artist in monthly.picked_up(firsts[other], firsts[me])})
+            new[me] = []
+            for medal in _pending(datas[me], "room", lastfm):
+                song = trio.get(me) if medal.params.get("song_from") == "trio" else latest.get(me, (0, None))[1]
+                new[me] += _award_due(datas[me], [medal], song, Context(), now)
+            _write(_file(me), datas[me])
+        return new
+
+
+def close_month(plays_by_user: dict[str, list[dict]], fans, lastfm: bool, now: float | None = None) -> str | None:
+    """Closes last month once (only months from the first one achievements ran), saving its titles and awarding
+    the medals that come from them. Returns the month closed."""
+    now = time.time() if now is None else now
+    month = monthly.previous_month(now)
+    with _lock:
+        try:
+            room = _read_room()
+        except Unreadable as err:
+            log.warning("Achievements: months left alone: %s", err)
+            return None
+        if "since" not in room:
+            room["since"] = monthly.month_of(now)
+            _write(_room_file(), room)
+        if month < room["since"] or month in room["months"] or not plays_by_user:
+            return None
+        datas = {}
+        for user_id in plays_by_user:
+            try:
+                datas[user_id] = load(user_id)
+            except Unreadable as err:
+                log.warning("Achievements left alone: %s", err)
+        firsts = {user_id: data["stats"]["artists"] for user_id, data in datas.items()}
+        titles = monthly.standings(month, {user_id: plays_by_user[user_id] for user_id in datas}, firsts, fans)
+        room["months"][month] = titles
+        _write(_room_file(), room)
+        for title, held in titles.items():
+            for user_id in held["users"]:
+                datas[user_id]["stats"]["titles"].append({"month": month, "title": title})
+        for user_id, data in datas.items():
+            _award_due(data, _pending(data, "titles", lastfm), None, Context(), now)
+            _write(_file(user_id), data)
+        return month
+
+
+def _titles_view(titles: dict[str, dict]) -> list[dict]:
+    shown = []
+    for title in TITLES:
+        if title not in titles:
+            continue
+        value = round(titles[title]["value"])
+        shown.append({"id": title, "name": t(f"title.{title}"),
+                      "holders": [accounts.display_name(user_id) for user_id in titles[title]["users"]],
+                      "value": t(f"title.{title}.value", count=value, value=i18n.number(value))})
+    return shown
+
+
+def _past_months() -> list[dict]:
+    try:
+        months = _read_room()["months"]
+    except Unreadable:
+        return []
+    closed = [(month, titles) for month, titles in sorted(months.items(), reverse=True) if titles]
+    return [{"month": month, "titles": _titles_view(titles)} for month, titles in closed[:MONTHS_SHOWN]]
+
+
 def note(user_id: str, event: str, lastfm: bool = False, **detail) -> list[str]:
     """Something done in the panel: counted only for participants, and medals are awarded right away."""
     if not taking_part(user_id):
@@ -474,6 +594,7 @@ def view(viewer: str, lastfm: bool, fans, now: float | None = None) -> dict:
         "me": person(viewer, True),
         "new": [medal_id for _, medal_id in fresh],
         "people": [person(user_id, False) for user_id in datas if user_id != viewer],
-        "race": [],
-        "months": [],
+        "race": _titles_view(monthly.standings(monthly.month_of(now), {user_id: social.plays(user_id) for user_id in datas},
+                                               {user_id: data["stats"]["artists"] for user_id, data in datas.items()}, fans)),
+        "months": _past_months(),
     }

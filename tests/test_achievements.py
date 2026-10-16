@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import achievements, config, i18n, medals, reviews, social
+from spotify_assistant import achievements, config, i18n, medals, monthly, reviews, social
 from spotify_assistant.deezer import DeezerError
 from spotify_assistant.lastfm import LastFmError, Listeners
 from spotify_assistant.medal_rules import Context
@@ -262,6 +262,100 @@ class LookupTest(Room):
         counts, dz = FakeCounts(), FakeDeezer()
         achievements.enrich([play(artists=("\xa0, \xa0",))], 0, counts, self.fans(), dz)
         self.assertEqual((counts.asked, dz.asked), ([], []))
+
+
+class RoomTest(Room):
+    def test_matches_between_participants(self):
+        self.join("paulo", "ana", "bia")
+        plays = {"paulo": [play(uri="x", when=at(hour=10)), play(uri="y", when=at(hour=11))],
+                 "ana": [play(uri="x", when=at(hour=10, minute=3))],
+                 "bia": [play(uri="y", when=at(hour=15))]}
+        new = achievements.room_pass(plays, False, now=at(hour=20))
+        self.assertTrue({"match-1", "match-sync", "match-everyone"} <= set(new["paulo"]))
+        self.assertTrue({"match-1", "match-sync"} <= set(new["ana"]))
+        self.assertNotIn("match-everyone", new["ana"])  # Ana and Bia never matched
+        self.assertEqual(set(new["bia"]) & {"match-sync", "match-everyone"}, set())
+        self.assertIn(achievements.load("paulo")["earned"]["match-1"]["song"]["uri"],
+                      {"spotify:track:x", "spotify:track:y"})
+        self.assertEqual(achievements.room_pass(plays, False, now=at(hour=20)), {"paulo": [], "ana": [], "bia": []})
+
+    def test_three_people_on_one_song(self):
+        self.join("paulo", "ana", "bia")
+        plays = {who: [play(uri="z", when=at(hour=hour))] for who, hour in (("paulo", 9), ("ana", 12), ("bia", 14))}
+        new = achievements.room_pass(plays, False, now=at(hour=20))
+        self.assertTrue(all("trio" in new[who] for who in plays))
+        self.assertEqual(achievements.load("bia")["earned"]["trio"]["song"]["uri"], "spotify:track:z")
+
+    def test_picking_up_artists_after_someone(self):
+        self.join("paulo", "ana")
+        paulo = [play(uri=f"p{n}", artists=(f"Novo {n}",), when=at(day=1) + n) for n in range(5)]
+        ana = [play(uri=f"a{n}", artists=(f"Novo {n}",), when=at(day=10) + n) for n in range(5)]
+        achievements.process("paulo", paulo, Context(), False)
+        achievements.process("ana", ana, Context(), False)
+        new = achievements.room_pass({"paulo": paulo, "ana": ana}, False, now=at(day=10, hour=20))
+        self.assertIn("trendsetter", new["paulo"])
+        self.assertIn("follower", new["ana"])
+        self.assertIsNone(achievements.load("paulo")["earned"]["trendsetter"]["song"])
+
+
+def month_of_plays(prefix, count, hour=12, release="2020-01-01", artists=25):
+    return [play(uri=f"{prefix}{n}", artists=(f"{prefix}-artist-{n % artists}",), release=release,
+                 when=at(day=1 + n % 28, hour=hour, minute=n % 60)) for n in range(count)]
+
+
+class StandingsTest(unittest.TestCase):
+    def test_fewer_than_fifty_plays_dont_compete_and_ties_share(self):
+        result = monthly.standings("2026-10", {"paulo": month_of_plays("p", 60), "ana": month_of_plays("a", 40)}, {}, no_fans)
+        self.assertEqual(result["marathoner"], {"users": ["paulo"], "value": 60})
+        tie = monthly.standings("2026-10", {"paulo": month_of_plays("p", 60), "ana": month_of_plays("a", 60)}, {}, no_fans)
+        self.assertEqual(tie["marathoner"], {"users": ["ana", "paulo"], "value": 60})
+        self.assertNotIn("night-owl", tie)  # nobody played at night: nobody holds it
+
+    def test_hours_decades_and_fans(self):
+        plays = {"paulo": month_of_plays("p", 60, hour=2, release="1975"), "ana": month_of_plays("a", 60, hour=6)}
+        fans = lambda name: 100 if name.startswith("p-") else 5000
+        result = monthly.standings("2026-10", plays, {}, fans)
+        self.assertEqual(result["night-owl"]["users"], ["paulo"])
+        self.assertEqual(result["early-bird"]["users"], ["ana"])
+        self.assertEqual(result["alternative"], {"users": ["paulo"], "value": 100})
+        plays["ana"] += [play(uri="old", release="1965", when=at(day=2))]
+        self.assertEqual(monthly.standings("2026-10", plays, {}, fans)["time-traveler"]["users"], ["ana"])
+
+    def test_the_duo_and_first_heard_artists(self):
+        shared = [play(uri=f"s{n}", when=at(day=5, hour=10) + n * 60) for n in range(5)]
+        plays = {"paulo": month_of_plays("p", 55) + shared, "ana": month_of_plays("a", 55) + shared,
+                 "bia": month_of_plays("b", 60)}
+        firsts = {"paulo": {"x": at(day=2), "y": at(day=3)}, "ana": {"x": at(day=9), "y": at(day=12)}, "bia": {}}
+        result = monthly.standings("2026-10", plays, firsts, no_fans)
+        self.assertEqual(result["duo"], {"users": ["ana", "paulo"], "value": 5})
+        self.assertEqual(result["explorer"], {"users": ["ana", "paulo"], "value": 2})  # two new artists each
+        self.assertEqual(result["trendsetter"], {"users": ["paulo"], "value": 2})  # Ana picked up both after Paulo did
+
+
+class CloseMonthTest(Room):
+    def test_closes_last_month_once_from_the_first_month_on(self):
+        self.join("paulo", "ana")
+        plays = {"paulo": [play(uri=f"p{n}", when=at(day=1 + n % 28, hour=1)) for n in range(60)], "ana": []}
+        self.assertIsNone(achievements.close_month(plays, no_fans, False, now=at(day=20)))  # September predates it
+        self.assertEqual(achievements.close_month(plays, no_fans, False, now=at(month=11, day=1, hour=0, minute=5)),
+                         "2026-10")
+        room = json.loads((self.data / "achievements.json").read_text(encoding="utf-8"))
+        self.assertEqual(room["months"]["2026-10"]["marathoner"], {"users": ["paulo"], "value": 60})
+        self.assertIn("title-1", achievements.load("paulo")["earned"])
+        self.assertIsNone(achievements.close_month(plays, no_fans, False, now=at(month=11, day=2)))  # only once
+
+    def test_the_tab_shows_the_race_and_past_months(self):
+        self.join("paulo", "ana")
+        plays = [play(uri=f"p{n}", when=at(day=1 + n % 28, hour=1)) for n in range(60)]
+        self.save_plays("paulo", plays)
+        achievements.close_month({"paulo": plays, "ana": []}, no_fans, False, now=at(day=20))
+        seen = achievements.view("ana", False, no_fans, now=at(day=20))
+        race = {title["id"]: title for title in seen["race"]}
+        self.assertEqual(race["marathoner"]["holders"], ["Paulo"])
+        self.assertEqual(race["marathoner"]["value"], i18n.t("title.marathoner.value", count=60, value="60"))
+        achievements.close_month({"paulo": plays, "ana": []}, no_fans, False, now=at(month=11, day=1))
+        months = achievements.view("ana", False, no_fans, now=at(month=11, day=1))["months"]
+        self.assertEqual([month["month"] for month in months], ["2026-10"])
 
 
 if __name__ == "__main__":
