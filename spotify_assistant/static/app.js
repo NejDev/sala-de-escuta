@@ -127,7 +127,7 @@ const state = {
   confirmLeave: false,
   reviews: null,
   review: null,
-  artistFilters: { who: "", type: "", order: "new" },
+  artistFilters: { who: "", hidden: [], order: "new" },
   filters: { rouletteGenre: "", newsGenre: "", min: "", max: "", days: "30", ...savedFilters() },
   added: new Set(),
   openDetails: new Set(),
@@ -1672,10 +1672,10 @@ function renderArtist(hunt, panel, list) {
   const people = artist?.people || [];
   const running = hunt.status === "running";
   const percent = hunt.total ? Math.max(4, Math.round((hunt.progress / hunt.total) * 100)) : 4;
-  const counts = RELEASE_TYPES
+  const tally = RELEASE_TYPES
     .map((type) => [type, hunt.releases.filter((release) => release.type === type).length])
-    .filter(([, count]) => count)
-    .map(([type, count]) => t(`artists.count.${type}`, { count }));
+    .filter(([, count]) => count);
+  const counts = tally.map(([type, count]) => t(`artists.count.${type}`, { count }));
   const choice = (id, label, options, key) => {
     const control = h("select", { class: "filter-control", id },
       options.map(([value, text]) => h("option", { value, selected: filters[key] === value }, text)));
@@ -1684,6 +1684,26 @@ function renderArtist(hunt, panel, list) {
       renderHunt();
     });
     return h("label", { class: "filter", for: id }, h("span", { class: "filter-label" }, label), control);
+  };
+  /** A box per kind of release found; "everything" ticks or clears them all, so "only X" takes two clicks. */
+  const typeBoxes = () => {
+    const hidden = new Set(filters.hidden);
+    const shownTypes = tally.filter(([type]) => !hidden.has(type)).length;
+    const hide = (types) => { state.artistFilters = { ...state.artistFilters, hidden: types }; renderHunt(); };
+    const box = (label, checked, onchange, note = null, mixed = false) => {
+      const input = h("input", { type: "checkbox", checked, onchange });
+      input.indeterminate = mixed;
+      return h("label", { class: "type-box" }, input, label, note && h("small", null, note));
+    };
+    return h("fieldset", { class: "type-boxes" },
+      h("legend", { class: "filter-label" }, t("artists.type_label")),
+      h("div", { class: "type-box-row" },
+        box(t("artists.type.all"), shownTypes === tally.length,
+          () => hide(shownTypes === tally.length ? tally.map(([type]) => type) : []), null,
+          shownTypes > 0 && shownTypes < tally.length),
+        tally.map(([type, count]) => box(t(`artists.type.${type}`), !hidden.has(type),
+          () => hide(hidden.has(type) ? filters.hidden.filter((kind) => kind !== type) : [...filters.hidden, type]),
+          compactNumber.format(count)))));
   };
   const chip = (id, label, note) => h("button", {
     class: "who-chip",
@@ -1707,14 +1727,13 @@ function renderArtist(hunt, panel, list) {
       people.map((person) => chip(person.spotify, person.name,
         person.role === "subgroup" ? t("artists.subgroup") : person.former ? t("artists.former") : null))),
     hunt.releases.length > 0 && h("div", { class: "filters artist-filters" },
-      choice("release-type", t("artists.type_label"),
-        [["", t("artists.type.all")], ...RELEASE_TYPES.map((type) => [type, t(`artists.type.${type}`)])], "type"),
+      typeBoxes(),
       choice("release-order", t("artists.order_label"),
         ["new", "old"].map((order) => [order, t(`artists.order.${order}`)]), "order")),
   ].filter(Boolean));
 
   const shown = hunt.releases
-    .filter((release) => !filters.type || release.type === filters.type)
+    .filter((release) => !filters.hidden.includes(release.type))
     .filter((release) => !filters.who || release.who.some((person) => person.id === filters.who))
     .sort((a, b) => (filters.order === "old" ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date)));
   if (!shown.length) {
