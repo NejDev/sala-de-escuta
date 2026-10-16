@@ -33,7 +33,7 @@ LOOKUPS_PER_LOOP = 300  # Last.fm and fans lookups of each kind per person per l
 FANS_FILE = "fans-cache.json"
 FANS_FRESH_S = 30 * 86400
 FANS_MAX_ENTRIES = 100_000
-RICH_WAIT_S = 3 * 86400  # a play whose lookups keep failing stops holding back the plays after it
+RICH_WAIT_S = 3 * 86400  # how long the cursor may wait at one play whose lookups keep failing
 SYNC_S = 5 * 60  # two plays of a song this close together count as "in sync"
 MONTHS_SHOWN = 12
 
@@ -58,7 +58,7 @@ def _room_file() -> Path:
 
 def _empty() -> dict:
     return {"on": False, "joined": None, "earned": {}, "seen": {}, "highlights": [], "stats": medal_rules.new_stats(),
-            "through": 0, "rich_through": 0}
+            "through": 0, "rich_through": 0, "stall": None}
 
 
 def load(user_id: str) -> dict:
@@ -84,7 +84,9 @@ def _number(value) -> bool:
 def _well_formed(data: dict) -> bool:
     return (isinstance(data["on"], bool) and (data["joined"] is None or _number(data["joined"]))
             and all(isinstance(data[key], dict) for key in ("earned", "seen", "stats"))
-            and isinstance(data["highlights"], list) and _number(data["through"]) and _number(data["rich_through"]))
+            and isinstance(data["highlights"], list) and _number(data["through"]) and _number(data["rich_through"])
+            and (data["stall"] is None or (isinstance(data["stall"], dict) and _number(data["stall"].get("at"))
+                                           and _number(data["stall"].get("since")))))
 
 
 def _write(path: Path, data: dict) -> None:
@@ -377,25 +379,37 @@ def enrich(plays: list[dict], after: float, counts: ListenerCounts | None, fans:
 def rich_pass(user_id: str, plays: list[dict], ctx: Context, lastfm: bool, counts: ListenerCounts | None,
               fans: ArtistFans, now: float | None = None) -> list[str]:
     """Plays whose numbers are known, in order, into the "rich" medals; stops at the first play still waiting.
-    A play waits at most 3 days: then it goes in with what is known (an unknown number earns nothing)."""
+    The cursor waits at one play at most 3 days, counted from when it first stopped there: then the play goes in
+    with what is known (an unknown number earns nothing)."""
     now = time.time() if now is None else now
     with _lock:
         data = load(user_id)
         if not data["on"]:
             return []
         pending = _pending(data, "rich", lastfm)
-        new, last = [], None
+        new, last, changed = [], None, False
         for item in sorted(plays, key=lambda item: item["at"]):
             if item["at"] <= data["rich_through"]:
                 continue
             name = _artist_name(item)
             waiting = name and ((counts is not None and counts.cached(name, item["title"]) is None) or not fans.known(name))
-            if waiting and now - item["at"] < RICH_WAIT_S:
-                break  # its numbers aren't known yet: the next loop picks up from here
+            stall = data["stall"]
+            here = stall is not None and stall["at"] == item["at"]
+            if waiting:
+                if not (here and now - stall["since"] >= RICH_WAIT_S):
+                    if not here:
+                        data["stall"] = {"at": item["at"], "since": now}
+                        changed = True
+                    break  # its numbers aren't known yet: the next loop picks up from here
             medal_rules.rich_update(data["stats"], item, ctx)
             new += _award_due(data, pending, item, ctx, item["at"])
             last = item["at"]
-        if last is not None:
+            if here:
+                data["stall"] = None
+                changed = True
+        if last is not None or changed:
+            if last is None:
+                last = data["rich_through"]
             data["rich_through"] = last
             _write(_file(user_id), data)
         return new

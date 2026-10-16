@@ -285,16 +285,17 @@ class ViewTest(Room):
 class FakeCounts:
     """Last.fm with a cache: titles it knows have listeners, others no record."""
 
-    def __init__(self, listeners=None, error=None):
+    def __init__(self, listeners=None, error=None, fail=()):
         self.listeners, self.error, self.asked, self.known = listeners or {}, error, [], {}
+        self.fail = fail  # titles whose lookup always fails
 
     def cached(self, artist, title):
         return self.known.get((artist, title))
 
     def get(self, artist, title, fresh_s=None):
         self.asked.append((artist, title))
-        if self.error:
-            raise LastFmError(self.error)
+        if self.error or title in self.fail:
+            raise LastFmError(self.error or "down")
         self.known[(artist, title)] = Listeners(self.listeners.get(title), None)
         return self.known[(artist, title)]
 
@@ -367,11 +368,49 @@ class LookupTest(Room):
         counts.known[("Pequena", "Outra")] = Listeners(5000, None)  # only the first song's lookup keeps failing
         ctx = achievements.context("paulo", counts, fans)
         achievements.enrich(plays, 0, counts, fans, dz)
-        self.assertEqual(achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=at(day=16)), [])
+        first = at(day=16)
+        self.assertEqual(achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=first), [])
         self.assertEqual(achievements.load("paulo")["rich_through"], 0)
-        new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=at(day=17, hour=13))
+        self.assertEqual(achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=first + 86400), [])
+        new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=first + achievements.RICH_WAIT_S + 1)
         self.assertIn("fans-100", new)
         self.assertFalse(any(medal_id.startswith("rare") for medal_id in new))
+        self.assertEqual(achievements.load("paulo")["rich_through"], plays[1]["at"])
+        self.assertIsNone(achievements.load("paulo")["stall"])
+
+    def test_a_backlog_bigger_than_one_loop_is_never_forced_through(self):
+        self.join("paulo")
+        plays = [play(uri=f"s{n}", title=f"Song {n}", artists=(f"A{n}",), when=at(day=1) + n) for n in range(10)]
+        counts = FakeCounts({f"Song {n}": (30 if n == 8 else 5000) for n in range(10)})
+        dz, fans = FakeDeezer({f"A{n}": 20_000_000 for n in range(10)}), self.fans()
+        ctx = achievements.context("paulo", counts, fans)
+        now = at(day=20)
+        for loop in range(4):
+            achievements.enrich(plays, achievements.load("paulo")["rich_through"], counts, fans, dz, budget=3)
+            new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=now + loop * 900)
+            expected = plays[min(3 * (loop + 1), 10) - 1]["at"]
+            self.assertEqual(achievements.load("paulo")["rich_through"], expected)
+            if loop == 2:
+                self.assertIn("rare-50", new)
+        data = achievements.load("paulo")
+        self.assertEqual(data["earned"]["rare-50"]["song"]["title"], "Song 8")
+        self.assertIsNone(data["stall"])
+
+    def test_a_lookup_failing_for_one_title_stalls_until_three_days_after_the_cursor_stopped(self):
+        self.join("paulo")
+        plays = [play(uri="a", title="Veneno", artists=("Banda",), when=at(day=1)),
+                 play(uri="b", title="Outra", artists=("Pequena",), when=at(day=1) + 300)]
+        counts, dz, fans = FakeCounts(fail=("Veneno",)), FakeDeezer({"Banda": 20, "Pequena": 5000}), self.fans()
+        counts.known[("Pequena", "Outra")] = Listeners(5000, None)  # only the first song's lookup keeps failing
+        ctx = achievements.context("paulo", counts, fans)
+        now0 = at(day=20)
+        for when in (now0, now0 + 2 * 86400):
+            achievements.enrich(plays, 0, counts, fans, dz)
+            self.assertEqual(achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=when), [])
+            self.assertEqual(achievements.load("paulo")["rich_through"], 0)
+        achievements.enrich(plays, 0, counts, fans, dz)
+        new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=now0 + 3 * 86400 + 1)
+        self.assertIn("fans-100", new)
         self.assertEqual(achievements.load("paulo")["rich_through"], plays[1]["at"])
 
     def test_without_a_key_there_are_no_rare_medals(self):
