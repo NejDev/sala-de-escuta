@@ -44,7 +44,10 @@ Static files are read from disk on each request (images are cached by browsers f
 - `favorites.py`: `data/users/<id>/favorites.json` (curated, discovery with recipe + frequency, or pinned) and `recent.json`.
 - `api.py`: Spotify client with a request gate and persisted pauses (`data/spotify-pauses.json`).
 - `lastfm.py`: Last.fm client and its 30-day cache (`data/lastfm-cache.json`): song listeners for the discoveries'
-  filter. Optional: only with `LASTFM_API_KEY` in `.env`.
+  filter, similar tracks for the rabbit hole from a song, and a song's tags and summary. Optional: only with
+  `LASTFM_API_KEY` in `.env`.
+- `lyrics.py`: lyrics of the song playing from LRCLIB (no key; strict rate limit), one file per track in `data/lyrics/`.
+  The song panel also shows credits from `musicbrainz.py` (by ISRC).
 - `i18n.py`: server messages; `static/i18n.js`: browser texts (a JSON object after `const STRINGS =`).
 - `playlists.py` / `curation.py`: the owner's curated playlists from `playlists.json`.
 - `static/app.js`: the whole front end (no build step, no framework).

@@ -7,10 +7,11 @@ ouviu e toca direto no seu Spotify. Você e até quatro amigos entram cada um co
 em português ou inglês.
 
 - **Sensações**: escreva o que está sentindo (ou escolha um momento) e receba músicas no ritmo certo.
-- **Descobrir**: uma roleta de discos pouco ouvidos do mundo todo e uma toca do coelho que pula de
-  um artista que você curte para os menos conhecidos.
+- **Descobrir**: uma roleta de discos pouco ouvidos do mundo todo (de qualquer gênero ou subgênero) e uma
+  toca do coelho que pula de um artista ou de uma música que você curte para os menos conhecidos.
 - **Novidades**: o que acabou de sair num gênero, só de artistas do tamanho que você escolher.
 - **Artistas**: tudo o que uma banda ou artista lançou, com o trabalho solo de cada integrante e as participações.
+- **Letras**: a letra sincronizada da música tocando, verso a verso, mais quem compôs e o que o Last.fm sabe dela.
 - **Amigos** (para quem ativar): afinidade musical entre amigos, e matches quando vocês ouvem a mesma música.
 - **Favoritas que se atualizam sozinhas**: transforme uma seleção numa playlist que ganha músicas
   novas todo dia, toda semana ou todo mês. Só essas playlists especiais ficam na barra do topo.
@@ -53,7 +54,8 @@ Na primeira visita aparece uma apresentação curta com o mascote; **Como funcio
   e as músicas que você guardou por último.
 - **Player**: tocar, pausar, pular, aleatório, repetir (desligado, tudo, esta faixa), volume e
   progresso. Clique numa faixa para tocar a partir dela. Funciona com o Spotify aberto no PC ou no
-  celular (exige Premium). Na primeira vez, clique em **Autorizar no Spotify** na barra de baixo.
+  celular (exige Premium). Na primeira vez, clique em **Autorizar no Spotify** na barra de baixo. O
+  microfone abre a letra (veja [Letras](#letras)).
 - **Atalhos**: espaço toca/pausa, ← → trocam de faixa, 1–9 trocam de tela.
 
 ### Sensações
@@ -76,7 +78,7 @@ Por que medir? A Spotify parou de entregar BPM para apps novos, e o BPM dos cat�
 sempre vem zerado. O medidor (`spotify_assistant/tempo.py`) acertou 12 de 17 músicas de BPM conhecido,
 mais 2 no dobro/metade; trate o número como aproximado.
 
-Os momentos ficam em `sensations.json` (nome e descrição nos dois idiomas, faixa de BPM, faixa de
+Os momentos aparecem do mais lento ao mais rápido. Eles ficam em `sensations.json` (nome e descrição nos dois idiomas, faixa de BPM, faixa de
 energia de 0 a 1, cor e as buscas usadas como fonte). As medições ficam em `data/tempo-cache.json`
 para não ouvir a mesma prévia duas vezes.
 
@@ -86,8 +88,18 @@ para não ouvir a mesma prévia duas vezes.
   qualquer e faixas menos populares de playlists de gêneros do mundo todo (zamrock, enka, huayno,
   ethio jazz...). A lista de gêneros é `WORLD_GENRES`, em `spotify_assistant/discovery.py`.
   Escolha **Gênero pouco conhecido** para sortear só dessa lista, um gênero diferente em cada carta.
+  Os gêneros principais ficam numa linha embaixo do campo de gênero; escolher um abre uma linha com os
+  subgêneros dele (Emo: midwest emo, screamo, post-hardcore...), cada um conferido nas playlists do catálogo
+  (`SUBGENRES`, em `static/app.js`). Qualquer outro gênero ainda pode ser digitado. Playlists cujo título cita o
+  gênero vêm primeiro; as outras só contam quando nenhuma cita (o catálogo também conhece gêneros por etiqueta:
+  "rap nacional" traz "Essenciais do Rap Brasileiro").
 - **Toca do coelho**: parte de um artista (digitado ou sorteado das suas playlists) e pula 4 vezes
   para artistas relacionados, sempre entre os menos conhecidos. Mostra o caminho todo e o número de fãs.
+  Troque para **Música** (ou use **Toca do coelho daqui** em qualquer achado, no "Tocando agora" do Início ou no
+  painel da letra) e ela pula de música em música parecida: as músicas parecidas do Last.fm, rumo às menos
+  tocadas, sem voltar a um artista que já passou; quatro trilhas de até cinco músicas. Sem a chave do Last.fm, ou
+  para uma música sem nada parecido lá, ela segue pelo artista da música (o Spotify não dá mais músicas parecidas
+  para apps como este).
 
 As duas aceitam um gênero opcional (roleta) e o tamanho do artista em fãs (mínimo e máximo; o menor
 teto é 200). Nenhuma API gratuita diz quantas vezes uma música foi tocada; o número de fãs do artista é a
@@ -111,7 +123,8 @@ lançamento são juntadas, e em trilhas sonoras vale a faixa do próprio artista
 Digite uma banda ou um artista, de qualquer gênero (ex.: Racionais MC's, TWICE, Coldplay), e veja tudo
 o que lançou: álbuns, singles e EPs, participações em músicas de outros artistas, coletâneas e trilhas,
 mais o trabalho solo e as participações de cada integrante e subunidade (inclusive ex-integrantes).
-Filtre por pessoa e por tipo, e ordene dos mais recentes ou dos mais antigos. Uma participação toca a
+Filtre por pessoa e por tipo (uma caixinha por tipo, então "só coletâneas" ou "tudo menos participações"
+funciona), e ordene dos mais recentes ou dos mais antigos. Uma participação toca a
 partir da faixa em que a pessoa aparece.
 
 Quando vários artistas têm o mesmo nome ("Andy"), a sala pergunta qual é, mostrando a foto, os
@@ -121,6 +134,20 @@ Quem faz parte de uma banda vem do [MusicBrainz](https://musicbrainz.org) (dados
 pedido por segundo, guardado por um mês em `data/musicbrainz-cache.json`), que também liga cada pessoa
 ao perfil dela no Spotify. Integrantes sem esse link são procurados pelo nome, e ficam de fora quando o
 nome é ambíguo. Essa busca quase não usa a busca da Spotify, então funciona mesmo com a busca pausada.
+
+### Letras
+
+O microfone do player abre um painel ao lado da página (por cima dela no celular) com a música tocando:
+
+- **Letra**: a letra sincronizada acende verso a verso e acompanha a música; clique num verso para pular para ele;
+  role à mão e ela para de acompanhar até **Voltar ao verso atual**. Letras sem os tempos aparecem como texto.
+  **Traduzir** aparece onde o navegador tem tradutor embutido (Chrome recente): traduz verso a verso, no próprio
+  aparelho. As letras vêm do [LRCLIB](https://lrclib.net) (aberto, grátis, sem chave); cada música é pedida uma vez
+  e guardada em `data/lyrics/` (uma que ele não tem, de novo depois de uma semana). O LRCLIB limita os pedidos:
+  depois de um "pedidos demais" a sala espera o tempo que ele pedir.
+- **Sobre**: ouvintes, reproduções, etiquetas (uma etiqueta vira o gênero da roleta) e o resumo do Last.fm (com a
+  chave); quem compôs, escreveu, produziu e mixou, do MusicBrainz (pelo ISRC da música, guardado por um mês);
+  atalhos para a toca do coelho e para a resenha do álbum.
 
 ### Resenhas
 
@@ -255,8 +282,9 @@ O `refresh` só é necessário se você não deixa o painel aberto (o painel faz
 
 O filtro de ouvintes precisa de uma chave grátis da API do Last.fm: crie uma conta de API em
 https://www.last.fm/api/account/create (qualquer nome de aplicativo; não precisa de callback), copie a "API key" para
-`LASTFM_API_KEY` no `.env` e reinicie o painel. Sem ela, o filtro não aparece. Os termos do Last.fm pedem crédito,
-então o painel cita o Last.fm e liga cada música à página dela lá.
+`LASTFM_API_KEY` no `.env` e reinicie o painel. Sem ela, o filtro não aparece, a toca do coelho por música segue pelo
+artista da música e o painel da letra fica sem os números do Last.fm. Os termos do Last.fm pedem crédito, então o
+painel cita o Last.fm e liga cada música à página dela lá.
 
 ## Personalizar
 
@@ -281,6 +309,7 @@ Os textos da interface ficam em `spotify_assistant/static/i18n.js` (navegador) e
 - `owner.txt`, `sessions.json`: quem é o dono da sala e as sessões dos navegadores.
 - `tempo-cache.json`, `spotify-matches.json`, `spotify-pauses.json`: BPMs medidos, faixas já
   localizadas no Spotify e as pausas de pedidos da Spotify.
+- `lyrics/<id da faixa>.json`: a letra de cada música (ou que o LRCLIB não tinha).
 - `assistant.log`: histórico das execuções (inclusive as agendadas).
 
 ## Problemas comuns

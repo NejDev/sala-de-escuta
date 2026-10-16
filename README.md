@@ -7,10 +7,11 @@ and plays it straight on your Spotify. You and up to four friends each sign in w
 in Portuguese or English.
 
 - **Sensations**: write what you're feeling (or pick a moment) and get songs at the right tempo.
-- **Discover**: a roulette of barely-played records from all over the world, and a rabbit hole that
-  hops from an artist you like toward lesser-known ones.
+- **Discover**: a roulette of barely-played records from all over the world (any genre or subgenre), and
+  a rabbit hole that hops from an artist or a song you like toward lesser-known ones.
 - **New releases**: what just came out in a genre, only from artists of the size you choose.
 - **Artists**: everything a band or artist released, with each member's solo work and their features.
+- **Lyrics**: synced lyrics of the song playing, line by line, plus who wrote it and what Last.fm knows about it.
 - **Friends** (opt-in): musical affinity between friends, and matches when you play the same song.
 - **Favorites that update themselves**: turn a selection into a playlist that gets new songs every
   day, week or month. Only these special playlists go on the top bar.
@@ -53,7 +54,8 @@ The first visit shows a short tour with the mascot; **How it works** at the top 
   releases of your last genre; and the songs you saved most recently.
 - **Player**: play, pause, skip, shuffle, repeat (off, all, this track), volume and progress.
   Click a track to play from it. Works with Spotify open on your PC or phone (requires Premium).
-  The first time, click **Authorize on Spotify** in the bottom bar.
+  The first time, click **Authorize on Spotify** in the bottom bar. The microphone opens the lyrics
+  (see [Lyrics](#lyrics)).
 - **Shortcuts**: space plays/pauses, ← → change tracks, 1–9 switch screens.
 
 ### Sensations
@@ -76,7 +78,7 @@ Why measure? Spotify stopped giving BPM to new apps, and the public catalogs' BP
 zero. The meter (`spotify_assistant/tempo.py`) got 12 of 17 songs with a known BPM right, plus 2 at
 double/half tempo; treat the number as approximate.
 
-The moments live in `sensations.json` (name and description in both languages, BPM range, energy
+The moments are listed from the slowest to the fastest. They live in `sensations.json` (name and description in both languages, BPM range, energy
 range from 0 to 1, color and the searches used as sources). Measurements are cached in
 `data/tempo-cache.json` so the same preview isn't heard twice.
 
@@ -86,8 +88,18 @@ range from 0 to 1, color and the searches used as sources). Measurements are cac
   a random year and less popular tracks from playlists of genres from all over the world (zamrock,
   enka, huayno, ethio jazz...). The genre list is `WORLD_GENRES`, in `spotify_assistant/discovery.py`.
   Pick **Little-known genre** to draw only from that list, a different genre on each card.
+  The main genres sit in a row under the genre field; picking one opens a row with its subgenres
+  (Emo: midwest emo, screamo, post-hardcore...), each checked against the catalog's playlists (`SUBGENRES`, in
+  `static/app.js`). Any other genre can still be typed. Playlists whose title names the genre come first;
+  the others count only when none does (the catalog also knows genres by tag: "rap nacional" brings
+  "Essenciais do Rap Brasileiro").
 - **Rabbit hole**: starts from an artist (typed in or drawn from your playlists) and hops 4 times to
   related artists, always among the lesser-known ones. Shows the whole path and the number of fans.
+  Switch it to **Song** (or use **Rabbit hole from here** on any find, on Home's "Now playing" or in the
+  lyrics panel) and it hops from song to similar song instead: Last.fm's similar tracks, toward the less
+  played, never back to an artist already on the way; four trails of up to five songs. Without a Last.fm
+  key, or for a song Last.fm has nothing like, it goes through the song's artist (Spotify no longer gives
+  similar songs to apps like this one).
 
 Both take an optional genre (roulette) and the artist's size in fans (minimum and maximum; the
 smallest cap is 200). No free API says how many times a song was played; the artist's fan count is the measure
@@ -110,7 +122,8 @@ soundtracks the artist's own track is used.
 Type a band or an artist, of any genre (e.g. Racionais MC's, TWICE, Coldplay), and see everything
 they released: albums, singles and EPs, features on other artists' songs, compilations and soundtracks,
 plus the solo work and features of each member and subunit (former members included). Filter by
-person and by type, and sort newest or oldest first. A feature plays from the track where they appear.
+person and by type (one checkbox per type, so "only compilations" or "everything but features" works), and
+sort newest or oldest first. A feature plays from the track where they appear.
 
 When several artists share the name ("Andy"), the room asks which one, showing each one's photo,
 genres and latest release.
@@ -119,6 +132,20 @@ Who is in a band comes from [MusicBrainz](https://musicbrainz.org) (open data, n
 second, kept for a month in `data/musicbrainz-cache.json`), which also links each person to their
 Spotify profile. Members without that link are looked up by name, and left out when the name is
 ambiguous. This search barely uses Spotify search, so it keeps working while search is paused.
+
+### Lyrics
+
+The microphone in the player opens a panel beside the page (over it on phones) with the song playing:
+
+- **Lyrics**: synced lyrics light up line by line and follow the song; click a line to jump there; scroll
+  by hand and they stop following until **Back to the current line**. Lyrics without timing show as text.
+  **Translate** appears where the browser has a built-in translator (recent Chrome): it translates line by
+  line on the device. Lyrics come from [LRCLIB](https://lrclib.net) (open, free, no key); each song is asked
+  once and kept in `data/lyrics/` (a song it doesn't have, again after a week). LRCLIB limits requests: after
+  a "too many requests" the room waits as long as it asks.
+- **About**: Last.fm's listeners, plays, tags (a tag fills the roulette's genre) and summary (with a Last.fm
+  key); who composed, wrote, produced and mixed it, from MusicBrainz (by the song's ISRC, kept a month);
+  shortcuts to the rabbit hole and the album review.
 
 ### Reviews
 
@@ -250,8 +277,9 @@ python -m spotify_assistant refresh          # updates now every favorite that i
 
 The listener filter needs a free Last.fm API key: create an API account at
 https://www.last.fm/api/account/create (any application name; no callback needed), copy the "API key" into
-`LASTFM_API_KEY` in `.env` and restart the panel. Without it, the filter doesn't show. Last.fm's terms ask for
-credit, so the panel names Last.fm and links each song to its Last.fm page.
+`LASTFM_API_KEY` in `.env` and restart the panel. Without it, the filter doesn't show, the rabbit hole from a song
+goes through the song's artist and the lyrics panel has no Last.fm numbers. Last.fm's terms ask for credit, so the
+panel names Last.fm and links each song to its Last.fm page.
 
 ## Customize
 
@@ -276,6 +304,7 @@ Interface texts are in `spotify_assistant/static/i18n.js` (browser) and `spotify
 - `owner.txt`, `sessions.json`: who owns the room and the browser sessions.
 - `tempo-cache.json`, `spotify-matches.json`, `spotify-pauses.json`: measured BPMs, tracks already
   located on Spotify and Spotify's request pauses.
+- `lyrics/<track id>.json`: each song's lyrics (or that LRCLIB didn't have them).
 - `assistant.log`: run history (including scheduled runs).
 
 ## Common problems
