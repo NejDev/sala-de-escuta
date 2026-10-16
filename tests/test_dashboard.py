@@ -9,7 +9,7 @@ import urllib.request
 from pathlib import Path
 from unittest import mock
 
-from spotify_assistant import auth, config, dashboard, favorites, i18n, social
+from spotify_assistant import achievements, auth, config, dashboard, favorites, i18n, social
 from spotify_assistant.config import Settings
 from spotify_assistant.lastfm import LastFmError, Listeners
 
@@ -775,6 +775,78 @@ class ServerTest(unittest.TestCase):
         names = {s["id"]: s["name"] for s in json.loads(raw)["sensations"]}
         self.assertEqual(names["deep-focus"], "Foco profundo")
 
+
+    def test_achievements_need_friends_and_their_own_switch(self):
+        get = lambda: json.loads(self.request("/api/achievements")[1])
+        self.assertEqual(get(), {"sharing": False, "on": False})
+        self.assertEqual(json.loads(self.request("/api/overview")[1])["achievements"], {"on": False, "new": 0})
+        status, data = self.post("/api/achievements", {"on": True})
+        self.assertEqual((status, data["error"]), (409, "As conquistas vêm do que você ouve: entre no Amigos primeiro."))
+        self.post("/api/friends", {"share": True})
+        status, data = self.post("/api/achievements", {"on": True})
+        self.assertEqual((status, data["on"]), (200, True))
+        self.assertEqual(data["message"], "Pronto! Suas medalhas aparecem aqui conforme você ouve.")
+        self.post("/api/friends", {"share": False, "forget": True})  # leaving Friends erases them
+        self.assertFalse((self.data / "users" / "paulo" / "achievements.json").exists())
+        self.assertEqual(get(), {"sharing": False, "on": False})
+
+    def test_the_owner_turning_friends_off_erases_achievements(self):
+        self.post("/api/friends", {"share": True}, as_user="ana")
+        self.post("/api/achievements", {"on": True}, as_user="ana")
+        self.post("/api/friends/access", {"user": "ana", "allowed": False})
+        self.assertFalse((self.data / "users" / "ana" / "achievements.json").exists())
+        self.assertEqual(self.request("/api/achievements", as_user="ana")[0], 403)
+
+    def test_discoveries_reviews_and_blocks_count_for_participants(self):
+        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
+            self.assertEqual(self.post("/api/hunts", {"kind": "roulette"})[0], 200)  # not taking part yet
+            self.post("/api/friends", {"share": True})
+            self.post("/api/achievements", {"on": True})
+            self.post("/api/hunts", {"kind": "roulette", "rare": True})
+        data = achievements.load("paulo")
+        self.assertTrue({"roulette-1", "roulette-rare"} <= set(data["earned"]))
+        self.assertEqual(data["stats"]["events"]["roulette"], 1)
+        self.post("/api/reviews", {"album": "1weenld61qoidwYuZ1GESA", "rating": 5, "text": "Obra."})
+        self.post("/api/blocked", {"artist": "Alguém"})
+        self.assertTrue({"review-five", "block-1"} <= set(achievements.load("paulo")["earned"]))
+
+    def test_highlights_and_seen_take_only_earned_medals(self):
+        self.post("/api/friends", {"share": True})
+        self.post("/api/achievements", {"on": True})
+        achievements.note("paulo", "block")
+        status, data = self.post("/api/achievements/highlights", {"ids": ["block-1", "rare-10"]})
+        self.assertEqual((status, [medal["id"] for medal in data["me"]["highlights"]]), (200, ["block-1"]))
+        self.assertEqual(self.post("/api/achievements/highlights", {"ids": [f"x{n}" for n in range(11)]})[0], 400)
+        self.assertEqual(self.post("/api/achievements/highlights", {"ids": "block-1"})[0], 400)
+        self.assertEqual(json.loads(self.request("/api/achievements/summary")[1]), {"on": True, "new": 1})
+        self.assertEqual(self.post("/api/achievements/seen", {"ids": ["block-1"]})[0], 200)
+        self.assertEqual(json.loads(self.request("/api/achievements/summary")[1]), {"on": True, "new": 0})
+        self.assertEqual(self.post("/api/achievements/seen", {"ids": ["block-1"]}, as_user="ana")[0], 403)
+
+    def test_friends_show_highlights_only_between_participants(self):
+        for who in ("paulo", "ana"):
+            self.post("/api/friends", {"share": True}, as_user=who)
+        self.post("/api/achievements", {"on": True}, as_user="ana")
+        achievements.note("ana", "block")
+        achievements.set_highlights("ana", ["block-1"])
+        card = lambda: json.loads(self.request("/api/friends")[1])["friends"][0]
+        self.assertEqual(card()["medals"], [])  # Paulo doesn't take part
+        self.post("/api/achievements", {"on": True})
+        self.assertEqual([medal["id"] for medal in card()["medals"]], ["block-1"])
+
+    def test_the_loop_turns_plays_into_medals(self):
+        self.post("/api/friends", {"share": True})
+        self.post("/api/achievements", {"on": True})
+        plays = [{"uri": "spotify:track:1", "title": "Saudade", "artists": [{"id": "md", "name": "Miles Davis"}],
+                  "image": None, "duration_ms": 562000, "at": 1_800_000_000.0,
+                  "album": {"id": "al", "name": "Kind of Blue", "type": "album", "release": "1959-08-17", "tracks": 5},
+                  "track_number": 1, "context": None}]
+        (self.data / "users" / "paulo" / "plays.json").write_text(json.dumps(plays), encoding="utf-8")
+        app = self.server.app
+        app.deezer = mock.Mock(search_artist=mock.Mock(return_value={"nb_fan": 50}))
+        app._achievements_loop()
+        self.assertTrue({"first-play", "saudade", "fans-100"} <= set(achievements.load("paulo")["earned"]))
+        self.assertTrue((self.data / "fans-cache.json").exists())
 
     def test_language_choice(self):
         """The lang cookie wins; without it, the browser's Accept-Language; otherwise English."""

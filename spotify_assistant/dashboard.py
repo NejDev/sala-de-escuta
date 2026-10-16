@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from . import accounts, artists, config, curation, discovery, favorites, i18n, lastfm, reviews, social, tempo
+from . import accounts, achievements, artists, config, curation, discovery, favorites, i18n, lastfm, reviews, social, tempo
 from .api import Spotify, SpotifyError, gate
 from .auth import (
     LIBRARY_SCOPES, PLAYER_SCOPES, SOCIAL_SCOPES, TASTE_SCOPES, AuthRequest, TokenManager, exchange_code, missing_scopes,
@@ -252,7 +252,8 @@ class App:
         # Song listeners for the discoveries' filter: only when the room has a Last.fm key.
         self.listener_counts = (lastfm.ListenerCounts(lastfm.LastFm(settings.lastfm_key))
                                 if settings.lastfm_key else None)
-        self._profiles: dict[str, Profile] = {}
+        self.artist_fans = achievements.ArtistFans()  # fans per artist, for the achievements (cached 30 days)
+        self._profiles:dict[str, Profile] = {}
         self._profiles_lock = threading.Lock()
         self._pending: dict[str, AuthRequest] = {}
         self._refreshing: dict[str, Hunt] = {}  # favorite id -> rebuild in progress
@@ -312,6 +313,8 @@ class App:
             "player_ready": not missing_scopes(user.paths.token, PLAYER_SCOPES),
             "search_paused_s": gate.remaining("search"),
             "lastfm": self.listener_counts is not None,
+            "achievements": (achievements.summary(user.id, self.listener_counts is not None)
+                             if social.allowed(user.id) else None),
         }
 
     def _shelf(self, user: Profile, library: list[dict]) -> list[dict]:
@@ -523,6 +526,10 @@ class App:
         if body.get("kind") != "artist":  # the Artists search mostly finds people through MusicBrainz
             self._check_search()
         hunt, task = self._hunt_task(user, self.spotify(user), body, random.Random())
+        recipe = hunt.recipe or {}
+        achievements.note(user.id, "hunt", lastfm=self.listener_counts is not None, kind=recipe.get("kind"),
+                          rare=bool(recipe.get("rare")), text=bool(recipe.get("text")),
+                          listeners=recipe.get("max_listeners"))
         with user.lock:
             if user.hunt:
                 user.hunt.cancelled = True  # the previous discovery stops at its next step
@@ -693,6 +700,7 @@ class App:
                 names.append(artist)
             user.blocked.add(key)
             self._drop_artist_from_hunt(user, key)
+            achievements.note(user.id, "block")
             message = t("blocked.on", artist=artist)
         else:
             names = [name for name in names if curation.normalize(name) != key]
@@ -835,6 +843,9 @@ class App:
             self._make_favorite(user, playlist["id"], name, every, hunt)
             message += " " + t("fav.added", every=t(f"every.{every}"))
         self._remember(user, uris, name)
+        achievements.note(user.id, "playlist", uri=playlist["uri"])
+        if every:
+            achievements.note(user.id, "favorite")
         return {"message": message, "uri": playlist["uri"], "id": playlist["id"], "favorite": bool(every)}
 
     def _make_favorite(self, user: Profile, playlist_id: str, name: str, every: str, hunt: Hunt) -> None:
@@ -1169,12 +1180,15 @@ class App:
             artist_names.update(social.artist_names(everyone[uid], tastes[uid]))
         mine = everyone.get(user.id, [])
         friends = []
+        medals_on = achievements.taking_part(user.id)
+        lastfm_on = self.listener_counts is not None
         for uid, items in everyone.items():
             if uid != user.id:
                 numbers = social.stats(items)
                 friends.append({"id": uid, "name": names[uid],
                                 "affinity": social.affinity(profiles.get(user.id, {}), profiles[uid], artist_names),
-                                "plays_7d": numbers["plays_7d"]})  # not what they played: only matches show songs
+                                "plays_7d": numbers["plays_7d"],  # not what they played: only matches show songs
+                                "medals": achievements.highlights_of(uid, lastfm_on) if medals_on else []})
         friends.sort(key=lambda friend: -(friend["affinity"] or {}).get("percent", -1))
         me = {**social.stats(mine), "top": not missing_scopes(user.paths.token, TASTE_SCOPES),
               "taste": bool(tastes.get(user.id))}
@@ -1202,6 +1216,8 @@ class App:
                 raise UserError(t("err.which_person"))
             allow = bool(body.get("allowed"))
             social.set_allowed(target, allow)
+            if not allow:
+                achievements.forget(target)  # out of Friends: their medals go with their history
             message = t("friends.access_on" if allow else "friends.access_off", name=accounts.display_name(target))
         return {**self.friends(user), "message": message}
 
@@ -1212,6 +1228,8 @@ class App:
         if share and missing_scopes(user.paths.token, SOCIAL_SCOPES):
             raise UserError(t("friends.need_auth"), 403, scope=True)
         social.set_share(user.id, share, forget=forget)
+        if not share:
+            achievements.forget(user.id)  # leaving Friends erases the achievements built on it
         if share:
             self._collect(user)
             self._collector_wake.set()  # their taste profile gets built in the background right away
@@ -1246,7 +1264,86 @@ class App:
                     continue  # signed out
                 except Exception:
                     log.exception("Reading what %s listens to failed", user_id)
+            self._achievements_loop()
             self._collector_wake.wait(social.COLLECT_EVERY_S)
+
+    def _achievements_loop(self) -> None:
+        """Medals for the people taking part, from the plays just collected (never asks Spotify)."""
+        people = achievements.participants()
+        if not people:
+            return
+        lastfm_on = self.listener_counts is not None
+        plays = {uid: social.plays(uid) for uid in people}
+        for uid in people:
+            try:
+                ctx = achievements.context(uid, self.listener_counts, self.artist_fans)
+                achievements.process(uid, plays[uid], ctx, lastfm_on)
+                achievements.enrich(plays[uid], achievements.load(uid)["rich_through"], self.listener_counts,
+                                    self.artist_fans, self.deezer)
+                achievements.rich_pass(uid, plays[uid], ctx, lastfm_on, self.listener_counts, self.artist_fans)
+            except achievements.Unreadable as err:
+                log.warning("Achievements left alone: %s", err)
+            except Exception:
+                log.exception("Achievements of %s failed", uid)
+        try:
+            achievements.room_pass(plays, lastfm_on)
+            achievements.close_month(plays, self.artist_fans.cached, lastfm_on)
+        except Exception:
+            log.exception("Room achievements failed")
+        if self.listener_counts:
+            self.listener_counts.save()
+        self.artist_fans.save()
+
+    # Achievements: hidden medals and monthly titles, opt-in inside Friends
+
+    def achievements_state(self, user: Profile) -> dict:
+        if not social.allowed(user.id):
+            raise UserError(t("friends.off"), 403)
+        try:
+            return achievements.view(user.id, self.listener_counts is not None, self.artist_fans.cached)
+        except achievements.Unreadable as err:
+            log.warning("Achievements: %s", err)
+            raise UserError(t("ach.unreadable"), 500) from None
+
+    def set_achievements(self, user: Profile, body: dict) -> dict:
+        if not social.allowed(user.id):
+            raise UserError(t("friends.off"), 403)
+        on, forget = bool(body.get("on")), bool(body.get("forget"))
+        if on and not social.sharing(user.id):
+            raise UserError(t("ach.need_friends"), 409)
+        if forget:
+            achievements.forget(user.id)
+        else:
+            achievements.set_on(user.id, on)
+        if on:
+            self._collector_wake.set()  # the history already collected becomes medals right away
+        message = t("ach.joined") if on else t("ach.forgot" if forget else "ach.left")
+        return {**self.achievements_state(user), "message": message}
+
+    @staticmethod
+    def _medal_ids(body: dict) -> list[str]:
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(medal_id, str) for medal_id in ids):
+            raise UserError(t("ach.bad_ids"))
+        return ids
+
+    def achievements_seen(self, user: Profile, body: dict) -> dict:
+        if not achievements.taking_part(user.id):
+            raise UserError(t("ach.off"), 403)
+        achievements.mark_seen(user.id, self._medal_ids(body))
+        return achievements.summary(user.id, self.listener_counts is not None)
+
+    def achievements_highlights(self, user: Profile, body: dict) -> dict:
+        if not achievements.taking_part(user.id):
+            raise UserError(t("ach.off"), 403)
+        ids = self._medal_ids(body)
+        if len(ids) > achievements.MAX_HIGHLIGHTS:
+            raise UserError(t("ach.too_many_highlights", max=achievements.MAX_HIGHLIGHTS))
+        achievements.set_highlights(user.id, ids)
+        return {**self.achievements_state(user), "message": t("ach.highlights_saved")}
+
+    def achievements_summary(self, user: Profile) -> dict:
+        return achievements.summary(user.id, self.listener_counts is not None)
 
     # Reviews: albums rated and written about, private or open to the room
 
@@ -1293,6 +1390,7 @@ class App:
         public = bool(body.get("public"))
         users, _ = self._room()
         reviews.save(user.id, self._album(user, album_id, users), stars, text, public)
+        achievements.note(user.id, "review")
         return {**self.album_reviews(user, album_id), "message": t("reviews.saved_public" if public else "reviews.saved")}
 
     def delete_review(self, user: Profile, body: dict) -> dict:
@@ -1516,6 +1614,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return app.set_sharing(user, body)
         if method == "POST" and path == "/api/friends/access":
             return app.set_friends_access(user, body)
+        if method == "GET" and path == "/api/achievements":
+            return app.achievements_state(user)
+        if method == "POST" and path == "/api/achievements":
+            return app.set_achievements(user, body)
+        if method == "GET" and path == "/api/achievements/summary":
+            return app.achievements_summary(user)
+        if method == "POST" and path == "/api/achievements/seen":
+            return app.achievements_seen(user, body)
+        if method == "POST" and path == "/api/achievements/highlights":
+            return app.achievements_highlights(user, body)
         if method == "GET" and path == "/api/recent":
             return app.recent_finds(user)
         if method == "GET" and path == "/api/favorites/extras":
