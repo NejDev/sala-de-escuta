@@ -848,6 +848,15 @@ class ServerTest(unittest.TestCase):
         self.assertTrue({"first-play", "saudade", "fans-100"} <= set(achievements.load("paulo")["earned"]))
         self.assertTrue((self.data / "fans-cache.json").exists())
 
+    def test_the_achievements_loop_never_raises(self):
+        with mock.patch.object(dashboard.achievements, "participants", side_effect=RuntimeError("boom")):
+            self.server.app._achievements_loop()
+
+    def test_a_failing_medal_count_does_not_break_the_action(self):
+        with mock.patch.object(dashboard.achievements, "note", side_effect=OSError("disk full")):
+            self.assertEqual(self.post("/api/blocked", {"artist": "Alguém"})[0], 200)
+        self.assertIn("Alguém", json.loads(self.request("/api/blocked")[1])["artists"])
+
     def test_language_choice(self):
         """The lang cookie wins; without it, the browser's Accept-Language; otherwise English."""
 

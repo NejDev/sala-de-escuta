@@ -253,7 +253,7 @@ class App:
         self.listener_counts = (lastfm.ListenerCounts(lastfm.LastFm(settings.lastfm_key))
                                 if settings.lastfm_key else None)
         self.artist_fans = achievements.ArtistFans()  # fans per artist, for the achievements (cached 30 days)
-        self._profiles:dict[str, Profile] = {}
+        self._profiles: dict[str, Profile] = {}
         self._profiles_lock = threading.Lock()
         self._pending: dict[str, AuthRequest] = {}
         self._refreshing: dict[str, Hunt] = {}  # favorite id -> rebuild in progress
@@ -527,9 +527,8 @@ class App:
             self._check_search()
         hunt, task = self._hunt_task(user, self.spotify(user), body, random.Random())
         recipe = hunt.recipe or {}
-        achievements.note(user.id, "hunt", lastfm=self.listener_counts is not None, kind=recipe.get("kind"),
-                          rare=bool(recipe.get("rare")), text=bool(recipe.get("text")),
-                          listeners=recipe.get("max_listeners"))
+        self._note(user, "hunt", kind=recipe.get("kind"), rare=bool(recipe.get("rare")),
+                   text=bool(recipe.get("text")), listeners=recipe.get("max_listeners"))
         with user.lock:
             if user.hunt:
                 user.hunt.cancelled = True  # the previous discovery stops at its next step
@@ -700,13 +699,14 @@ class App:
                 names.append(artist)
             user.blocked.add(key)
             self._drop_artist_from_hunt(user, key)
-            achievements.note(user.id, "block")
             message = t("blocked.on", artist=artist)
         else:
             names = [name for name in names if curation.normalize(name) != key]
             user.blocked.discard(key)
             message = t("blocked.off", artist=artist)
         save_blocked(names, user.paths.blocked)
+        if body.get("blocked", True):
+            self._note(user, "block")
         return {"message": message, "artists": load_blocked(user.paths.blocked)}
 
     @staticmethod
@@ -843,9 +843,9 @@ class App:
             self._make_favorite(user, playlist["id"], name, every, hunt)
             message += " " + t("fav.added", every=t(f"every.{every}"))
         self._remember(user, uris, name)
-        achievements.note(user.id, "playlist", uri=playlist["uri"])
+        self._note(user, "playlist", uri=playlist["uri"])
         if every:
-            achievements.note(user.id, "favorite")
+            self._note(user, "favorite")
         return {"message": message, "uri": playlist["uri"], "id": playlist["id"], "favorite": bool(every)}
 
     def _make_favorite(self, user: Profile, playlist_id: str, name: str, every: str, hunt: Hunt) -> None:
@@ -1267,32 +1267,43 @@ class App:
             self._achievements_loop()
             self._collector_wake.wait(social.COLLECT_EVERY_S)
 
-    def _achievements_loop(self) -> None:
-        """Medals for the people taking part, from the plays just collected (never asks Spotify)."""
-        people = achievements.participants()
-        if not people:
-            return
-        lastfm_on = self.listener_counts is not None
-        plays = {uid: social.plays(uid) for uid in people}
-        for uid in people:
-            try:
-                ctx = achievements.context(uid, self.listener_counts, self.artist_fans)
-                achievements.process(uid, plays[uid], ctx, lastfm_on)
-                achievements.enrich(plays[uid], achievements.load(uid)["rich_through"], self.listener_counts,
-                                    self.artist_fans, self.deezer)
-                achievements.rich_pass(uid, plays[uid], ctx, lastfm_on, self.listener_counts, self.artist_fans)
-            except achievements.Unreadable as err:
-                log.warning("Achievements left alone: %s", err)
-            except Exception:
-                log.exception("Achievements of %s failed", uid)
+    def _note(self, user: Profile, event: str, **detail) -> None:
+        """Counts a panel event for the achievements; a failure here never breaks the person's action."""
         try:
-            achievements.room_pass(plays, lastfm_on)
-            achievements.close_month(plays, self.artist_fans.cached, lastfm_on)
+            achievements.note(user.id, event, lastfm=self.listener_counts is not None, **detail)
         except Exception:
-            log.exception("Room achievements failed")
-        if self.listener_counts:
-            self.listener_counts.save()
-        self.artist_fans.save()
+            log.exception("Achievements: couldn't count %s for %s", event, user.id)
+
+    def _achievements_loop(self) -> None:
+        """Medals for the people taking part, from the plays just collected (never asks Spotify).
+        Never raises: the collector thread must go on."""
+        try:
+            people = achievements.participants()
+            if not people:
+                return
+            lastfm_on = self.listener_counts is not None
+            plays = {uid: social.plays(uid) for uid in people}
+            for uid in people:
+                try:
+                    ctx = achievements.context(uid, self.listener_counts, self.artist_fans)
+                    achievements.process(uid, plays[uid], ctx, lastfm_on)
+                    achievements.enrich(plays[uid], achievements.load(uid)["rich_through"], self.listener_counts,
+                                        self.artist_fans, self.deezer)
+                    achievements.rich_pass(uid, plays[uid], ctx, lastfm_on, self.listener_counts, self.artist_fans)
+                except achievements.Unreadable as err:
+                    log.warning("Achievements left alone: %s", err)
+                except Exception:
+                    log.exception("Achievements of %s failed", uid)
+            try:
+                achievements.room_pass(plays, lastfm_on)
+                achievements.close_month(plays, self.artist_fans.cached, lastfm_on)
+            except Exception:
+                log.exception("Room achievements failed")
+            if self.listener_counts:
+                self.listener_counts.save()
+            self.artist_fans.save()
+        except Exception:
+            log.exception("Achievements loop failed")
 
     # Achievements: hidden medals and monthly titles, opt-in inside Friends
 
@@ -1390,7 +1401,7 @@ class App:
         public = bool(body.get("public"))
         users, _ = self._room()
         reviews.save(user.id, self._album(user, album_id, users), stars, text, public)
-        achievements.note(user.id, "review")
+        self._note(user, "review")
         return {**self.album_reviews(user, album_id), "message": t("reviews.saved_public" if public else "reviews.saved")}
 
     def delete_review(self, user: Profile, body: dict) -> dict:
