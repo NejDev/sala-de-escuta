@@ -50,7 +50,8 @@ def fake_measure(data: bytes) -> Analysis:
 
 class FakeDeezer:
     def __init__(self, playlists=None, tracks=None, artists=None, related=None, tops=None,
-                 fans=None, albums=None, album_songs=None):
+                 fans=None, albums=None, album_songs=None, songs=None):
+        self.songs = songs or {}  # track searches: query -> results
         self.playlists = playlists or {}
         self.tracks = tracks or {}
         self.artists = artists or {}
@@ -71,6 +72,9 @@ class FakeDeezer:
 
     def search_playlists(self, query, limit=8):
         return self.playlists.get(query, [])
+
+    def search_tracks(self, query, limit=50):
+        return self.songs.get(query, [])
 
     def playlist_tracks(self, playlist_id, limit=100):
         return self.tracks[playlist_id]
@@ -825,3 +829,152 @@ class ListenerCapTest(FreshMatches):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SongSpotify(FakeSpotify):
+    """Finds songs by their text: every song it has is a candidate, and the matching keeps the right one."""
+
+    def __init__(self, songs, missing=()):
+        super().__init__()
+        self.songs = songs  # (artist, title) pairs
+        self.missing_titles = set(missing)
+        self.text_searches = []
+
+    def search(self, query, kind, offset=0):
+        if query.startswith("isrc:"):
+            return super().search(query, kind, offset)
+        self.text_searches.append(query)
+        return [{"uri": f"spotify:track:{title}", "name": title, "artists": [{"name": artist}],
+                 "album": {"images": []}, "duration_ms": 1000}
+                for artist, title in self.songs if title not in self.missing_titles]
+
+
+def similar_from(graph):
+    """Last.fm's similar tracks by title, closest first; a title it doesn't know has no record."""
+    def similar(artist, title):
+        if title not in graph:
+            return None
+        return [lastfm.Similar(by, name, 1 - index / 100, plays) for index, (by, name, plays) in enumerate(graph[title])]
+    return similar
+
+
+EVERLONG = {"artist": "Foo Fighters", "title": "Everlong"}
+TRAIL = {
+    "Everlong": [("Foo Fighters", "My Hero", 100), ("Weezer", "Say It Ain't So", 50)],
+    "Say It Ain't So": [("Weezer", "Buddy Holly", 70), ("Pixies", "Where Is My Mind?", 30)],
+    "Where Is My Mind?": [("Foo Fighters", "Big Me", 5), ("Built to Spill", "Car", 10)],
+    "Car": [],
+}
+TRAIL_SONGS = [("Foo Fighters", "My Hero"), ("Foo Fighters", "Big Me"), ("Weezer", "Say It Ain't So"),
+               ("Weezer", "Buddy Holly"), ("Pixies", "Where Is My Mind?"), ("Built to Spill", "Car")]
+
+
+def t_pt(key, **values):
+    i18n.use("pt")
+    return i18n.t(key, **values)
+
+
+class SongHoleTest(FreshMatches):
+    def setUp(self):
+        super().setUp()
+        discovery.fan_counts = discovery.FanCounts()
+
+    def hole(self, seed=EVERLONG, graph=TRAIL, sp=None, dz=None, walks=1, **options):
+        hunt = discovery.Hunt("rabbit", "Toca do coelho")
+        similar = similar_from(graph) if graph is not None else None
+        discovery.song_hole(hunt, sp or SongSpotify(TRAIL_SONGS), dz or FakeDeezer(), similar, random.Random(1), seed,
+                            walks=walks, **options)
+        return hunt
+
+    def test_hops_from_song_to_song_never_back_to_an_artist_on_the_way(self):
+        hunt = self.hole()
+        self.assertEqual([f.title for f in hunt.finds], ["Say It Ain't So", "Where Is My Mind?", "Car"])
+        chain = hunt.chains[0]
+        self.assertEqual([step["name"] for step in chain["path"]],
+                         ["Everlong (Foo Fighters)", "Say It Ain't So (Weezer)", "Where Is My Mind? (Pixies)",
+                          "Car (Built to Spill)"])
+        self.assertEqual([f.reason for f in hunt.finds],
+                         ["Passo 1 de 3 a partir de “Everlong”.", "Passo 2 de 3 a partir de “Everlong”.",
+                          "Fim da trilha: 3 músicas depois de “Everlong”."])
+        self.assertEqual(hunt.label, "Toca do coelho: Everlong")
+
+    def test_leans_toward_the_less_played(self):
+        graph = {"Everlong": [(f"Banda {n}", f"Música {n}", plays) for n, plays in
+                              enumerate([5000, 4000, 10, 3000, 2000, 1000])]}
+        songs = [(f"Banda {n}", f"Música {n}") for n in range(6)]
+        firsts = set()
+        for seed in range(12):
+            hunt = discovery.Hunt("rabbit", "Toca do coelho")
+            discovery.song_hole(hunt, SongSpotify(songs), FakeDeezer(), similar_from(graph), random.Random(seed),
+                                EVERLONG, walks=1)
+            firsts.add(hunt.finds[0].title)
+        self.assertEqual(firsts, {"Música 2", "Música 5"})  # the least played third
+
+    def test_trips_dont_repeat_songs(self):
+        hunt = self.hole(walks=3)
+        uris = [f.uri for f in hunt.finds]
+        self.assertEqual(len(uris), len(set(uris)))
+        self.assertEqual(hunt.progress, 3)
+
+    def test_blocked_and_religious_songs_are_skipped(self):
+        graph = {"Everlong": [("Weezer", "Say It Ain't So", 5), ("Hillsong", "Louvor a Deus", 1),
+                              ("Pixies", "Where Is My Mind?", 9)]}
+        songs = [("Weezer", "Say It Ain't So"), ("Hillsong", "Louvor a Deus"), ("Pixies", "Where Is My Mind?")]
+        hunt = self.hole(graph=graph, sp=SongSpotify(songs), blocked=discovery.blocked_set(["Weezer"]))
+        self.assertEqual([f.title for f in hunt.finds], ["Where Is My Mind?"])
+
+    def test_listener_cap_and_size_apply_to_each_step(self):
+        graph = {"Everlong": [("Weezer", "Say It Ain't So", 5), ("Pixies", "Where Is My Mind?", 9),
+                              ("Built to Spill", "Car", 20)]}
+        cap = discovery.ListenerCap(100, FakeLastFm({"Say It Ain't So": 90000, "Where Is My Mind?": 40, "Car": 30}))
+        dz = FakeDeezer(artists={"Pixies": {"id": 2, "name": "Pixies", "nb_fan": 2_000_000},
+                                 "Built to Spill": {"id": 3, "name": "Built to Spill", "nb_fan": 90_000}})
+        hunt = self.hole(graph=graph, dz=dz, listeners=cap, size=discovery.FanRange(0, 100_000))
+        self.assertEqual([(f.title, f.fans, f.lastfm["listeners"]) for f in hunt.finds], [("Car", 90_000, 30)])
+
+    def test_spotify_lookups_per_step_are_capped(self):
+        graph = {"Everlong": [(f"Banda {n}", f"Música {n}", n) for n in range(9)]}
+        songs = [(f"Banda {n}", f"Música {n}") for n in range(9)]
+        sp = SongSpotify(songs, missing={f"Música {n}" for n in range(9)})
+        hunt = self.hole(graph=graph, sp=sp)
+        self.assertEqual(len(sp.text_searches), discovery.SONG_HOP_TRIES)
+        self.assertEqual(hunt.finds, [])
+        self.assertEqual(hunt.message, t_pt("rabbit.none"))
+
+    def test_a_typed_song_is_looked_up_in_the_catalog_first(self):
+        dz = FakeDeezer(songs={"everlong foo": [{"id": 9, "title": "Everlong", "title_short": "Everlong",
+                                                 "artist": {"name": "Foo Fighters"}}]})
+        sp = SongSpotify(TRAIL_SONGS)
+        hunt = self.hole(seed="everlong foo", dz=dz, sp=sp)
+        self.assertEqual(hunt.label, "Toca do coelho: Everlong")
+        self.assertEqual(len(hunt.finds), 3)
+        self.assertNotIn("everlong foo", sp.text_searches)
+
+    def test_then_on_spotify(self):
+        class TypedSpotify(SongSpotify):
+            def search(self, query, kind, offset=0):
+                if query == "everlong":
+                    return [{"uri": "spotify:track:ev", "name": "Everlong", "artists": [{"name": "Foo Fighters"}]}]
+                return super().search(query, kind, offset)
+        hunt = self.hole(seed="everlong", sp=TypedSpotify(TRAIL_SONGS))
+        self.assertEqual(hunt.label, "Toca do coelho: Everlong")
+        self.assertEqual(len(hunt.finds), 3)
+
+    def test_a_song_nobody_finds(self):
+        hunt = self.hole(seed="zzzz", sp=SongSpotify([]))
+        self.assertEqual((hunt.finds, hunt.message), ([], t_pt("rabbit.song_unknown")))
+
+    def test_a_song_last_fm_doesnt_know_goes_through_its_artist(self):
+        dz = FakeDeezer(
+            artists={"Foo Fighters": {"id": 1, "name": "Foo Fighters", "nb_fan": 5_000_000}},
+            related={1: [{"id": 2, "name": "Pequena", "nb_fan": 3800}]},
+            tops={2: [{"id": 21, "title": "Faixa 21"}, {"id": 22, "title": "Faixa 22"}]},
+        )
+        for graph in ({}, None):  # no record of the song; no Last.fm key at all
+            with self.subTest(graph=graph):
+                discovery.matches = discovery.MatchCache()
+                hunt = self.hole(graph=graph, dz=dz, sp=FakeSpotify())
+                self.assertEqual([f.uri for f in hunt.finds], ["spotify:track:21", "spotify:track:22"])
+                self.assertTrue(hunt.message.startswith(
+                    "Nenhuma música parecida com “Everlong” por aqui: a toca seguiu pelo artista, Foo Fighters."),
+                    hunt.message)

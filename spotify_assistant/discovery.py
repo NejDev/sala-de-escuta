@@ -6,7 +6,8 @@
 - Roulette: draws barely-played albums from any year (Spotify's tag:hipster) and
   lesser-known tracks from genres all over the world (Deezer).
 - Rabbit hole: starts from an artist you already listen to and hops from related
-  artist to related artist, always toward the lesser-known ones.
+  artist to related artist, always toward the lesser-known ones. Started from a song,
+  it hops from song to song instead (Last.fm's similar tracks, toward the less played).
 - New releases: the latest releases from a genre's artists, within the chosen size.
 
 Everything ends up on Spotify: Deezer tracks are located by ISRC.
@@ -29,7 +30,7 @@ from typing import Callable, Collection, Iterator
 from . import config, curation, i18n, tempo
 from .api import Spotify, SpotifyError
 from .deezer import Deezer, DeezerError
-from .lastfm import Listeners
+from .lastfm import LastFmError, Listeners, Similar
 from .i18n import t
 from .views import pick_image
 
@@ -40,6 +41,9 @@ ROULETTE_COUNT = 12
 RABBIT_WALKS = 4
 RABBIT_HOPS = 4
 RABBIT_TRACKS = 2  # from the last artist; one from each artist in between
+RABBIT_SONG_HOPS = 5  # a trip from a song: five songs, one per step
+SONG_HOP_CHOICES = 15  # a step picks among the closest similar tracks...
+SONG_HOP_TRIES = 3  # ...and looks up at most this many on Spotify (each one is a search)
 MIN_FANS = 100
 LISTEN_THREADS = 6
 SIZE_BATCH = 24  # tracks whose artist's fans are checked at once (Sensations)
@@ -1175,6 +1179,132 @@ def rabbit_hole(
                 "path": [{"name": artist["name"], "fans": artist.get("nb_fan")} for artist in path],
                 "finds": finds,
             })
+            hunt.finds.extend(finds)
+        hunt.progress = index + 1
+    hunt.message = (
+        t("rabbit.done", chains=len(hunt.chains), count=len(hunt.finds)) if hunt.chains else t("rabbit.none")
+    )
+
+
+# ---------- Rabbit hole from a song
+
+
+def find_song(sp: Spotify, dz: Deezer, seed: dict | str) -> dict | None:
+    """The song to start from: as given ({"artist", "title"}), or what was typed, found in the catalog or on Spotify."""
+    if isinstance(seed, dict):
+        return seed
+    for track in dz.search_tracks(seed, limit=10):
+        artist = (track.get("artist") or {}).get("name")
+        title = track.get("title_short") or track.get("title")
+        if artist and title and not is_junk(track):
+            return {"artist": artist, "title": title}
+    for track in sp.search(seed, "track"):
+        if track.get("artists") and track.get("name"):
+            return {"artist": track["artists"][0]["name"], "title": track["name"]}
+    return None
+
+
+def song_key(artist: str, title: str) -> str:
+    return f"{curation.normalize(artist)}|{curation.normalize(curation.base_title(title))}"
+
+
+def song_trip(
+    sp: Spotify, dz: Deezer, similar: Callable[[str, str], list[Similar] | None], rng: random.Random, seed: dict,
+    taken: set[str], blocked: Collection[str] = frozenset(), size: FanRange = ANY_SIZE,
+    listeners: ListenerCap = NO_CAP, hops: int = RABBIT_SONG_HOPS,
+) -> tuple[list[dict], list[Find]]:
+    """Song to similar song, never back to an artist already on the way; each step is one find."""
+    path = [{"name": f"{seed['title']} ({seed['artist']})"}]
+    artists = {curation.normalize(seed["artist"])}
+    current, finds = seed, []
+    for _ in range(hops):
+        options = [
+            option for option in (similar(current["artist"], current["title"]) or [])[:SONG_HOP_CHOICES]
+            if curation.normalize(option.artist) not in artists and curation.normalize(option.artist) not in blocked
+            and not is_religious(option.artist, option.title) and song_key(option.artist, option.title) not in taken
+        ]
+        # Toward the less played: the least played third first, in random order, then the others.
+        options.sort(key=lambda option: option.playcount)
+        third = options[: max(1, len(options) // 3)]
+        rest = options[len(third):]
+        rng.shuffle(third)
+        rng.shuffle(rest)
+        step, tries = None, 0
+        for option in third + rest:
+            fans = fan_counts.by_name(dz, option.artist) if size.active else None
+            if size.active and not size.ok(fans):
+                continue
+            fits, heard = listeners.check(option.artist, option.title)
+            if not fits:
+                continue
+            tries += 1
+            match = to_spotify(sp, {"artist": {"name": option.artist}, "title": option.title})
+            if match and match["uri"] not in taken and not religious_track(match) and not blocked_track(match, blocked):
+                step = find_from(match, fans=fans, lastfm=heard)
+                current = {"artist": option.artist, "title": option.title}
+                break
+            if tries == SONG_HOP_TRIES:
+                break
+        if step is None:
+            break
+        taken.update({song_key(current["artist"], current["title"]), step.uri})
+        artists.add(curation.normalize(current["artist"]))
+        path.append({"name": f"{current['title']} ({current['artist']})"})
+        finds.append(step)
+    for number, find in enumerate(finds, start=1):
+        find.reason = (t("reason.song_end", hops=len(finds), title=seed["title"]) if number == len(finds)
+                       else t("reason.song_hop", hop=number, hops=len(finds), title=seed["title"]))
+    return path, finds
+
+
+def song_hole(
+    hunt: Hunt, sp: Spotify, dz: Deezer, similar: Callable[[str, str], list[Similar] | None] | None,
+    rng: random.Random, seed: dict | str, walks: int = RABBIT_WALKS, blocked: Collection[str] = frozenset(),
+    size: FanRange = ANY_SIZE, listeners: ListenerCap = NO_CAP,
+) -> None:
+    """Trips from one song. Without Last.fm, or for a song it has nothing like, the hole goes through the song's
+    artist (Spotify no longer offers similar songs to apps like this one)."""
+    hunt.total = walks
+    hunt.message = t("rabbit.finding_song")
+    song = find_song(sp, dz, seed)
+    if song is None:
+        hunt.message = t("rabbit.song_unknown")
+        return
+    hunt.label = t("label.rabbit_song", title=song["title"])
+    known: dict[str, list[Similar] | None] = {}
+
+    def ask(artist: str, title: str) -> list[Similar] | None:
+        key = song_key(artist, title)
+        if key not in known:
+            known[key] = similar(artist, title)
+        return known[key]
+
+    try:
+        first = ask(song["artist"], song["title"]) if similar else None
+    except LastFmError as err:
+        log.warning("Rabbit hole from a song: Last.fm %s", err.kind)
+        first = None
+    if not first:
+        rabbit_hole(hunt, sp, dz, rng, [song["artist"]], walks, blocked, size, listeners)
+        hunt.message = f"{t('rabbit.song_by_artist', title=song['title'], artist=song['artist'])} {hunt.message}"
+        return
+    taken = {song_key(song["artist"], song["title"])}
+    for index in range(walks):
+        if hunt.cancelled:
+            return
+        hunt.message = t("rabbit.going", seed=song["title"])
+        try:
+            path, finds = song_trip(sp, dz, ask, rng, song, taken, blocked, size, listeners)
+        except (SpotifyError, DeezerError) as err:
+            if isinstance(err, SpotifyError) and err.status == 429:
+                raise  # Spotify pause: insisting only makes it longer
+            log.warning("Rabbit hole from a song: %s", err)
+            continue
+        except LastFmError as err:  # keep what the earlier trips found
+            log.warning("Rabbit hole from a song: Last.fm %s", err.kind)
+            break
+        if finds:
+            hunt.chains.append({"path": path, "finds": finds})
             hunt.finds.extend(finds)
         hunt.progress = index + 1
     hunt.message = (

@@ -713,6 +713,21 @@ a.brand { color: inherit; text-decoration: none; }
 .add-button.is-added { border-color: color-mix(in srgb, var(--mood) 45%, transparent); color: var(--mood); }
 
 .chain { padding: 26px 12px 6px; }
+/* Rabbit hole: start from a band or a song. */
+.seg { display: inline-flex; margin: 4px 0 14px; padding: 3px; border: 1px solid var(--line); border-radius: 999px; }
+.seg-button {
+  padding: 6px 16px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--smoke);
+  font-size: .875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.seg-button:hover { color: var(--linen); }
+.seg-button[aria-pressed="true"] { background: var(--linen); color: var(--ink); }
+.now-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .chain-path {
   display: flex;
   flex-wrap: wrap;

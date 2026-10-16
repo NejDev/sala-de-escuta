@@ -903,19 +903,28 @@ function discoverIntro() {
     "roulette-genre-list");
   const picker = genrePicker("rouletteGenre", genre.querySelector("input"));
   genre.querySelector("input").addEventListener("input", () => picker.refresh());
+  const bySong = state.filters.seedMode === "song";
   const seed = h("input", {
     class: "adder-input",
     id: "seed-input",
     type: "search",
     autocomplete: "off",
     spellcheck: "false",
-    placeholder: t("discover.seed_placeholder"),
+    maxlength: "200",
+    placeholder: t(bySong ? "discover.song_placeholder" : "discover.seed_placeholder"),
   });
   seed.value = state.seed;
   seed.addEventListener("input", () => { state.seed = seed.value; });
+  const enter = () => startHunt({ kind: "rabbit", seed: seed.value, ...(bySong ? { mode: "song" } : {}), ...sizeBody() });
   seed.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") startHunt({ kind: "rabbit", seed: seed.value, ...sizeBody() });
+    if (event.key === "Enter") enter();
   });
+  const mode = (value, label) => h("button", {
+    class: "seg-button",
+    type: "button",
+    "aria-pressed": String((state.filters.seedMode || "artist") === value),
+    onclick: () => { state.filters.seedMode = value; saveFilters(); renderIntro(); },
+  }, label);
   return [
     viewHead("roulette", t("view.discover"), t("discover.description"), pauseNotice()),
     h("div", { class: "filters" },
@@ -937,11 +946,12 @@ function discoverIntro() {
         digger()),
       h("section", { class: "path", style: "--tone: #9DB4E6" },
         h("h2", { class: "path-name" }, t("discover.rabbit")),
-        h("p", { class: "path-text" }, t("discover.rabbit_text")),
-        h("label", { class: "adder-label", for: "seed-input" }, t("discover.seed_label")),
+        h("p", { class: "path-text" }, t(bySong ? "discover.rabbit_song_text" : "discover.rabbit_text")),
+        h("div", { class: "seg", role: "group", "aria-label": t("discover.start_from") },
+          mode("artist", t("discover.by_artist")), mode("song", t("discover.by_song"))),
+        h("label", { class: "adder-label", for: "seed-input" }, t(bySong ? "discover.song_label" : "discover.seed_label")),
         seed,
-        h("button", { class: "play-button", type: "button", onclick: () => startHunt({ kind: "rabbit", seed: seed.value, ...sizeBody() }) },
-          t("discover.enter")))),
+        h("button", { class: "play-button", type: "button", onclick: enter }, t("discover.enter")))),
   ];
 }
 
@@ -1978,8 +1988,11 @@ function nowCard() {
       h("p", { class: "now-card-title" }, item.title),
       h("p", { class: "meta" }, item.subtitle),
       player.device?.name && h("p", { class: "meta" }, t("player.on_device", { name: player.device.name })),
-      h("button", { class: "ghost-button is-small", type: "button", onclick: togglePlay },
-        t(player.is_playing ? "player.pause" : "player.play"))));
+      h("div", { class: "now-card-actions" },
+        h("button", { class: "ghost-button is-small", type: "button", onclick: togglePlay },
+          t(player.is_playing ? "player.pause" : "player.play")),
+        item.artists?.length > 0 && h("button", { class: "text-button", type: "button",
+          onclick: () => rabbitFrom(item.artists[0], item.title) }, t("find.rabbit")))));
 }
 
 /** What was taken off the bar, one click away from coming back. */
@@ -2327,9 +2340,17 @@ function findRow(find, finds, index, isNew) {
     open && h("div", { class: "find-details" },
       details && h("span", null, details),
       find.lastfm && lastfmLine(find.lastfm),
+      artist && h("button", { class: "text-button", type: "button", onclick: () => rabbitFrom(artist, find.title) },
+        t("find.rabbit")),
       artist && h("button", { class: "text-button", type: "button", onclick: () => setBlocked(artist, true) },
         t("find.block", { artist }))),
   );
+}
+
+/** A rabbit hole that hops from this song to similar ones, shown in Discover. */
+async function rabbitFrom(artist, title) {
+  if (state.view !== "discover") await go("discover");
+  startHunt({ kind: "rabbit", song: { artist, title }, ...sizeBody() });
 }
 
 async function setBlocked(artist, blocked) {
@@ -2370,7 +2391,8 @@ function chainRow(chain) {
   return h("li", { class: "chain" },
     h("ol", { class: "chain-path", "aria-label": t("chain.label") },
       chain.path.map((artist) => h("li", null, artist.name))),
-    h("p", { class: "meta", title: t("chain.fans_hint") }, `${last.name}: ${fans(last.fans)}.`));
+    // Trips from a song list songs; only an artist's path says how many fans its last artist has.
+    "fans" in last && h("p", { class: "meta", title: t("chain.fans_hint") }, `${last.name}: ${fans(last.fans)}.`));
 }
 
 // ---------- Keeping what you liked: a new playlist, or adding to one you already have

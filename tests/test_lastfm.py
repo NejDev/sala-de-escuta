@@ -73,6 +73,34 @@ class ClientTest(unittest.TestCase):
                 client(LastFmServer((payload, status))).track("X", "Y")
             self.assertEqual(caught.exception.kind, kind)
 
+    def test_similar_tracks_closest_first(self):
+        payload = {"similartracks": {"track": [
+            {"name": "Blue in Green", "playcount": "900", "match": "1.0", "artist": {"name": "Miles Davis"}},
+            {"name": "Naima", "playcount": 5000, "match": 0.7, "artist": {"name": "John Coltrane"}},
+            {"name": "", "match": 0.5, "artist": {"name": "Sem título"}},
+            {"name": "Sem artista", "match": 0.4},
+        ]}}
+        server = LastFmServer((payload, 200))
+        found = client(server).similar("Miles Davis", "So What - Remastered 2005")
+        self.assertEqual(found, [lastfm.Similar("Miles Davis", "Blue in Green", 1.0, 900),
+                                 lastfm.Similar("John Coltrane", "Naima", 0.7, 5000)])
+        self.assertIn("method=track.getSimilar", server.urls[0])
+        self.assertIn("track=So+What&", server.urls[0])
+
+    def test_similar_to_an_unknown_track_is_none(self):
+        self.assertIsNone(client(LastFmServer(({"error": 6, "message": "Track not found"}, 200))).similar("X", "Y"))
+        self.assertEqual(client(LastFmServer(({"similartracks": {"track": []}}, 200))).similar("X", "Y"), [])
+        with self.assertRaises(lastfm.LastFmError):
+            client(LastFmServer(({"error": 10}, 403))).similar("X", "Y")
+
+    def test_the_cache_asks_for_similar_tracks_every_time(self):
+        server = LastFmServer(({"similartracks": {"track": [
+            {"name": "Naima", "playcount": 5, "match": 1, "artist": {"name": "John Coltrane"}}]}}, 200))
+        counts = lastfm.ListenerCounts(client(server), Path(tempfile.mkdtemp()) / "cache.json")
+        for _ in range(2):
+            self.assertEqual(counts.similar("Miles Davis", "So What"), [lastfm.Similar("John Coltrane", "Naima", 1.0, 5)])
+        self.assertEqual(len(server.urls), 2)
+
     def test_unexpected_answers_are_down(self):
         for payload in (b"<html>maintenance</html>", [1, 2], {"something": "else"}):
             with self.subTest(payload=payload), self.assertRaises(lastfm.LastFmError) as caught:

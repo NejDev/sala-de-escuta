@@ -77,6 +77,14 @@ class FakeSpotify:
         return [{"uri": "spotify:track:a", "artists": [{"id": "someone"}]},
                 {"uri": "spotify:track:b", "artists": [{"id": "someone"}, {"id": "nayeon"}]}]
 
+    playing = None  # what /me/player answers: None is nothing playing
+
+    def playback(self):
+        return self.playing
+
+    def library_contains(self, uris):
+        return [uri in getattr(self, "library", set()) for uri in uris]
+
     def save_to_library(self, uris):
         self.library = getattr(self, "library", set()) | set(uris)
 
@@ -143,6 +151,9 @@ class FakeCounts:
 
     def get(self, artist, title, fresh_s=None):
         return Listeners(None, None)
+
+    def similar(self, artist, title):
+        return None
 
     def save(self):
         self.saved += 1
@@ -565,6 +576,35 @@ class ServerTest(unittest.TestCase):
             task()
         self.assertEqual((seen[0].max, counts.saved), (50, 1))
 
+    def test_rabbit_hole_from_a_song(self):
+        user = self.server.app.profile("paulo")
+        seen = []
+
+        def song_hole(hunt, sp, dz, similar, rng, seed, **options):
+            seen.append((similar, seed))
+
+        with mock.patch.object(dashboard.discovery, "song_hole", song_hole):
+            hunt, task = self.server.app._hunt_task(user, self.fake, {"kind": "rabbit", "mode": "song",
+                                                                      "seed": "  Everlong   foo "}, None)
+            task()
+            self.assertEqual(seen[-1], (None, "Everlong foo"))  # this room has no Last.fm key
+            self.assertEqual((hunt.recipe["mode"], hunt.recipe["seed"]), ("song", "Everlong foo"))
+            counts = self.server.app.listener_counts = FakeCounts()
+            song = {"artist": " Foo Fighters", "title": "Everlong ", "extra": "x"}
+            hunt, task = self.server.app._hunt_task(user, self.fake, {"kind": "rabbit", "song": song}, None)
+            task()
+            self.assertEqual(seen[-1], (counts.similar, {"artist": "Foo Fighters", "title": "Everlong"}))
+            self.assertEqual(hunt.recipe["song"], {"artist": "Foo Fighters", "title": "Everlong"})
+        with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
+            refused = [{"mode": "song", "seed": " "}, {"song": "Everlong"}, {"song": {"artist": "Foo Fighters"}},
+                       {"song": {"artist": "x" * 201, "title": "y"}}, {"mode": "song", "seed": "x" * 201}]
+            for body in refused:
+                with self.subTest(body=body):
+                    self.assertEqual(self.request("/api/hunts", {"kind": "rabbit", **body})[0], 400)
+            # By artist, as before: the recipe has no song.
+            self.assertEqual(self.request("/api/hunts", {"kind": "rabbit", "seed": "Chet Baker"})[0], 200)
+            self.assertNotIn("mode", self.server.app.profile("paulo").hunt.recipe)
+
     def test_lastfm_failures_end_the_discovery_with_a_message(self):
         from spotify_assistant.discovery import Hunt
 
@@ -611,6 +651,19 @@ class ServerTest(unittest.TestCase):
         self.post("/api/player", {"action": "like", "uri": "spotify:track:1", "value": False})
         self.assertEqual(self.fake.library, {"spotify:episode:9"})
         self.assertEqual(self.post("/api/player", {"action": "like", "uri": "spotify:album:2", "value": True})[0], 400)
+
+    def test_the_song_playing_says_its_artists_album_and_isrc(self):
+        self.assertEqual(json.loads(self.request("/api/player")[1]), {"item": None})
+        album = {**TRACK["album"], "id": "kob", "name": "Kind of Blue"}
+        self.fake.playing = {"is_playing": True, "progress_ms": 1000, "device": {"name": "PC", "volume_percent": 50},
+                             "item": {**TRACK, "album": album, "external_ids": {"isrc": "USSM15900113"},
+                                      "artists": [{"name": "Miles Davis"}, {"name": "John Coltrane"}]}}
+        item = json.loads(self.request("/api/player")[1])["item"]
+        self.assertEqual((item["artists"], item["album"], item["album_id"], item["isrc"]),
+                         (["Miles Davis", "John Coltrane"], "Kind of Blue", "kob", "USSM15900113"))
+        self.fake.playing["item"] = {"type": "episode", "uri": "spotify:episode:9", "name": "Ep", "show": {"name": "Pod"}}
+        item = json.loads(self.request("/api/player")[1])["item"]
+        self.assertEqual((item["artists"], item["album"], item["isrc"]), ([], None, None))
 
     def test_player_keeps_working_without_the_library_permission(self):
         token = {"scope": auth.PLAYER_SCOPES + " playlist-read-private", "access_token": "x", "refresh_token": "y",

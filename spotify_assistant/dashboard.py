@@ -69,6 +69,7 @@ PLAYLIST_NAME_MAX = 100
 SAVE_MAX_TRACKS = 500
 ITEMS_PER_ADD = 100  # Spotify's limit per request
 FEELING_MAX_CHARS = 60
+SONG_MAX_CHARS = 200  # a song for the rabbit hole: what was typed, or its artist and title
 REPEAT_MODES = ("off", "context", "track")
 PENDING_LOGIN_TTL_S = 15 * 60
 
@@ -208,6 +209,21 @@ def listener_cap(body: dict, counts: lastfm.ListenerCounts | None) -> discovery.
     if counts is None:
         raise UserError(t("lastfm.no_key"))
     return discovery.ListenerCap(value, counts.get)
+
+
+def song_from(body: dict) -> dict | None:
+    """The song a rabbit hole starts from when it came from the screen ({"artist", "title"}), or None."""
+    song = body.get("song")
+    if song in (None, ""):
+        return None
+    if not isinstance(song, dict):
+        raise UserError(t("err.rabbit_song"))
+    fields = {key: " ".join(str(song.get(key) or "").split()) for key in ("artist", "title")}
+    if not all(fields.values()):
+        raise UserError(t("err.rabbit_song"))
+    if any(len(value) > SONG_MAX_CHARS for value in fields.values()):
+        raise UserError(t("err.feeling_too_long", max=SONG_MAX_CHARS))
+    return fields
 
 
 def genre_from(body: dict, required: bool = False) -> str | None:
@@ -427,10 +443,18 @@ class App:
             return {"item": None}
         device = data.get("device") or {}
         library_ready = not missing_scopes(user.paths.token, LIBRARY_SCOPES)
+        item, album = data["item"], data["item"].get("album") or {}
         return {
-            "liked": self._liked(user, sp, data["item"].get("uri", "")) if library_ready else None,
+            "liked": self._liked(user, sp, item.get("uri", "")) if library_ready else None,
             "library_ready": library_ready,
-            "item": {**item_row(data["item"], image_size=120), "album_id": (data["item"].get("album") or {}).get("id")},
+            "item": {
+                **item_row(item, image_size=120),
+                "album_id": album.get("id"),
+                # For the lyrics and for "rabbit hole from here": who sings it and which recording it is.
+                "artists": [artist.get("name", "") for artist in item.get("artists") or []],
+                "album": album.get("name"),
+                "isrc": (item.get("external_ids") or {}).get("isrc"),
+            },
             "is_playing": data.get("is_playing", False),
             "progress_ms": data.get("progress_ms") or 0,
             "shuffle": data.get("shuffle_state", False),
@@ -576,6 +600,20 @@ class App:
             def task() -> None:
                 discovery.roulette(hunt, sp, self.deezer, rng, blocked=user.blocked, genre=genre, size=size, rare=rare,
                                    listeners=listeners)
+        elif kind == "rabbit" and (body.get("song") or body.get("mode") == "song"):
+            song = song_from(body)
+            seed = " ".join(str(body.get("seed") or "").split())
+            if not (song or seed):
+                raise UserError(t("err.rabbit_song"))
+            if len(seed) > SONG_MAX_CHARS:
+                raise UserError(t("err.feeling_too_long", max=SONG_MAX_CHARS))
+            recipe.update(mode="song", seed=seed, song=song)
+            hunt = Hunt("rabbit", t("label.rabbit"))
+            similar = self.listener_counts.similar if self.listener_counts else None
+
+            def task() -> None:
+                discovery.song_hole(hunt, sp, self.deezer, similar, rng, song or seed, blocked=user.blocked,
+                                    size=size, listeners=listeners)
         elif kind == "rabbit":
             seed = (body.get("seed") or "").strip()
             recipe["seed"] = seed

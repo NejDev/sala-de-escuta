@@ -1,7 +1,7 @@
 """Last.fm: how many people listened to a track (optional; needs LASTFM_API_KEY in .env).
 
-Used by the discoveries' listener filter. Each track is asked once every 30 days and remembered in
-data/lastfm-cache.json. Last.fm's terms ask for credit wherever its numbers show, with a link to the track.
+Used by the discoveries' listener filter and by the rabbit hole from a song (similar tracks). Listener counts
+are asked once every 30 days per track and remembered in data/lastfm-cache.json. Last.fm's terms ask for credit wherever its numbers show, with a link to the track.
 """
 from __future__ import annotations
 
@@ -37,6 +37,14 @@ class Listeners:
     url: str | None  # the track's page on Last.fm
 
 
+@dataclass(frozen=True)
+class Similar:
+    artist: str
+    title: str
+    match: float  # 1.0 is the closest
+    playcount: int
+
+
 class LastFmError(RuntimeError):
     def __init__(self, kind: str) -> None:
         super().__init__(kind)
@@ -69,10 +77,44 @@ class LastFm:
 
     def track(self, artist: str, title: str) -> Listeners:
         """Listeners of a track; the title goes without its version ("So What - Remastered" -> "So What")."""
+        data = self._ask("track.getInfo", artist, title)
+        if data is None:
+            return Listeners(None, None)
+        if not isinstance(data.get("track"), dict):
+            raise LastFmError("down")
+        track = data["track"]
+        try:
+            count = int(track.get("listeners") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        return Listeners(count, track.get("url"))
+
+    def similar(self, artist: str, title: str, limit: int = 50) -> list[Similar] | None:
+        """Tracks like this one, closest first; None when Last.fm has no record of the track."""
+        data = self._ask("track.getSimilar", artist, title, limit=limit)
+        if data is None:
+            return None
+        tracks = (data.get("similartracks") or {}).get("track")
+        if not isinstance(tracks, list):
+            raise LastFmError("down")
+        found = []
+        for entry in tracks:
+            name = (entry.get("name") or "").strip() if isinstance(entry, dict) else ""
+            by = ((entry.get("artist") or {}).get("name") or "").strip() if name else ""
+            if not by:
+                continue
+            try:
+                found.append(Similar(by, name, float(entry.get("match") or 0), int(entry.get("playcount") or 0)))
+            except (TypeError, ValueError):
+                continue
+        return found
+
+    def _ask(self, method: str, artist: str, title: str, **extra) -> dict | None:
+        """One call about a track; None when Last.fm doesn't know it. Errors become LastFmError."""
         self._wait_turn()
         query = urllib.parse.urlencode({
-            "method": "track.getInfo", "artist": artist, "track": curation.base_title(title),
-            "autocorrect": 1, "format": "json", "api_key": self.key,
+            "method": method, "artist": artist, "track": curation.base_title(title),
+            **extra, "autocorrect": 1, "format": "json", "api_key": self.key,
         })
         request = urllib.request.Request(f"{API_URL}?{query}", headers={"User-Agent": USER_AGENT})
         try:
@@ -86,21 +128,16 @@ class LastFm:
             raise LastFmError("down")
         code = data.get("error")
         if code == NOT_FOUND:
-            return Listeners(None, None)
+            return None
         if code in KEY_ERRORS:
             raise LastFmError("key")
         if code == RATE_LIMITED:
             with self._lock:
                 self._paused_until = self._clock() + LIMIT_PAUSE_S
             raise LastFmError("limit")
-        if code or not isinstance(data.get("track"), dict):
+        if code:
             raise LastFmError("down")
-        track = data["track"]
-        try:
-            count = int(track.get("listeners") or 0)
-        except (TypeError, ValueError):
-            count = 0
-        return Listeners(count, track.get("url"))
+        return data
 
 
 def _error_body(err: urllib.error.HTTPError) -> dict:
@@ -162,6 +199,10 @@ class ListenerCounts:
                 self._data = {name: entries[name] for name in newest}
             self._dirty = True
         return found
+
+    def similar(self, artist: str, title: str) -> list[Similar] | None:
+        """Tracks like this one, straight from Last.fm (a rabbit hole asks about each song once)."""
+        return self.client.similar(artist, title)
 
     def cached(self, artist: str, title: str) -> Listeners | None:
         """What the cache holds, however old; None when the track was never asked about. Never asks Last.fm."""
