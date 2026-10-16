@@ -272,11 +272,16 @@ function colorOf(playlist) {
   return playlist.color || FALLBACK_COLORS[index % FALLBACK_COLORS.length];
 }
 
+/** Announces new medals once per browser: the count already announced is kept, so a reload stays quiet. */
+function announceMedals(count) {
+  const announced = Number(memory.get("medals-announced")) || 0;
+  if (count > announced && state.view !== "achievements") toast(t("ach.new_toast"));
+  if (count !== announced) memory.set("medals-announced", String(Math.max(count, 0)));
+}
+
 async function loadOverview() {
-  const before = state.overview?.achievements?.new ?? 0;
   state.overview = await api("/api/overview");
-  const fresh = state.overview.achievements?.new || 0;
-  if (fresh > before && state.view !== "achievements") toast(t("ach.new_toast"));
+  announceMedals(state.overview.achievements?.new || 0);
   renderShelf();
   renderAccount();
   if (state.view === "playlist" && current()) renderSleeve();
@@ -1356,7 +1361,7 @@ async function pollMedals() {
   }
   const before = state.overview.achievements?.new || 0;
   state.overview.achievements = summary;
-  if (summary.new > before && state.view !== "achievements") toast(t("ach.new_toast"));
+  announceMedals(summary.new || 0);
   if (summary.new !== before) renderShelf();
 }
 
