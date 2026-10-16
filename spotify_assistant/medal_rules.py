@@ -18,6 +18,7 @@ from .medals import COLLECTIONS, GAMES_BY_SLUG, LOVE, MOON, SUN, WORDS, Game, Me
 HOUR_MS = 3_600_000
 NONSTOP_GAP_S = 5 * 60  # between one song's end and the next one's start
 SHORT_MS = 120_000
+FIRST_RECORD_YEAR = 1860  # the oldest recording known; an earlier release year is a placeholder
 HINTS = ("soundtrack", "ost", "original", "from", "game", "video game", "theme", "music from")
 
 
@@ -80,9 +81,10 @@ def _names(play: dict) -> list[str]:
 
 
 def release(play: dict) -> tuple[int, date | None] | None:
-    """(year, day) of the play's release; the day is None when Spotify only gives the year or the month."""
+    """(year, day) of the play's release; the day is None when Spotify only gives the year or the month. A year
+    before recorded music or past next year ("0000" and the like) counts as no date."""
     text = (play.get("album") or {}).get("release") or ""
-    if len(text) < 4 or not text[:4].isdigit():
+    if len(text) < 4 or not text[:4].isdigit() or not FIRST_RECORD_YEAR <= int(text[:4]) <= date.today().year + 1:
         return None
     try:
         day = date.fromisoformat(text) if len(text) == 10 else None

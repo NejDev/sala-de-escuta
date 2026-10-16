@@ -124,6 +124,16 @@ class ReleaseTest(unittest.TestCase):
         self.assertNotIn("anniversary", earn([play(release="2026-10-14")]))
         self.assertIn("fifty-years", earn([play(release="1976")]))
 
+    def test_implausible_years_dont_count(self):
+        stats = medal_rules.new_stats()
+        earned = earn([play(release="0000"), play(uri="z", release="0000-00-00", when=at() + 1)], stats=stats)
+        self.assertEqual({"before-1970", "before-1950", "before-1930", "fifty-years"} & set(earned), set())
+        self.assertEqual(stats["day"]["decades"], {})
+        self.assertNotIn("decades", stats["collections"])
+        self.assertIsNone(medal_rules.release(play(release=str(date.today().year + 2))))
+        self.assertEqual(medal_rules.release(play(release="1860"))[0], 1860)
+        self.assertEqual(medal_rules.release(play(release=str(date.today().year + 1)))[0], date.today().year + 1)
+
     def test_every_decade(self):
         plays = [play(uri=f"d{y}", release=str(y), when=at() + n) for n, y in enumerate(range(1955, 2035, 10))]
         self.assertIn("decades-all", earn(plays))
