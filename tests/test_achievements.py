@@ -328,6 +328,23 @@ class LookupTest(Room):
         self.assertEqual((again.cached("Ninguém"), again.cached("banda")), (None, 500))
         self.assertEqual(dz.asked, ["Banda", "Ninguém"])
 
+    def test_enrich_asks_again_after_30_days(self):
+        clock = [1_000_000.0]
+        fans = achievements.ArtistFans(path=self.data / "fans.json", now=lambda: clock[0])
+        dz = FakeDeezer({"A0": 500})
+        plays = self.plays(1)
+        achievements.enrich(plays, 0, None, fans, dz)
+        achievements.enrich(plays, 0, None, fans, dz)
+        self.assertEqual(dz.asked, ["A0"])
+        clock[0] += achievements.FANS_FRESH_S - 1
+        achievements.enrich(plays, 0, None, fans, dz)
+        self.assertEqual(dz.asked, ["A0"])
+        clock[0] += 2
+        dz.fans["A0"] = 900
+        achievements.enrich(plays, 0, None, fans, dz)
+        self.assertEqual(dz.asked, ["A0", "A0"])
+        self.assertEqual(fans.cached("A0"), 900)
+
     def test_lookups_are_capped_per_loop(self):
         counts, dz, fans = FakeCounts(), FakeDeezer(), self.fans()
         achievements.enrich(self.plays(5), 0, counts, fans, dz, budget=3)

@@ -309,6 +309,12 @@ class ArtistFans:
         with self._lock:
             return self.key(name) in self._entries()
 
+    def fresh(self, name: str) -> bool:
+        """An entry exists and is younger than FANS_FRESH_S (a stale one is still usable, but is asked again)."""
+        with self._lock:
+            entry = self._entries().get(self.key(name))
+        return bool(entry) and self._now() - entry["at"] < FANS_FRESH_S
+
     def cached(self, name: str) -> int | None:
         with self._lock:
             entry = self._entries().get(self.key(name))
@@ -362,7 +368,7 @@ def enrich(plays: list[dict], after: float, counts: ListenerCounts | None, fans:
                 except LastFmError as err:
                     log.warning("Achievements: Last.fm lookups wait for the next loop (%s)", err.kind)
                     going["lastfm"] = False
-        if going["fans"] and not fans.known(name):
+        if going["fans"] and not fans.fresh(name):
             if asked["fans"] >= budget:
                 going["fans"] = False
             else:
