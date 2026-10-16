@@ -239,7 +239,7 @@ class LookupTest(Room):
         counts, dz, fans = FakeCounts({"Rara": 30, "Outra": 5000}), FakeDeezer({"Pequena": 50, "Grande": 20_000_000}), self.fans()
         ctx = achievements.context("paulo", counts, fans)
         achievements.enrich(plays, 0, counts, fans, dz, budget=1)  # only the first play's numbers
-        new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans)
+        new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=at(hour=13))
         self.assertIn("rare-50", new)
         self.assertNotIn("giant", new)
         data = achievements.load("paulo")
@@ -247,7 +247,22 @@ class LookupTest(Room):
         self.assertEqual(data["earned"]["rare-50"]["lastfm"], {"listeners": 30, "url": None})
         self.assertEqual(data["earned"]["rare-50"]["song"]["title"], "Rara")
         achievements.enrich(plays, data["rich_through"], counts, fans, dz)
-        self.assertIn("giant", achievements.rich_pass("paulo", plays, ctx, True, counts, fans))
+        self.assertIn("giant", achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=at(hour=13)))
+
+    def test_a_lookup_that_always_fails_holds_the_cursor_for_three_days_only(self):
+        self.join("paulo")
+        plays = [play(uri="a", title="Veneno", artists=("Banda",), when=at()),
+                 play(uri="b", title="Outra", artists=("Pequena",), when=at() + 300)]
+        counts, dz, fans = FakeCounts(error="down"), FakeDeezer({"Banda": 5000, "Pequena": 50}), self.fans()
+        counts.known[("Pequena", "Outra")] = Listeners(5000, None)  # only the first song's lookup keeps failing
+        ctx = achievements.context("paulo", counts, fans)
+        achievements.enrich(plays, 0, counts, fans, dz)
+        self.assertEqual(achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=at(day=16)), [])
+        self.assertEqual(achievements.load("paulo")["rich_through"], 0)
+        new = achievements.rich_pass("paulo", plays, ctx, True, counts, fans, now=at(day=17, hour=13))
+        self.assertIn("fans-100", new)
+        self.assertFalse(any(medal_id.startswith("rare") for medal_id in new))
+        self.assertEqual(achievements.load("paulo")["rich_through"], plays[1]["at"])
 
     def test_without_a_key_there_are_no_rare_medals(self):
         self.join("paulo")

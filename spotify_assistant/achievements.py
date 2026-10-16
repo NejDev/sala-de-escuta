@@ -31,6 +31,7 @@ LOOKUPS_PER_LOOP = 300  # Last.fm and fans lookups of each kind per person per l
 FANS_FILE = "fans-cache.json"
 FANS_FRESH_S = 30 * 86400
 FANS_MAX_ENTRIES = 100_000
+RICH_WAIT_S = 3 * 86400  # a play whose lookups keep failing stops holding back the plays after it
 SYNC_S = 5 * 60  # two plays of a song this close together count as "in sync"
 MONTHS_SHOWN = 12
 
@@ -330,8 +331,10 @@ def enrich(plays: list[dict], after: float, counts: ListenerCounts | None, fans:
 
 
 def rich_pass(user_id: str, plays: list[dict], ctx: Context, lastfm: bool, counts: ListenerCounts | None,
-              fans: ArtistFans) -> list[str]:
-    """Plays whose numbers are known, in order, into the "rich" medals; stops at the first play still waiting."""
+              fans: ArtistFans, now: float | None = None) -> list[str]:
+    """Plays whose numbers are known, in order, into the "rich" medals; stops at the first play still waiting.
+    A play waits at most 3 days: then it goes in with what is known (an unknown number earns nothing)."""
+    now = time.time() if now is None else now
     with _lock:
         data = load(user_id)
         if not data["on"]:
@@ -342,7 +345,8 @@ def rich_pass(user_id: str, plays: list[dict], ctx: Context, lastfm: bool, count
             if item["at"] <= data["rich_through"]:
                 continue
             name = _artist_name(item)
-            if name and ((counts is not None and counts.cached(name, item["title"]) is None) or not fans.known(name)):
+            waiting = name and ((counts is not None and counts.cached(name, item["title"]) is None) or not fans.known(name))
+            if waiting and now - item["at"] < RICH_WAIT_S:
                 break  # its numbers aren't known yet: the next loop picks up from here
             medal_rules.rich_update(data["stats"], item, ctx)
             new += _award_due(data, pending, item, ctx, item["at"])
