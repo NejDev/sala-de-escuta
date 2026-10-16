@@ -208,11 +208,12 @@ class ViewTest(Room):
         self.assertEqual(self.view("bia"), {"sharing": True, "on": False})
 
     def test_how_only_for_whoever_earned_it(self):
-        saudade = next(medal for medal in self.view("paulo")["me"]["medals"] if medal["id"] == "saudade")
+        saudade_id = achievements.public_id("saudade")
+        saudade = next(medal for medal in self.view("paulo")["me"]["medals"] if medal["id"] == saudade_id)
         self.assertEqual(saudade["how"], i18n.t("medal.saudade.how"))
         self.assertEqual(saudade["song"]["title"], "Saudade")
         paulo = next(person for person in self.view("ana")["people"] if person["id"] == "paulo")
-        shown = next(medal for medal in paulo["medals"] if medal["id"] == "saudade")
+        shown = next(medal for medal in paulo["medals"] if medal["id"] == saudade_id)
         self.assertNotIn("how", shown)
         self.assertEqual(shown["holders"], 1)
 
@@ -234,18 +235,38 @@ class ViewTest(Room):
         seen = self.view("ana")
         earned = set(achievements.load("paulo")["earned"]) | set(achievements.load("ana")["earned"])
         ids = set(re.findall(r'"id": "([a-z0-9-]+)"', json.dumps(seen))) - {"paulo", "ana"} - set(medals.TITLES)
-        self.assertLessEqual(ids, earned)
+        self.assertLessEqual(ids, {achievements.public_id(medal_id) for medal_id in earned})
         self.assertEqual(seen["total"], len([medal for medal in medals.MEDALS if medal.requires != "lastfm"]))
 
+    def test_medal_ids_never_reach_the_browser(self):
+        self.assertEqual(len({achievements.public_id(medal.id) for medal in medals.MEDALS}), len(medals.MEDALS))
+        achievements.note("ana", "block")
+        achievements.set_highlights("paulo", [achievements.public_id("saudade")])
+        achievements.set_highlights("ana", [achievements.public_id("block-1")])
+        for viewer in ("paulo", "ana"):
+            sent = json.dumps(self.view(viewer))
+            self.assertIn(achievements.public_id("saudade"), sent)
+            self.assertIn(achievements.public_id("block-1"), sent)
+            for medal in medals.MEDALS:
+                if medal.id not in medals.TITLES:  # a title's id is not secret
+                    self.assertNotIn(f'"{medal.id}"', sent)
+        self.assertEqual(achievements.highlights_of("paulo", False)[0]["id"], achievements.public_id("saudade"))
+        achievements.set_highlights("paulo", ["saudade"])  # a real id is not accepted
+        self.assertEqual(achievements.load("paulo")["highlights"], [])
+
     def test_new_until_seen_and_highlights(self):
-        self.assertIn("saudade", self.view("paulo")["new"])
-        achievements.mark_seen("paulo", list(achievements.load("paulo")["earned"]) + ["rare-10"])
+        public = achievements.public_id
+        self.assertIn(public("saudade"), self.view("paulo")["new"])
+        achievements.mark_seen("paulo", [public(medal_id) for medal_id in achievements.load("paulo")["earned"]]
+                               + [public("rare-10"), "nonsense"])
         self.assertEqual(self.view("paulo")["new"], [])
+        self.assertIn("saudade", achievements.load("paulo")["seen"])  # files keep the real ids
         self.assertNotIn("rare-10", achievements.load("paulo")["seen"])
-        achievements.set_highlights("paulo", ["saudade", "rare-10", "saudade"])
+        achievements.set_highlights("paulo", [public("saudade"), public("rare-10"), public("saudade")])
         self.assertEqual(achievements.load("paulo")["highlights"], ["saudade"])
-        self.assertEqual([medal["id"] for medal in self.view("ana")["people"][0]["highlights"]], ["saudade"])
-        self.assertEqual(achievements.highlights_of("paulo", False), [{"id": "saudade", "name": i18n.t("medal.saudade")}])
+        self.assertEqual([medal["id"] for medal in self.view("ana")["people"][0]["highlights"]], [public("saudade")])
+        self.assertEqual(achievements.highlights_of("paulo", False),
+                         [{"id": public("saudade"), "name": i18n.t("medal.saudade")}])
         self.assertEqual(achievements.summary("paulo", False), {"on": True, "new": 0})
 
     def test_revoked_friends_access_drops_the_person(self):

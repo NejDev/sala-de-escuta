@@ -814,25 +814,26 @@ class ServerTest(unittest.TestCase):
         self.post("/api/friends", {"share": True})
         self.post("/api/achievements", {"on": True})
         achievements.note("paulo", "block")
-        status, data = self.post("/api/achievements/highlights", {"ids": ["block-1", "rare-10"]})
-        self.assertEqual((status, [medal["id"] for medal in data["me"]["highlights"]]), (200, ["block-1"]))
+        block = achievements.public_id("block-1")
+        status, data = self.post("/api/achievements/highlights", {"ids": [block, achievements.public_id("rare-10")]})
+        self.assertEqual((status, [medal["id"] for medal in data["me"]["highlights"]]), (200, [block]))
         self.assertEqual(self.post("/api/achievements/highlights", {"ids": [f"x{n}" for n in range(11)]})[0], 400)
         self.assertEqual(self.post("/api/achievements/highlights", {"ids": "block-1"})[0], 400)
         self.assertEqual(json.loads(self.request("/api/achievements/summary")[1]), {"on": True, "new": 1})
-        self.assertEqual(self.post("/api/achievements/seen", {"ids": ["block-1"]})[0], 200)
+        self.assertEqual(self.post("/api/achievements/seen", {"ids": [block]})[0], 200)
         self.assertEqual(json.loads(self.request("/api/achievements/summary")[1]), {"on": True, "new": 0})
-        self.assertEqual(self.post("/api/achievements/seen", {"ids": ["block-1"]}, as_user="ana")[0], 403)
+        self.assertEqual(self.post("/api/achievements/seen", {"ids": [block]}, as_user="ana")[0], 403)
 
     def test_friends_show_highlights_only_between_participants(self):
         for who in ("paulo", "ana"):
             self.post("/api/friends", {"share": True}, as_user=who)
         self.post("/api/achievements", {"on": True}, as_user="ana")
         achievements.note("ana", "block")
-        achievements.set_highlights("ana", ["block-1"])
+        achievements.set_highlights("ana", [achievements.public_id("block-1")])
         card = lambda: json.loads(self.request("/api/friends")[1])["friends"][0]
         self.assertEqual(card()["medals"], [])  # Paulo doesn't take part
         self.post("/api/achievements", {"on": True})
-        self.assertEqual([medal["id"] for medal in card()["medals"]], ["block-1"])
+        self.assertEqual([medal["id"] for medal in card()["medals"]], [achievements.public_id("block-1")])
 
     def test_the_loop_turns_plays_into_medals(self):
         self.post("/api/friends", {"share": True})

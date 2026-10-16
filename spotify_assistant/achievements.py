@@ -6,10 +6,12 @@ plays (dashboard.collector), from plays.json plus Last.fm listeners and artist f
 background; panel actions arrive through note(). Opening the tab never asks anyone outside.
 
 Privacy: only participants see anything. A medal nobody earned never leaves this module, and its "how" line only
-reaches whoever earned it. Erasing removes the person's file and their name from closed months.
+reaches whoever earned it; the browser knows medals by opaque public ids (files keep the real ones). Erasing removes
+the person's file and their name from closed months.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -172,6 +174,20 @@ def forget(user_id: str) -> None:
 
 
 # ---------- the catalog as this room sees it
+
+
+def public_id(medal_id: str) -> str:
+    """The id the browser gets: a real id spells out the rule, and the network log would show it for medals other
+    people earned."""
+    return hashlib.sha256(f"medal:{medal_id}".encode()).hexdigest()[:12]
+
+
+_REAL_IDS = {public_id(medal.id): medal.id for medal in MEDALS}
+
+
+def _real_ids(ids: list[str]) -> list[str]:
+    """Public ids back to the real ones; anything else is dropped."""
+    return [_REAL_IDS[medal_id] for medal_id in ids if medal_id in _REAL_IDS]
 
 
 def available(lastfm: bool) -> list[Medal]:
@@ -566,21 +582,23 @@ def note(user_id: str, event: str, lastfm: bool = False, **detail) -> list[str]:
 
 
 def mark_seen(user_id: str, ids: list[str]) -> None:
+    """`ids` are public ids (as the browser has them); only earned medals count."""
     with _lock:
         data = load(user_id)
         if not data["on"]:
             return
-        data["seen"].update({medal_id: 1 for medal_id in ids if medal_id in data["earned"]})
+        data["seen"].update({medal_id: 1 for medal_id in _real_ids(ids) if medal_id in data["earned"]})
         _write(_file(user_id), data)
 
 
 def set_highlights(user_id: str, ids: list[str]) -> None:
-    """Up to 10 earned medals, in the order given; anything else is dropped."""
+    """Up to 10 earned medals (public ids), in the order given; anything else is dropped."""
     with _lock:
         data = load(user_id)
         if not data["on"]:
             return
-        data["highlights"] = [medal_id for medal_id in dict.fromkeys(ids) if medal_id in data["earned"]][:MAX_HIGHLIGHTS]
+        chosen = dict.fromkeys(_real_ids(ids))
+        data["highlights"] = [medal_id for medal_id in chosen if medal_id in data["earned"]][:MAX_HIGHLIGHTS]
         _write(_file(user_id), data)
 
 
@@ -599,13 +617,13 @@ def highlights_of(user_id: str, lastfm: bool) -> list[dict]:
         return []
     data = load(user_id)
     ids = {medal.id for medal in available(lastfm)}
-    return [{"id": medal_id, "name": medal_texts(medal_id)[0]}
+    return [{"id": public_id(medal_id), "name": medal_texts(medal_id)[0]}
             for medal_id in data["highlights"] if medal_id in data["earned"] and medal_id in ids]
 
 
 def _medal_view(medal_id: str, got: dict, holders: int, own: bool) -> dict:
     name, how = medal_texts(medal_id)
-    shown = {"id": medal_id, "name": name, "at": got["at"], "song": got.get("song"), "holders": holders}
+    shown = {"id": public_id(medal_id), "name": name, "at": got["at"], "song": got.get("song"), "holders": holders}
     if own:  # only whoever earned it learns how (a Last.fm count would hint at it too)
         shown["how"] = how
         shown["lastfm"] = got.get("lastfm")
@@ -622,6 +640,9 @@ def view(viewer: str, lastfm: bool, fans, now: float | None = None) -> dict:
         return {"sharing": sharing, "on": False}
     datas = {}
     for user_id in participants():
+        if user_id == viewer:
+            datas[user_id] = mine
+            continue
         try:
             datas[user_id] = load(user_id)
         except Unreadable:
@@ -632,18 +653,17 @@ def view(viewer: str, lastfm: bool, fans, now: float | None = None) -> dict:
     def person(user_id: str, own: bool) -> dict:
         earned = sorted(((medal_id, got) for medal_id, got in datas[user_id]["earned"].items() if medal_id in ids),
                         key=lambda pair: pair[1]["at"], reverse=True)
-        medals = [_medal_view(medal_id, got, holders[medal_id], own) for medal_id, got in earned]
-        by_id = {medal["id"]: medal for medal in medals}
+        medals = {medal_id: _medal_view(medal_id, got, holders[medal_id], own) for medal_id, got in earned}
         return {"id": user_id, "name": accounts.display_name(user_id), "count": len(medals),
-                "highlights": [by_id[medal_id] for medal_id in datas[user_id]["highlights"] if medal_id in by_id],
-                "medals": medals}
+                "highlights": [medals[medal_id] for medal_id in datas[user_id]["highlights"] if medal_id in medals],
+                "medals": list(medals.values())}
 
     fresh = sorted((got["at"], medal_id) for medal_id, got in mine["earned"].items()
                    if medal_id in ids and medal_id not in mine["seen"])
     return {
         "sharing": True, "on": True, "total": len(ids), "participants": len(datas), "lastfm": lastfm,
         "me": person(viewer, True),
-        "new": [medal_id for _, medal_id in fresh],
+        "new": [public_id(medal_id) for _, medal_id in fresh],
         "people": [person(user_id, False) for user_id in datas if user_id != viewer],
         "race": _titles_view(monthly.standings(monthly.month_of(now), {user_id: social.plays(user_id) for user_id in datas},
                                                {user_id: data["stats"]["artists"] for user_id, data in datas.items()}, fans)),
