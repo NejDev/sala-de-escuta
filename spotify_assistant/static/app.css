@@ -1460,6 +1460,8 @@ a.brand { color: inherit; text-decoration: none; }
 /* The heart beside the song playing: outlined, filled once it's liked. */
 .like-button { flex: none; }
 .like-button[aria-pressed="true"] svg { fill: currentColor; }
+.lyrics-button[aria-pressed="true"] { color: var(--mood); }
+.lyrics-button[aria-pressed="true"] svg { fill: none; }  /* the microphone's arc stays a line */
 
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 

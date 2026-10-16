@@ -217,9 +217,11 @@ def listener_cap(body: dict, counts: lastfm.ListenerCounts | None) -> discovery.
 def song_query(query: dict, *keys: str) -> dict:
     """A song's fields from a query string; artist and title are required, the album may be empty."""
     fields = {key: " ".join(str(query.get(key) or "").split()) for key in keys}
-    if not fields.get("artist") or not fields.get("title") or any(len(v) > SONG_MAX_CHARS for v in fields.values()):
+    if not fields.get("artist") or not fields.get("title"):
         raise UserError(t("err.song_what"))
-    return fields
+    if len(fields.get("album", "")) > SONG_MAX_CHARS:
+        fields["album"] = ""  # an album name that long isn't worth sending
+    return {key: value[:SONG_MAX_CHARS] for key, value in fields.items()}  # long classical titles are cut
 
 
 def song_from(body: dict) -> dict | None:
@@ -232,9 +234,7 @@ def song_from(body: dict) -> dict | None:
     fields = {key: " ".join(str(song.get(key) or "").split()) for key in ("artist", "title")}
     if not all(fields.values()):
         raise UserError(t("err.rabbit_song"))
-    if any(len(value) > SONG_MAX_CHARS for value in fields.values()):
-        raise UserError(t("err.feeling_too_long", max=SONG_MAX_CHARS))
-    return fields
+    return {key: value[:SONG_MAX_CHARS] for key, value in fields.items()}  # long classical titles are cut
 
 
 def genre_from(body: dict, required: bool = False) -> str | None:

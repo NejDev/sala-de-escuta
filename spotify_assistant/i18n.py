@@ -348,7 +348,8 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.song_by_artist": "Nenhuma música parecida com “{title}” por aqui: a toca seguiu pelo artista, {artist}.",
         "label.rabbit_song": "Toca do coelho: {title}",
         "reason.song_hop": "Passo {hop} de {hops} a partir de “{title}”.",
-        "reason.song_end": "Fim da trilha: {hops} músicas depois de “{title}”.",
+        "reason.song_end": ("Fim da trilha: {count} música depois de “{title}”.",
+                            "Fim da trilha: {count} músicas depois de “{title}”."),
         "err.rabbit_song": "Digite uma música para começar a descer a toca.",
         "err.song_what": "Qual música? Faltou o artista ou o título.",
         # Achievements (the medal names come from medal_names.py, merged at the end of this file)
@@ -642,7 +643,8 @@ MESSAGES: dict[str, dict[str, str | tuple[str, str]]] = {
         "rabbit.song_by_artist": "No songs like “{title}” to follow: the hole went through the artist, {artist}.",
         "label.rabbit_song": "Rabbit hole: {title}",
         "reason.song_hop": "Step {hop} of {hops} from “{title}”.",
-        "reason.song_end": "End of the trail: {hops} songs after “{title}”.",
+        "reason.song_end": ("End of the trail: {count} song after “{title}”.",
+                            "End of the trail: {count} songs after “{title}”."),
         "err.rabbit_song": "Type a song to start down the rabbit hole.",
         "err.song_what": "Which song? The artist or the title is missing.",
         # Achievements (the medal names come from medal_names.py, merged at the end of this file)

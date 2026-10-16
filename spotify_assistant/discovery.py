@@ -57,22 +57,19 @@ LISTENER_SCAN_MAX = 240  # Sensations: candidates checked on Last.fm at most, be
 NEWS_LISTENERS_FRESH_S = 86400  # new releases gain listeners fast: their counts are asked again after a day
 
 # Searches that bring up typical tracks of each genre on Deezer. Edit freely, but leave out the
-# panel's suggestions (GENRE_SUGGESTIONS in app.js): "little-known genre" draws only from here.
+# panel's suggestions (GENRE_SUGGESTIONS and SUBGENRES in app.js): "little-known genre" draws only from here.
 # Each one needs playlists named after it (see named_after): "joik" or "library music" alone found none.
 WORLD_GENRES = (
-    "zamrock", "ethio jazz", "afrobeat", "highlife", "enka", "rebetiko", "fado",
-    "chamamé", "cumbia psicodélica", "chicha peruana", "tropicália", "frevo", "carimbó",
-    "lambada", "kizomba", "semba", "mbalax", "soukous", "raï", "dangdut",
-    "kroncong", "japanese jazz", "shibuya-kei", "anatolian rock", "arabesk", "klezmer", "balkan brass",
-    "tango nuevo", "chacarera", "son cubano", "bolero", "mambo", "salsa dura", "calypso", "soca",
-    "rocksteady", "dub", "lovers rock", "zydeco", "bluegrass", "delta blues", "doo-wop",
-    "northern soul", "yacht rock", "krautrock", "italo disco", "chanson", "yé-yé", "schlager",
-    "sami joik", "sea shanty", "irish trad", "flamenco", "rumba catalana", "huayno", "forró pé de serra",
-    "samba rock", "choro", "maracatu", "brega", "tecnobrega", "manguebeat", "sertanejo raiz",
-    "jovem guarda", "exotica", "space age pop", "library funk", "vaporwave",
-    "dream pop", "math rock", "post-rock", "midwest emo", "trip hop", "jungle", "uk garage",
-    "footwork", "gqom", "kuduro", "grime", "zouk", "gamelan", "throat singing",
-    "hawaiian slack key", "bossa nova japonesa", "turkish psych", "persian pop",
+    "zamrock", "ethio jazz", "afrobeat", "highlife", "enka", "rebetiko", "fado", "chamamé",
+    "cumbia psicodélica", "chicha peruana", "frevo", "carimbó", "lambada", "kizomba", "semba", "mbalax",
+    "soukous", "raï", "dangdut", "kroncong", "japanese jazz", "anatolian rock", "arabesk", "klezmer",
+    "balkan brass", "tango nuevo", "chacarera", "son cubano", "bolero", "mambo", "salsa dura",
+    "calypso", "soca", "rocksteady", "dub", "lovers rock", "zydeco", "bluegrass", "delta blues",
+    "doo-wop", "yacht rock", "krautrock", "italo disco", "chanson", "yé-yé", "schlager", "sami joik",
+    "sea shanty", "irish trad", "flamenco", "rumba catalana", "huayno", "choro", "maracatu", "brega",
+    "tecnobrega", "manguebeat", "jovem guarda", "exotica", "space age pop", "library funk", "vaporwave",
+    "trip hop", "footwork", "gqom", "kuduro", "zouk", "gamelan", "throat singing", "hawaiian slack key",
+    "bossa nova japonesa", "turkish psych", "persian pop",
 )
 
 # "Algorithm" tracks that crowd focus/relaxation playlists and aren't music worth discovering.
@@ -946,11 +943,18 @@ def roulette(
 
 def named_after(title: str, genre: str) -> bool:
     """Whether a playlist's title names the genre, however it's spelled ("Lo Fi", "lofi" and "lo-fi" alike)."""
-    wanted = curation.normalize(genre).replace(" ", "")
+    wanted = curation.normalize(genre).split()
     words = curation.normalize(title).split()
-    windows = ("".join(words[i:j]) for i in range(len(words)) for j in range(i + 1, len(words) + 1))
-    # Like _mentions: from 4 letters on, a longer last word counts too ("Pagodelícia", "Turkish Psychedelic").
-    return any(window == wanted or (len(wanted) >= 4 and window.startswith(wanted)) for window in windows)
+    compact = "".join(wanted)
+    if any("".join(words[i:j]) == compact for i in range(len(words)) for j in range(i + 1, len(words) + 1)):
+        return True
+    # Like _mentions: from 4 letters on, the genre's last word may run longer ("Pagodelícia", "Turkish Psychedelic").
+    # Its other words match whole, so the end of one word and the start of the next never make a genre ("Fun Kids").
+    if len(compact) < 4:
+        return False
+    size = len(wanted)
+    return any(words[i:i + size - 1] == wanted[:-1] and words[i + size - 1].startswith(wanted[-1])
+               for i in range(len(words) - size + 1))
 
 
 def genre_artists(dz: Deezer, genre: str, blocked: Collection[str] = frozenset()) -> list[dict]:
@@ -1212,11 +1216,29 @@ def song_trip(
     sp: Spotify, dz: Deezer, similar: Callable[[str, str], list[Similar] | None], rng: random.Random, seed: dict,
     taken: set[str], blocked: Collection[str] = frozenset(), size: FanRange = ANY_SIZE,
     listeners: ListenerCap = NO_CAP, hops: int = RABBIT_SONG_HOPS,
-) -> tuple[list[dict], list[Find]]:
-    """Song to similar song, never back to an artist already on the way; each step is one find."""
+) -> tuple[list[dict], list[Find], LastFmError | None]:
+    """Song to similar song, never back to an artist already on the way; each step is one find.
+    A Last.fm failure ends the trip with what it found so far (and says so)."""
     path = [{"name": f"{seed['title']} ({seed['artist']})"}]
     artists = {curation.normalize(seed["artist"])}
     current, finds = seed, []
+    try:
+        _song_steps(sp, dz, similar, rng, seed, taken, blocked, size, listeners, hops, path, artists, finds)
+        failure = None
+    except LastFmError as err:
+        failure = err
+    for number, find in enumerate(finds, start=1):
+        find.reason = (t("reason.song_end", count=len(finds), title=seed["title"]) if number == len(finds)
+                       else t("reason.song_hop", hop=number, hops=len(finds), title=seed["title"]))
+    return path, finds, failure
+
+
+def _song_steps(
+    sp: Spotify, dz: Deezer, similar: Callable[[str, str], list[Similar] | None], rng: random.Random, seed: dict,
+    taken: set[str], blocked: Collection[str], size: FanRange, listeners: ListenerCap, hops: int,
+    path: list[dict], artists: set[str], finds: list[Find],
+) -> None:
+    current = seed
     for _ in range(hops):
         options = [
             option for option in (similar(current["artist"], current["title"]) or [])[:SONG_HOP_CHOICES]
@@ -1251,10 +1273,6 @@ def song_trip(
         artists.add(curation.normalize(current["artist"]))
         path.append({"name": f"{current['title']} ({current['artist']})"})
         finds.append(step)
-    for number, find in enumerate(finds, start=1):
-        find.reason = (t("reason.song_end", hops=len(finds), title=seed["title"]) if number == len(finds)
-                       else t("reason.song_hop", hop=number, hops=len(finds), title=seed["title"]))
-    return path, finds
 
 
 def song_hole(
@@ -1294,19 +1312,22 @@ def song_hole(
             return
         hunt.message = t("rabbit.going", seed=song["title"])
         try:
-            path, finds = song_trip(sp, dz, ask, rng, song, taken, blocked, size, listeners)
+            path, finds, failure = song_trip(sp, dz, ask, rng, song, taken, blocked, size, listeners)
         except (SpotifyError, DeezerError) as err:
             if isinstance(err, SpotifyError) and err.status == 429:
                 raise  # Spotify pause: insisting only makes it longer
             log.warning("Rabbit hole from a song: %s", err)
             continue
-        except LastFmError as err:  # keep what the earlier trips found
-            log.warning("Rabbit hole from a song: Last.fm %s", err.kind)
-            break
         if finds:
             hunt.chains.append({"path": path, "finds": finds})
             hunt.finds.extend(finds)
         hunt.progress = index + 1
+        if failure:
+            log.warning("Rabbit hole from a song: Last.fm %s", failure.kind)
+            if failure.kind != "down" and not hunt.finds:
+                raise failure  # a refused key or a pause: the discovery ends saying why
+            if failure.kind != "down":
+                break  # keep what was found; the next trips would fail the same way
     hunt.message = (
         t("rabbit.done", chains=len(hunt.chains), count=len(hunt.finds)) if hunt.chains else t("rabbit.none")
     )

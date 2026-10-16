@@ -602,10 +602,13 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(hunt.recipe["song"], {"artist": "Foo Fighters", "title": "Everlong"})
         with mock.patch.object(dashboard.App, "_run_hunt", staticmethod(lambda *args: None)):
             refused = [{"mode": "song", "seed": " "}, {"song": "Everlong"}, {"song": {"artist": "Foo Fighters"}},
-                       {"song": {"artist": "x" * 201, "title": "y"}}, {"mode": "song", "seed": "x" * 201}]
+                       {"mode": "song", "seed": "x" * 201}]
             for body in refused:
                 with self.subTest(body=body):
                     self.assertEqual(self.request("/api/hunts", {"kind": "rabbit", **body})[0], 400)
+            # A long title from the player (classical music has them) is cut, not refused.
+            self.assertEqual(self.request("/api/hunts", {"kind": "rabbit", "song": {"artist": "Bach", "title": "x" * 300}})[0], 200)
+            self.assertEqual(len(self.server.app.profile("paulo").hunt.recipe["song"]["title"]), 200)
             # By artist, as before: the recipe has no song.
             self.assertEqual(self.request("/api/hunts", {"kind": "rabbit", "seed": "Chet Baker"})[0], 200)
             self.assertNotIn("mode", self.server.app.profile("paulo").hunt.recipe)
@@ -687,9 +690,12 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(asked[-1], ("abc123", "Miles Davis", "So What", "Kind of Blue", 562000))
         self.assertEqual(json.loads(self.request("/api/lyrics?id=abc&artist=A&title=Ocupada")[1]), {"status": "busy"})
         self.assertEqual(asked[-1][3:], ("", None))  # no album, no length
-        for bad in ("id=../x&artist=A&title=B", "id=abc&artist=&title=B", "id=abc&artist=A&title=" + "x" * 201):
+        for bad in ("id=../x&artist=A&title=B", "id=abc&artist=&title=B"):
             with self.subTest(bad=bad):
                 self.assertEqual(self.request(f"/api/lyrics?{bad}")[0], 400)
+        # Long titles from the player are cut; an album name that long isn't worth sending.
+        self.request("/api/lyrics?id=abc&artist=A&title=" + "x" * 300 + "&album=" + "y" * 300)
+        self.assertEqual((len(asked[-1][2]), asked[-1][3]), (200, ""))
 
     def test_what_is_known_about_a_song(self):
         credits = {"recording": "r", "music": ["Miles Davis"], "lyrics": [], "produced": ["Teo Macero"], "mixed": []}

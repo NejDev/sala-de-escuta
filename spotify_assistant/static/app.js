@@ -2349,6 +2349,7 @@ function findRow(find, finds, index, isNew) {
 
 /** A rabbit hole that hops from this song to similar ones, shown in Discover. */
 async function rabbitFrom(artist, title) {
+  if (matchMedia("(max-width: 760px)").matches) closeSong();
   if (state.view !== "discover") await go("discover");
   startHunt({ kind: "rabbit", song: { artist, title }, ...sizeBody() });
 }
@@ -2812,7 +2813,8 @@ function toggleSong() {
 }
 
 function openSong() {
-  state.song = { ...(state.song || {}), open: true, tab: state.song?.tab || "lyrics", follow: true, current: -1 };
+  state.song ||= { tab: "lyrics" };
+  Object.assign(state.song, { open: true, follow: true, current: -1 });
   if (!$("#song-panel")) document.body.append(h("aside", { class: "song-panel", id: "song-panel", "aria-label": t("song.label") }));
   document.body.classList.add("has-song");
   $("#btn-lyrics").setAttribute("aria-pressed", "true");
@@ -2838,13 +2840,20 @@ function loadSong(render = false) {
   if ((item?.uri || null) !== (song.uri ?? null)) {
     Object.assign(song, { uri: item?.uri || null, item, lyrics: null, about: null, translation: null, follow: true,
       current: -1 });
-    if (item?.type === "track" && item.artists?.length) {
+    if (hasSongPage(item)) {
       fetchLyrics(song.uri);
       fetchAbout(song.uri);
+    } else {
+      song.tab = "lyrics";
     }
     render = true;
   }
   if (render) renderSong();
+}
+
+/** A Spotify track (not an episode, nor a local file, whose uri carries no track id). */
+function hasSongPage(item) {
+  return Boolean(item?.uri?.startsWith("spotify:track:") && item.artists?.length);
 }
 
 async function fetchLyrics(uri) {
@@ -2903,7 +2912,7 @@ function renderSong() {
         item && h("p", { class: "song-artist" }, item.subtitle)),
       h("button", { class: "icon-button", type: "button", "aria-label": t("common.close"), title: t("common.close"),
         onclick: () => { closeSong(); $("#btn-lyrics").focus(); } }, icon(CLOSE_ICON))),
-    item?.type === "track" && h("div", { class: "song-tabs", role: "tablist" },
+    hasSongPage(item) && h("div", { class: "song-tabs", role: "tablist" },
       tab("lyrics", t("song.tab_lyrics")), tab("about", t("song.tab_about"))),
     h("div", { class: "song-body", id: "song-body" }, song.tab === "about" ? songAbout() : songLyrics()),
     synced && h("button", { class: "ghost-button is-small song-follow", id: "song-follow", type: "button",
@@ -2931,6 +2940,7 @@ function songLyrics() {
   const item = song.item;
   if (!item) return songNote(t("song.nothing"));
   if (item.type !== "track") return songNote(t("song.episode"));
+  if (!hasSongPage(item)) return songNote(t("song.local"));
   const lyrics = song.lyrics;
   if (!lyrics) return songNote(t("common.loading"));
   const credit = h("p", { class: "song-credit" },
@@ -3020,9 +3030,9 @@ function translateBar() {
   const translation = state.song.translation;
   if (translation?.state === "working") return songNote(t("song.translating"));
   if (translation?.state === "done") {
+    const original = () => Object.assign(state.song, { translation: null, current: -1 }) && renderSong();
     return h("p", { class: "song-note" }, t("song.translated", { language: languageName(translation.from) }), " ",
-      h("button", { class: "text-button", type: "button", onclick: () => { state.song.translation = null; renderSong(); } },
-        t("song.untranslate")));
+      h("button", { class: "text-button", type: "button", onclick: original }, t("song.untranslate")));
   }
   if (translation?.state === "same") return songNote(t("song.same_language"));
   if (translation?.state === "unavailable") return songNote(t("song.cant_translate"));
@@ -3035,7 +3045,7 @@ async function translateLyrics() {
   const song = state.song;
   const { uri, lyrics } = song;
   const lines = lyrics.status === "synced" ? lyrics.lines.map(([, text]) => text) : lyrics.text.split("\n");
-  song.translation = { state: "working" };
+  Object.assign(song, { translation: { state: "working" }, current: -1 });
   renderSong();
   let result;
   try {
@@ -3066,6 +3076,7 @@ function songAbout() {
   const song = state.song;
   const item = song.item;
   if (!item) return songNote(t("song.nothing"));
+  if (!hasSongPage(item)) return songNote(t(item.type === "track" ? "song.local" : "song.episode"));
   const actions = h("div", { class: "song-actions" },
     item.artists?.length > 0 && h("button", { class: "ghost-button is-small", type: "button",
       onclick: () => rabbitFrom(item.artists[0], item.title) }, t("find.rabbit")),
@@ -3082,14 +3093,17 @@ function songAbout() {
     item.album && h("p", { class: "meta" }, t("song.album", { name: item.album })),
     lastfm && h("section", { class: "song-section" },
       // Last.fm's terms: its numbers always come with its name and a link.
-      lastfm.url ? h("a", { class: "text-button", href: lastfm.url, target: "_blank", rel: "noopener" }, counts)
-        : h("p", { class: "meta" }, counts),
+      h("a", { class: "text-button", href: lastfm.url || "https://www.last.fm/", target: "_blank", rel: "noopener" },
+        counts),
       lastfm.tags.length > 0 && h("p", { class: "song-label" }, t("song.tags")),
       lastfm.tags.length > 0 && h("div", { class: "genre-row" }, lastfm.tags.map((tag) =>
         h("button", { class: "genre-chip", type: "button", onclick: () => rouletteFrom(tag) }, tag))),
       lastfm.summary && h("p", { class: "song-summary" }, lastfm.summary, " ",
-        lastfm.url && h("a", { class: "text-button", href: lastfm.url, target: "_blank", rel: "noopener" },
-          t("song.read_more")))),
+        h("a", { class: "text-button", href: lastfm.url || "https://www.last.fm/", target: "_blank", rel: "noopener" },
+          t("song.read_more"))),
+      lastfm.summary && h("p", { class: "song-note" },
+        h("a", { class: "text-button", href: "https://creativecommons.org/licenses/by-sa/4.0/", target: "_blank",
+          rel: "noopener" }, t("song.summary_license")))),
     roles.length > 0 && h("section", { class: "song-section" },
       h("h3", { class: "song-label" }, t("song.credits")),
       h("dl", { class: "song-credits" }, roles.flatMap(([key, label]) =>
@@ -3103,6 +3117,7 @@ function songAbout() {
 
 /** A Last.fm tag becomes the roulette's genre (the person spins when they want). */
 async function rouletteFrom(genre) {
+  if (matchMedia("(max-width: 760px)").matches) closeSong();
   state.filters.rouletteGenre = genre;
   saveFilters();
   if (state.view === "discover") renderIntro();

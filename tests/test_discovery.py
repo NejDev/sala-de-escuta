@@ -182,6 +182,7 @@ class ReligiousFilterTest(unittest.TestCase):
     def test_little_known_genres_stay_away_from_the_suggestions(self):
         app = (Path(discovery.__file__).parent / "static" / "app.js").read_text(encoding="utf-8")
         listed = re.search(r"const GENRE_SUGGESTIONS = \[(.*?)\];", app, re.S).group(1)
+        listed += re.search(r"const SUBGENRES = \{(.*?)\};", app, re.S).group(1)  # shown as chips too
         suggested = {name.lower() for name in re.findall(r'"([^"]+)"', listed)}
         self.assertEqual(suggested & set(discovery.WORLD_GENRES), set())
 
@@ -502,7 +503,10 @@ class NewsTest(FreshMatches):
             self.assertTrue(discovery.named_after(title, genre), title)
         others = [("GTA Liberty City Hardcore", "Lo-fi"), ("Hip Hop 2000", "Rap"), ("Memórias", "Emo"),
                   ("Lighthouse Family", "House"), ("Popular Brasil", "Pop"), ("Joia Rara", "joik"),
-                  ("Read : Music to Sit with a Library Full of Books.", "library music")]
+                  ("Read : Music to Sit with a Library Full of Books.", "library music"),
+                  # The end of one word and the start of the next never make a genre.
+                  ("Music For Romantic Dinner", "Forró"), ("Fun Kids Songs", "Funk"), ("Meta Lounge", "Metal"),
+                  ("Sou Livre", "Soul")]
         for title, genre in others:
             self.assertFalse(discovery.named_after(title, genre), title)
 
@@ -827,10 +831,6 @@ class ListenerCapTest(FreshMatches):
                                listeners=discovery.ListenerCap(100, FakeLastFm(error="down")))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class SongSpotify(FakeSpotify):
     """Finds songs by their text: every song it has is a candidate, and the matching keeps the right one."""
 
@@ -932,6 +932,26 @@ class SongHoleTest(FreshMatches):
         hunt = self.hole(graph=graph, dz=dz, listeners=cap, size=discovery.FanRange(0, 100_000))
         self.assertEqual([(f.title, f.fans, f.lastfm["listeners"]) for f in hunt.finds], [("Car", 90_000, 30)])
 
+    def test_a_one_step_trail_says_so_in_the_singular(self):
+        hunt = self.hole(graph={"Everlong": [("Weezer", "Say It Ain't So", 5)]})
+        self.assertEqual(hunt.finds[0].reason, "Fim da trilha: 1 música depois de “Everlong”.")
+
+    def test_last_fm_failing_midway_keeps_the_songs_found(self):
+        def similar(artist, title):
+            if title == "Where Is My Mind?":
+                raise lastfm.LastFmError("limit")
+            return similar_from(TRAIL)(artist, title)
+        hunt = discovery.Hunt("rabbit", "Toca do coelho")
+        discovery.song_hole(hunt, SongSpotify(TRAIL_SONGS), FakeDeezer(), similar, random.Random(1), EVERLONG, walks=3)
+        self.assertEqual([f.title for f in hunt.finds], ["Say It Ain't So", "Where Is My Mind?"])
+        self.assertEqual(hunt.finds[-1].reason, "Fim da trilha: 2 músicas depois de “Everlong”.")
+
+    def test_last_fm_refusing_before_any_song_says_why(self):
+        cap = discovery.ListenerCap(100, FakeLastFm(error="key"))
+        with self.assertRaises(lastfm.LastFmError) as caught:
+            self.hole(listeners=cap)
+        self.assertEqual(caught.exception.kind, "key")
+
     def test_spotify_lookups_per_step_are_capped(self):
         graph = {"Everlong": [(f"Banda {n}", f"Música {n}", n) for n in range(9)]}
         songs = [(f"Banda {n}", f"Música {n}") for n in range(9)]
@@ -978,3 +998,6 @@ class SongHoleTest(FreshMatches):
                 self.assertTrue(hunt.message.startswith(
                     "Nenhuma música parecida com “Everlong” por aqui: a toca seguiu pelo artista, Foo Fighters."),
                     hunt.message)
+
+if __name__ == "__main__":
+    unittest.main()
