@@ -121,22 +121,36 @@ def participants() -> list[str]:
 
 
 def set_on(user_id: str, on: bool, now: float | None = None) -> None:
-    """Turning on the first time counts the history Friends already has; coming back skips the time away."""
+    """Turning on the first time counts the history Friends already has; coming back skips the time away (which is
+    no gap in listening: it neither makes a comeback nor ends a streak of its own)."""
     now = time.time() if now is None else now
     with _lock:
         data = load(user_id)
         if on and not data["on"]:
             if data["joined"] is not None:
                 data["through"] = data["rich_through"] = now
+                data["stats"]["last_at"] = None
+                data["stats"]["streak"] = {}
             data["joined"] = data["joined"] or now
         data["on"] = on
         _write(_file(user_id), data)
 
 
 def forget(user_id: str) -> None:
-    """Erases the person's achievements and their name from closed months."""
+    """Erases the person's achievements, their id from other people's matches and their name from closed months
+    (a duo they were part of goes with them)."""
     with _lock:
         _file(user_id).unlink(missing_ok=True)
+        for other in config.list_users():
+            if other == user_id:
+                continue
+            try:
+                data = load(other)
+            except Unreadable as err:
+                log.warning("Achievements: couldn't remove %s from %s's matches: %s", user_id, other, err)
+                continue
+            if data["stats"]["matched_with"].pop(user_id, None) is not None:
+                _write(_file(other), data)
         try:
             room = _read_room()
         except Unreadable as err:
@@ -145,13 +159,14 @@ def forget(user_id: str) -> None:
         changed = False
         for titles in room["months"].values():
             for title in list(titles):
+                if user_id not in titles[title]["users"]:
+                    continue
+                changed = True
                 users = [uid for uid in titles[title]["users"] if uid != user_id]
-                if users != titles[title]["users"]:
-                    changed = True
-                    if users:
-                        titles[title]["users"] = users
-                    else:
-                        del titles[title]
+                if users and title != "duo":
+                    titles[title]["users"] = users
+                else:
+                    del titles[title]
         if changed:
             _write(_room_file(), room)
 
@@ -497,6 +512,8 @@ def note(user_id: str, event: str, lastfm: bool = False, **detail) -> list[str]:
             data = load(user_id)
         except Unreadable:
             return []
+        if not data["on"]:
+            return []  # left or erased since the check: nothing is kept
         stats = data["stats"]
         events = stats["events"]
 
@@ -538,6 +555,8 @@ def note(user_id: str, event: str, lastfm: bool = False, **detail) -> list[str]:
 def mark_seen(user_id: str, ids: list[str]) -> None:
     with _lock:
         data = load(user_id)
+        if not data["on"]:
+            return
         data["seen"].update({medal_id: 1 for medal_id in ids if medal_id in data["earned"]})
         _write(_file(user_id), data)
 
@@ -546,6 +565,8 @@ def set_highlights(user_id: str, ids: list[str]) -> None:
     """Up to 10 earned medals, in the order given; anything else is dropped."""
     with _lock:
         data = load(user_id)
+        if not data["on"]:
+            return
         data["highlights"] = [medal_id for medal_id in dict.fromkeys(ids) if medal_id in data["earned"]][:MAX_HIGHLIGHTS]
         _write(_file(user_id), data)
 

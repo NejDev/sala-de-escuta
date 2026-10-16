@@ -864,6 +864,25 @@ class ServerTest(unittest.TestCase):
             status, raw = self.request("/api/friends")
         self.assertEqual((status, json.loads(raw)["friends"][0]["medals"]), (200, []))
 
+    def test_the_loop_skips_lookups_for_someone_who_left_midway(self):
+        self.post("/api/friends", {"share": True})
+        self.post("/api/achievements", {"on": True})
+        plays = [{"uri": "spotify:track:1", "title": "Saudade", "artists": [{"id": "md", "name": "Miles Davis"}],
+                  "image": None, "duration_ms": 562000, "at": 1_800_000_000.0, "album": None, "context": None}]
+        (self.data / "users" / "paulo" / "plays.json").write_text(json.dumps(plays), encoding="utf-8")
+        app = self.server.app
+        app.deezer = mock.Mock(search_artist=mock.Mock(return_value={"nb_fan": 50}))
+        processed = achievements.process
+
+        def then_leave(user_id, *args):
+            new = processed(user_id, *args)
+            achievements.set_on(user_id, False)  # switched off while the loop was going
+            return new
+
+        with mock.patch.object(dashboard.achievements, "process", then_leave):
+            app._achievements_loop()
+        app.deezer.search_artist.assert_not_called()
+
     def test_the_achievements_loop_never_raises(self):
         with mock.patch.object(dashboard.achievements, "participants", side_effect=RuntimeError("boom")):
             self.server.app._achievements_loop()

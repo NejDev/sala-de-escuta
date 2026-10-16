@@ -1303,6 +1303,8 @@ class App:
                 try:
                     ctx = achievements.context(uid, self.listener_counts, self.artist_fans)
                     achievements.process(uid, plays[uid], ctx, lastfm_on)
+                    if not achievements.taking_part(uid):
+                        continue  # left meanwhile: no lookups for their plays
                     achievements.enrich(plays[uid], achievements.load(uid)["rich_through"], self.listener_counts,
                                         self.artist_fans, self.deezer)
                     achievements.rich_pass(uid, plays[uid], ctx, lastfm_on, self.listener_counts, self.artist_fans)

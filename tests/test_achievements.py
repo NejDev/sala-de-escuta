@@ -72,12 +72,50 @@ class ParticipationTest(Room):
     def test_erase_removes_the_file_and_past_titles(self):
         self.join("paulo", "ana")
         room = {"since": "2026-09", "months": {"2026-09": {"duo": {"users": ["ana", "paulo"], "value": 3},
-                                                           "explorer": {"users": ["ana"], "value": 9}}}}
+                                                           "explorer": {"users": ["ana"], "value": 9},
+                                                           "marathoner": {"users": ["ana", "paulo"], "value": 80}}}}
         (self.data / "achievements.json").write_text(json.dumps(room), encoding="utf-8")
         achievements.forget("ana")
         self.assertFalse((self.data / "users" / "ana" / "achievements.json").exists())
         months = json.loads((self.data / "achievements.json").read_text(encoding="utf-8"))["months"]
-        self.assertEqual(months["2026-09"], {"duo": {"users": ["paulo"], "value": 3}})
+        self.assertEqual(months["2026-09"], {"marathoner": {"users": ["paulo"], "value": 80}})  # a duo needs both
+
+    def test_erase_scrubs_the_person_from_other_peoples_matches(self):
+        self.join("paulo", "ana")
+        plays = {"paulo": [play(uri="x", when=at(hour=10))], "ana": [play(uri="x", when=at(hour=10, minute=3))]}
+        achievements.room_pass(plays, False, now=at(hour=20))
+        self.assertEqual(achievements.load("paulo")["stats"]["matched_with"], {"ana": 1})
+        unreadable = self.data / "users" / "bia" / "achievements.json"
+        unreadable.write_text("{oops", encoding="utf-8")
+        achievements.forget("ana")
+        self.assertEqual(achievements.load("paulo")["stats"]["matched_with"], {})
+        self.assertEqual(unreadable.read_text(encoding="utf-8"), "{oops")  # never overwritten
+
+    def test_nothing_is_written_for_someone_erased_meanwhile(self):
+        self.join("ana")
+        path = self.data / "users" / "ana" / "achievements.json"
+        checked = achievements.taking_part
+
+        def erased_right_after_the_check(user_id):
+            taking = checked(user_id)
+            achievements.forget(user_id)
+            return taking
+
+        with mock.patch.object(achievements, "taking_part", erased_right_after_the_check):
+            self.assertEqual(achievements.note("ana", "block"), [])
+        self.assertFalse(path.exists())
+        achievements.mark_seen("ana", ["block-1"])
+        achievements.set_highlights("ana", ["block-1"])
+        self.assertFalse(path.exists())
+
+    def test_coming_back_is_not_a_comeback(self):
+        self.join("paulo")
+        achievements.process("paulo", [play(uri="a", when=at(day=1, hour=13))], Context(), False)
+        achievements.set_on("paulo", False)
+        achievements.set_on("paulo", True, now=at(day=20))  # 19 days away from the achievements, not from music
+        self.assertNotIn("comeback", achievements.process("paulo", [play(uri="b", when=at(day=20, hour=13))],
+                                                          Context(), False))
+        self.assertEqual(achievements.load("paulo")["stats"]["streak"]["length"], 1)
 
     def test_an_unreadable_file_is_left_alone(self):
         self.join("paulo")
