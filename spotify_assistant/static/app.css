@@ -491,6 +491,30 @@ a.brand { color: inherit; text-decoration: none; }
 .filter-control:focus-visible { outline: none; border-color: var(--mood); }
 .filter-genre { min-width: 240px; }
 .filter-hint { flex-basis: 100%; margin: 0; color: var(--smoke); font-size: .8125rem; }
+/* Roulette: the genres in sight, and the subgenres of the one picked. */
+.genre-picker { display: grid; flex-basis: 100%; gap: 8px; min-width: 0; }
+.genre-row { position: relative; display: flex; flex-wrap: wrap; gap: 6px; }
+.genre-chip {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  color: var(--smoke);
+  font-size: .8125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.genre-chip:hover { border-color: var(--smoke); color: var(--linen); }
+.genre-chip[aria-expanded="true"] { border-color: var(--mood); color: var(--linen); }
+.genre-chip[aria-pressed="true"] { border-color: transparent; background: var(--linen); color: var(--ink); }
+.genre-subs { padding: 8px 0 2px 12px; border-left: 2px solid var(--mood); }
+@media (max-width: 760px) {
+  /* One line that scrolls sideways, so the genres don't push the roulette down. */
+  .genre-row:not(.genre-subs) { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .genre-row:not(.genre-subs)::-webkit-scrollbar { display: none; }
+}
 
 /* Free field: the written feeling is the main element on the screen. */
 .feeling { max-width: 760px; }

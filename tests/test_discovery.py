@@ -497,9 +497,31 @@ class NewsTest(FreshMatches):
         for title, genre in named:
             self.assertTrue(discovery.named_after(title, genre), title)
         others = [("GTA Liberty City Hardcore", "Lo-fi"), ("Hip Hop 2000", "Rap"), ("Memórias", "Emo"),
-                  ("Lighthouse Family", "House"), ("Popular Brasil", "Pop")]
+                  ("Lighthouse Family", "House"), ("Popular Brasil", "Pop"), ("Joia Rara", "joik"),
+                  ("Read : Music to Sit with a Library Full of Books.", "library music")]
         for title, genre in others:
             self.assertFalse(discovery.named_after(title, genre), title)
+
+    def test_a_longer_last_word_still_names_the_genre(self):
+        for title, genre in [("Turkish Psychedelic Music", "turkish psych"), ("Midwest Emo Revival", "midwest emo")]:
+            self.assertTrue(discovery.named_after(title, genre), title)
+
+    def test_roulette_prefers_playlists_named_after_the_genre(self):
+        # Searching "joik" brought "Joia Rara" (a real case): its songs aren't joik.
+        deezer = FakeDeezer(playlists={"joik": [{"id": "joia", "nb_tracks": 30, "title": "Joia Rara"},
+                                                {"id": "sami", "nb_tracks": 30, "title": "Joik - Sámi songs"}]},
+                            tracks={"joia": [dz_track(1, 120)], "sami": [dz_track(2, 120)]})
+        for seed in range(8):
+            find = discovery.world_genre_pick(FakeSpotify(), deezer, random.Random(seed), genre="joik")
+            self.assertEqual(find.uri, "spotify:track:2")
+
+    def test_roulette_takes_what_the_search_found_when_no_title_names_the_genre(self):
+        # The search knows genres by tag too: "rap nacional" brings "Essenciais do Rap Brasileiro".
+        deezer = FakeDeezer(playlists={"rap nacional": [{"id": "br", "nb_tracks": 45,
+                                                         "title": "Essenciais do Rap Brasileiro"}]},
+                            tracks={"br": [dz_track(3, 90)]})
+        find = discovery.world_genre_pick(FakeSpotify(), deezer, random.Random(1), genre="rap nacional")
+        self.assertEqual(find.uri, "spotify:track:3")
 
 
 def sized_track(track_id, bpm, artist_id):

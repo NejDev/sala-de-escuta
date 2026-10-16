@@ -507,10 +507,10 @@ class App:
 
     @staticmethod
     def sensations() -> dict:
-        presets = [
+        presets = sorted((
             {key: spec[key] for key in ("id", "name", "description", "color", "bpm")}
             for spec in map(localized, load_sensations())
-        ]
+        ), key=lambda preset: preset["bpm"])  # slowest first
         return {"sensations": presets, "tempo_ready": tempo.available()}
 
     @staticmethod

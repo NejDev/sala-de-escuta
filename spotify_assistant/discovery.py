@@ -54,17 +54,18 @@ NEWS_LISTENERS_FRESH_S = 86400  # new releases gain listeners fast: their counts
 
 # Searches that bring up typical tracks of each genre on Deezer. Edit freely, but leave out the
 # panel's suggestions (GENRE_SUGGESTIONS in app.js): "little-known genre" draws only from here.
+# Each one needs playlists named after it (see named_after): "joik" or "library music" alone found none.
 WORLD_GENRES = (
     "zamrock", "ethio jazz", "afrobeat", "highlife", "enka", "rebetiko", "fado",
-    "chamamé", "cumbia psicodélica", "chicha peruana", "tropicália", "baião", "frevo", "carimbó",
+    "chamamé", "cumbia psicodélica", "chicha peruana", "tropicália", "frevo", "carimbó",
     "lambada", "kizomba", "semba", "mbalax", "soukous", "raï", "dangdut",
-    "kroncong", "j-jazz", "shibuya-kei", "anatolian rock", "arabesk", "klezmer", "balkan brass",
+    "kroncong", "japanese jazz", "shibuya-kei", "anatolian rock", "arabesk", "klezmer", "balkan brass",
     "tango nuevo", "chacarera", "son cubano", "bolero", "mambo", "salsa dura", "calypso", "soca",
     "rocksteady", "dub", "lovers rock", "zydeco", "bluegrass", "delta blues", "doo-wop",
     "northern soul", "yacht rock", "krautrock", "italo disco", "chanson", "yé-yé", "schlager",
-    "joik", "sea shanty", "irish trad", "flamenco", "rumba catalana", "huayno", "forró pé de serra",
+    "sami joik", "sea shanty", "irish trad", "flamenco", "rumba catalana", "huayno", "forró pé de serra",
     "samba rock", "choro", "maracatu", "brega", "tecnobrega", "manguebeat", "sertanejo raiz",
-    "jovem guarda", "exotica", "space age pop", "library music", "vaporwave",
+    "jovem guarda", "exotica", "space age pop", "library funk", "vaporwave",
     "dream pop", "math rock", "post-rock", "midwest emo", "trip hop", "jungle", "uk garage",
     "footwork", "gqom", "kuduro", "grime", "zouk", "gamelan", "throat singing",
     "hawaiian slack key", "bossa nova japonesa", "turkish psych", "persian pop",
@@ -873,7 +874,10 @@ def world_genre_pick(
 ) -> Find | None:
     """A track from a playlist named after the genre (searching tracks would only match titles)."""
     genre = genre or rng.choice(WORLD_GENRES)
-    playlists = [p for p in dz.search_playlists(genre, limit=6) if p.get("nb_tracks", 0) >= 10]
+    found = [p for p in dz.search_playlists(genre, limit=6) if p.get("nb_tracks", 0) >= 10]
+    # The search matches loosely ("joik" once brought "Joia Rara"): playlists named after the genre win. It also knows
+    # genres by tag ("rap nacional" brings "Essenciais do Rap Brasileiro"), so with none named the rest still count.
+    playlists = [p for p in found if named_after(p.get("title", ""), genre)] or found
     if not playlists:
         return None
     playlist = rng.choice(playlists)
@@ -940,10 +944,9 @@ def named_after(title: str, genre: str) -> bool:
     """Whether a playlist's title names the genre, however it's spelled ("Lo Fi", "lofi" and "lo-fi" alike)."""
     wanted = curation.normalize(genre).replace(" ", "")
     words = curation.normalize(title).split()
-    if any("".join(words[i:j]) == wanted for i in range(len(words)) for j in range(i + 1, len(words) + 1)):
-        return True
-    # Like _mentions: from 4 letters on, a longer word counts too ("Pagodes", "Pagodelícia").
-    return len(wanted) >= 4 and any(word.startswith(wanted) for word in words)
+    windows = ("".join(words[i:j]) for i in range(len(words)) for j in range(i + 1, len(words) + 1))
+    # Like _mentions: from 4 letters on, a longer last word counts too ("Pagodelícia", "Turkish Psychedelic").
+    return any(window == wanted or (len(wanted) >= 4 and window.startswith(wanted)) for window in windows)
 
 
 def genre_artists(dz: Deezer, genre: str, blocked: Collection[str] = frozenset()) -> list[dict]:

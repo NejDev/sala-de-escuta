@@ -775,6 +775,10 @@ class ServerTest(unittest.TestCase):
         names = {s["id"]: s["name"] for s in json.loads(raw)["sensations"]}
         self.assertEqual(names["deep-focus"], "Foco profundo")
 
+    def test_sensations_go_from_the_slowest_to_the_fastest(self):
+        ranges = [s["bpm"] for s in json.loads(self.request("/api/sensations")[1])["sensations"]]
+        self.assertGreater(len(ranges), 2)
+        self.assertEqual(ranges, sorted(ranges))
 
     def test_achievements_need_friends_and_their_own_switch(self):
         get = lambda: json.loads(self.request("/api/achievements")[1])

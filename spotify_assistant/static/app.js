@@ -108,6 +108,42 @@ const GENRE_SUGGESTIONS = [
   "Piseiro", "Rock", "Indie", "Pop", "Emo", "Metal", "Punk", "genre.electronic", "House", "Techno", "Lo-fi", "Jazz",
   "R&B", "Soul", "Reggaeton", "Afrobeats", "Amapiano", "City pop", "Shoegaze", "Hyperpop", "Bossa nova", "genre.classical",
 ];
+// Subgenres shown under each genre once it's picked in the roulette; each one brought playlists from the catalog's
+// search. Anything else can still be typed.
+const SUBGENRES = {
+  "Funk": ["Funk mandelão", "Brega funk", "Funk ostentação", "Funk automotivo", "Funk 150 bpm", "Funk antigo", "Funk consciente"],
+  "Trap": ["Trap brasileiro", "Plugg", "Rage", "Trap metal"],
+  "Rap": ["Rap nacional", "Boom bap", "Lo-fi hip hop", "Cloud rap", "Jazz rap", "Grime", "Horrorcore", "Old school hip hop"],
+  "Phonk": ["Drift phonk", "Brazilian phonk", "Memphis rap"],
+  "Sertanejo": ["Sertanejo raiz", "Sertanejo universitário", "Feminejo", "Arrocha"],
+  "Samba": ["Samba de raiz", "Pagode anos 90", "Samba-enredo", "Samba rock", "Partido-alto", "Samba-reggae"],
+  "MPB": ["Tropicália", "Clube da Esquina", "Nova MPB", "MPB anos 70", "MPB anos 80"],
+  "Forró": ["Forró pé de serra", "Xote", "Forró eletrônico", "Forró das antigas"],
+  "Rock": ["Classic rock", "Rock alternativo", "Grunge", "Post-punk", "Garage rock", "Rock psicodélico", "Stoner rock",
+    "Rock nacional", "Post-rock", "Math rock", "Prog rock", "Indie rock", "Rock anos 80"],
+  "Indie": ["Indie rock", "Indie pop", "Indie folk", "Indie brasileiro", "Indie sleaze", "Lo-fi indie"],
+  "Pop": ["Synthpop", "Dream pop", "Art pop", "Indie pop", "Bedroom pop", "Dance pop", "Pop rock"],
+  "Emo": ["Midwest emo", "Screamo", "Post-hardcore", "Pop punk", "Emo revival", "Emocore", "Emo rap", "Skramz", "Emo nacional"],
+  "Metal": ["Heavy metal", "Metalcore", "Deathcore", "Black metal", "Death metal", "Doom metal", "Thrash metal", "Nu metal",
+    "Prog metal", "Power metal", "Sludge metal", "Gothic metal", "Folk metal", "Metal alternativo", "Metal nacional"],
+  "Punk": ["Hardcore punk", "Pop punk", "Skate punk", "Crust punk", "Street punk", "Ska punk", "Oi punk", "Anarcho punk",
+    "Punk 77", "Punk rock nacional"],
+  "genre.electronic": ["Drum and bass", "Dubstep", "Trance", "IDM", "Ambient", "Synthwave", "UK garage", "Breakbeat",
+    "Hardstyle", "Jungle", "Electro"],
+  "House": ["Deep house", "Tech house", "Afro house", "Progressive house", "Acid house", "Melodic house"],
+  "Techno": ["Minimal techno", "Hard techno", "Acid techno", "Detroit techno", "Industrial techno", "Melodic techno"],
+  "Lo-fi": ["Lo-fi hip hop", "Chillhop", "Lo-fi jazz", "Lo-fi house"],
+  "Jazz": ["Bebop", "Cool jazz", "Hard bop", "Free jazz", "Jazz fusion", "Spiritual jazz", "Acid jazz", "Smooth jazz", "Nu jazz",
+    "Jazz brasileiro"],
+  "R&B": ["Neo soul", "Alt R&B", "New jack swing", "Quiet storm"],
+  "Soul": ["Northern soul", "Motown", "Southern soul", "Funk soul", "Soul brasileiro"],
+  "Reggaeton": ["Dembow", "Perreo", "Reggaeton old school", "Latin trap"],
+  "Afrobeats": ["Alté", "Afro-fusion", "Afropop", "Afroswing"],
+  "City pop": ["Shibuya-kei", "Japanese funk"],
+  "Shoegaze": ["Dream pop", "Blackgaze", "Nu gaze", "Slowcore"],
+  "Hyperpop": ["Digicore", "Glitchcore", "PC music"],
+  "genre.classical": ["Barroco", "Romantismo", "Ópera", "Minimalismo", "Piano clássico"],
+};
 const ROOM_LIGHT = "#EEE7D7";
 
 const state = {
@@ -863,6 +899,10 @@ function senseIntro() {
 
 function discoverIntro() {
   if (rouletteGenre().rare) state.filters.rouletteGenre = t("genre.rare");  // in the current language
+  const genre = genreField("roulette-genre", "rouletteGenre", t("discover.genre_label"), t("discover.genre_any"), false,
+    "roulette-genre-list");
+  const picker = genrePicker("rouletteGenre", genre.querySelector("input"));
+  genre.querySelector("input").addEventListener("input", () => picker.refresh());
   const seed = h("input", {
     class: "adder-input",
     id: "seed-input",
@@ -879,8 +919,8 @@ function discoverIntro() {
   return [
     viewHead("roulette", t("view.discover"), t("discover.description"), pauseNotice()),
     h("div", { class: "filters" },
-      genreField("roulette-genre", "rouletteGenre", t("discover.genre_label"), t("discover.genre_any"), false,
-        "roulette-genre-list"),
+      genre,
+      picker.element,
       ...sizeFilters(),
       h("p", { class: "filter-hint" }, t("discover.size_hint")),
       listenersHint(),
@@ -962,9 +1002,55 @@ function listenersHint() {
     h("a", { class: "text-button", href: "https://www.last.fm/", target: "_blank", rel: "noopener" }, t("filter.listeners_hint")));
 }
 
+function genreName(genre) {
+  return genre.startsWith("genre.") ? t(genre) : genre;
+}
+
 function genreList(id = "genre-list", first = []) {
-  const genres = GENRE_SUGGESTIONS.map((genre) => (genre.startsWith("genre.") ? t(genre) : genre));
-  return h("datalist", { id }, [...first, ...genres].map((genre) => h("option", { value: genre })));
+  const subgenres = Object.values(SUBGENRES).flat();
+  const genres = [...new Set([...first, ...GENRE_SUGGESTIONS.map(genreName), ...subgenres])];
+  return h("datalist", { id }, genres.map((genre) => h("option", { value: genre })));
+}
+
+/** The genres in sight: one row of them and, under the one picked (or typed), a row with its subgenres. */
+function genrePicker(key, input) {
+  const element = h("div", { class: "genre-picker" });
+  let chosen = null;  // the genre whose subgenres are open: a subgenre can sit under two of them
+  const same = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  const pick = (value, parent) => {
+    chosen = parent;
+    input.value = value;
+    state.filters[key] = value;
+    saveFilters();
+    refresh();
+  };
+  const chip = (label, pressed, onclick, extra = {}) =>
+    h("button", { class: "genre-chip", type: "button", "aria-pressed": String(pressed), onclick, ...extra }, label);
+  function refresh() {
+    const value = input.value;
+    const holds = (parent) => same(value, genreName(parent)) || SUBGENRES[parent].some((sub) => same(value, sub));
+    const parents = Object.keys(SUBGENRES);
+    const open = (chosen && holds(chosen) && chosen) || parents.find(holds) || null;
+    chosen = open;
+    element.replaceChildren(
+      h("div", { class: "genre-row", role: "group", "aria-label": t("discover.genres_label") },
+        chip(t("genre.rare"), same(value, t("genre.rare")), () => pick(t("genre.rare"), null)),
+        parents.map((parent) => chip(genreName(parent), open === parent && same(value, genreName(parent)),
+          () => pick(genreName(parent), parent), { "aria-expanded": String(open === parent) }))),
+      open && h("div", { class: "genre-row genre-subs", role: "group",
+        "aria-label": t("discover.subgenres_label", { genre: genreName(open) }) },
+        SUBGENRES[open].map((sub) => chip(sub, same(value, sub), () => pick(sub, open)))));
+    // On a phone the row scrolls sideways: bring the open genre into sight.
+    requestAnimationFrame(() => {
+      const row = element.querySelector(".genre-row");
+      const current = row?.querySelector('[aria-expanded="true"]');
+      if (current && row.scrollWidth > row.clientWidth) {
+        row.scrollLeft = current.offsetLeft - (row.clientWidth - current.offsetWidth) / 2;
+      }
+    });
+  }
+  refresh();
+  return { element, refresh };
 }
 
 /** The roulette's genre, or "little-known genre" (matched in either language, so a saved choice survives a switch). */
