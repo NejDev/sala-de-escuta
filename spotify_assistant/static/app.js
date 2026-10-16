@@ -84,12 +84,13 @@ function langOptions() {
 // Screens that aren't playlists: the key becomes the URL #.
 const VIEWS = {
   home: "view.home", sensations: "view.sensations", discover: "view.discover", news: "view.news", artists: "view.artists",
-  reviews: "view.reviews", friends: "view.friends",
+  reviews: "view.reviews", friends: "view.friends", achievements: "view.achievements",
 };
 const VIEW_ALIASES = {
   inicio: "home", sensacoes: "sensations", descobrir: "discover", novidades: "news", artistas: "artists",
-  resenhas: "reviews", amigos: "friends",
+  resenhas: "reviews", amigos: "friends", conquistas: "achievements",
 };
+const MAX_HIGHLIGHTS = 10;  // the server's achievements.MAX_HIGHLIGHTS
 const EVERY = ["daily", "weekly", "monthly"];
 // Home: the ready-made sensation suggested for each time of day (hour it starts -> preset id).
 const MOMENTS = [[5, "work-groove"], [9, "deep-focus"], [12, "work-groove"], [14, "deep-focus"], [18, "workout"], [21, "wind-down"]];
@@ -272,7 +273,10 @@ function colorOf(playlist) {
 }
 
 async function loadOverview() {
+  const before = state.overview?.achievements?.new ?? 0;
   state.overview = await api("/api/overview");
+  const fresh = state.overview.achievements?.new || 0;
+  if (fresh > before && state.view !== "achievements") toast(t("ach.new_toast"));
   renderShelf();
   renderAccount();
   if (state.view === "playlist" && current()) renderSleeve();
@@ -308,7 +312,7 @@ async function logout() {
 /** Opens a playlist by key or one of the VIEWS screens. */
 function go(key) {
   key = VIEW_ALIASES[key] || key;
-  if (key === "friends" && state.overview && !state.overview.friends) key = "home";
+  if ((key === "friends" || key === "achievements") && state.overview && !state.overview.friends) key = "home";
   return key in VIEWS ? openView(key) : select(key);
 }
 
@@ -353,7 +357,7 @@ async function loadDetail() {
 function renderShelf() {
   const onPlaylist = state.view === "playlist";
   // A dot in the playlist's color; it becomes an equalizer while that playlist is playing.
-  const item = ({ key, label, color, uri, current, explore, number }) => h("button", {
+  const item = ({ key, label, color, uri, current, explore, number, badge }) => h("button", {
     class: explore ? "nav-item is-explore" : "nav-item",
     type: "button",
     style: color ? `--spine: ${color}` : null,
@@ -363,7 +367,8 @@ function renderShelf() {
     onclick: () => go(key),
   },
     h("span", { class: "nav-mark", "aria-hidden": "true" }, h("i"), h("i"), h("i")),
-    h("span", null, label));
+    h("span", null, label),
+    badge > 0 && h("span", { class: "nav-badge", "aria-label": t("ach.new_badge", { count: badge }) }, String(badge)));
   const playlists = state.overview.playlists.map((playlist, index) => item({
     key: playlist.key,
     label: playlist.name,
@@ -372,9 +377,10 @@ function renderShelf() {
     current: onPlaylist && playlist.key === state.selected,
     number: index + 1,
   }));
-  const views = Object.entries(VIEWS).filter(([key]) => key !== "friends" || state.overview.friends);
+  const views = Object.entries(VIEWS).filter(([key]) => (key !== "friends" && key !== "achievements") || state.overview.friends);
   const room = views.map(([key, label], index) => item({
     key,
+    badge: key === "achievements" ? state.overview.achievements?.new : 0,
     label: t(label),
     explore: true,
     current: state.view === key,
@@ -709,6 +715,7 @@ async function openView(key) {
   if (key === "home") loadRecent();
   if (key === "friends") loadFriends();
   if (key === "reviews") loadReviews();
+  if (key === "achievements") loadAchievements();
   if ((key === "sensations" || key === "home") && !state.sensations) {
     try {
       state.sensations = await api("/api/sensations");
@@ -765,7 +772,7 @@ function renderIntro() {
   setMood(huntHere()?.color || moment?.color || ROOM_LIGHT);
   const intro = {
     home: homeView, sensations: senseIntro, discover: discoverIntro, news: newsIntro, artists: artistsIntro,
-    reviews: reviewsView, friends: friendsView,
+    reviews: reviewsView, friends: friendsView, achievements: achievementsView,
   }[state.view];
   sleeve.replaceChildren(...intro());
 }
@@ -973,6 +980,7 @@ function friendsView() {
   }
   const card = (friend) => h("li", { class: "friend-card" },
     h("p", { class: "friend-name" }, friend.name),
+    friend.medals?.length > 0 && h("ul", { class: "highlight-row" }, friend.medals.map(highlightChip)),
     friend.affinity
       ? h("p", { class: "friend-percent" }, `${friend.affinity.percent}%`, h("small", null, t("friends.percent_label")))
       : h("p", { class: "friend-percent is-empty" }, "—", h("small", null, t("friends.little"))),
@@ -990,6 +998,7 @@ function friendsView() {
     h("section", { class: "home-section" },
       h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("friends.feed"))),
       feedList(data.feed)),
+    achievementsSwitch(),
     h("p", { class: "meta friends-me" }, t("friends.me", { count: data.me.plays_7d }), " ", t("friends.updates"), " ",
       h("button", { class: "text-button", type: "button", onclick: leaveFriends },
         t(state.confirmLeave ? "friends.leave_confirm" : "friends.leave"))),
@@ -1322,6 +1331,283 @@ async function leaveFriends() {
     toast(error.message, true);
   }
   renderIntro();
+}
+
+// ---------- Achievements: hidden medals and monthly titles among the people taking part (inside Friends)
+
+async function loadAchievements() {
+  try {
+    state.achievements = await api("/api/achievements");
+  } catch (error) {
+    state.achievements = { error: error.message };
+  }
+  if (state.view === "achievements") renderIntro();
+}
+
+/** New medals show as a number on the tab; the server works them out every 15 minutes. */
+async function pollMedals() {
+  if (!state.overview?.friends || document.hidden) return;
+  let summary;
+  try {
+    summary = await api("/api/achievements/summary");
+  } catch {
+    return;
+  }
+  const before = state.overview.achievements?.new || 0;
+  state.overview.achievements = summary;
+  if (summary.new > before && state.view !== "achievements") toast(t("ach.new_toast"));
+  if (summary.new !== before) renderShelf();
+}
+
+function achievementsView() {
+  const data = state.achievements;
+  const head = viewHead("keep", t("view.achievements"), t("ach.description"));
+  if (!data) return [head, h("p", { class: "meta" }, t("common.loading"))];
+  if (data.error) return [head, h("p", { class: "meta is-warning" }, data.error)];
+  if (!data.sharing) {
+    return [head, h("section", { class: "friends-join" },
+      h("p", null, t("ach.need_friends")),
+      h("button", { class: "play-button", type: "button", onclick: () => go("friends") }, t("ach.go_friends")))];
+  }
+  if (!data.on) {
+    return [head, h("section", { class: "friends-join" },
+      h("p", null, t("ach.invite")),
+      h("p", { class: "meta" }, t("ach.notice")),
+      h("button", { class: "play-button", type: "button", onclick: joinAchievements }, t("ach.join")))];
+  }
+  return [
+    head,
+    revealSection(data),
+    profileSection(data),
+    raceSection(data.race, t("ach.race"), t("ach.race_empty")),
+    h("section", { class: "home-section" },
+      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("ach.mine"))),
+      data.me.medals.length ? h("ul", { class: "medal-grid" }, data.me.medals.map((medal) => medalCard(medal, data, true)))
+        : h("p", { class: "meta" }, t("ach.none_yet"))),
+    roomSection(data),
+    data.months.length > 0 && h("section", { class: "home-section" },
+      h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("ach.months"))),
+      data.months.map((month) => raceSection(month.titles, monthLabel(month.month), "", true))),
+    listenersHint(),
+    h("p", { class: "meta friends-me" }, t("ach.leave_text"), " ",
+      h("button", { class: "text-button", type: "button", onclick: () => leaveAchievements(false) }, t("ach.leave")), " ",
+      h("button", { class: "text-button", type: "button", onclick: () => leaveAchievements(true) },
+        t(state.confirmForgetMedals ? "ach.forget_confirm" : "ach.forget"))),
+  ].filter(Boolean);  // renderIntro spreads the list into the DOM: a false or null would show as text
+}
+
+/** Inside Friends: the switch, or a way to the tab. */
+function achievementsSwitch() {
+  const on = state.overview?.achievements?.on;
+  return h("section", { class: "home-section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("view.achievements"))),
+    on ? h("p", { class: "meta" }, t("ach.leave_text"), " ",
+      h("button", { class: "text-button", type: "button", onclick: () => go("achievements") }, t("ach.open_tab")))
+      : [h("p", { class: "meta" }, t("ach.invite"), " ", t("ach.notice")),
+        h("button", { class: "play-button", type: "button", onclick: joinAchievements }, t("ach.join"))]);
+}
+
+async function joinAchievements() {
+  try {
+    state.achievements = await api("/api/achievements", { on: true });
+    toast(state.achievements.message);
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  await loadOverview();
+  if (state.view === "friends") renderIntro();
+  else go("achievements");
+}
+
+/** Leaving keeps the medals for a return; erasing takes two clicks. */
+async function leaveAchievements(forget) {
+  if (forget && !state.confirmForgetMedals) {
+    state.confirmForgetMedals = true;
+    renderIntro();
+    return;
+  }
+  state.confirmForgetMedals = false;
+  try {
+    state.achievements = await api("/api/achievements", { on: false, forget });
+    toast(state.achievements.message);
+  } catch (error) {
+    toast(error.message, true);
+  }
+  renderIntro();
+  loadOverview();
+}
+
+/** A badge whose shape and colors come from the medal's id: nothing in it hints at the rule. */
+function medalEmblem(medal) {
+  let hash = 0;
+  for (const char of medal.id) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  const shapes = ["is-round", "is-hex", "is-shield", "is-star"];
+  return h("span", { class: `medal-emblem ${shapes[hash % shapes.length]}`, style: `--hue: ${hash % 360}`, "aria-hidden": "true" },
+    medal.name.slice(0, 1));
+}
+
+function songLine(song) {
+  return h("span", { class: "medal-song" },
+    song.image ? h("img", { class: "track-art", src: song.image, alt: "", loading: "lazy" }) : h("span", { class: "track-art" }),
+    h("span", { class: "track-text" },
+      h("span", { class: "track-title" }, song.title),
+      h("span", { class: "track-sub" }, song.artist)));
+}
+
+function medalCard(medal, data, own) {
+  const rarity = own && medal.holders === 1 ? t("ach.only_you")
+    : t("ach.holders", { count: medal.holders, total: data.participants });
+  return h("li", { class: "medal-card" },
+    medalEmblem(medal),
+    h("div", { class: "medal-text" },
+      h("p", { class: "medal-name" }, medal.name),
+      own && medal.how && h("p", { class: "meta" }, medal.how),
+      h("p", { class: "meta" }, t("ach.earned_on", { date: new Date(medal.at * 1000).toLocaleDateString(LOCALE) }), " · ", rarity),
+      medal.lastfm && h("p", { class: "meta" }, lastfmLine(medal.lastfm)),
+      medal.song && h("button", {
+        class: "medal-song-button",
+        type: "button",
+        title: t("action.play_title", { title: medal.song.title }),
+        onclick: () => command({ action: "play", uris: [medal.song.uri] }),
+      }, songLine(medal.song))));
+}
+
+/** New medals one at a time: the card turns over to show what was earned (and how). */
+function revealSection(data) {
+  const fresh = data.new.map((id) => data.me.medals.find((medal) => medal.id === id)).filter(Boolean);
+  if (!fresh.length) return null;
+  const index = Math.min(state.reveal || 0, fresh.length - 1);
+  const medal = fresh[index];
+  const open = state.revealOpen === medal.id;
+  const last = index === fresh.length - 1;
+  return h("section", { class: "home-section reveal" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("ach.new_title", { count: fresh.length }))),
+    h("button", {
+      class: `reveal-card${open ? " is-open" : ""}`,
+      type: "button",
+      "aria-label": open ? medal.name : t("ach.reveal"),
+      onclick: () => { state.revealOpen = medal.id; renderIntro(); },
+    },
+      h("span", { class: "reveal-face reveal-back", "aria-hidden": "true" }, "?"),
+      h("span", { class: "reveal-face reveal-front", "aria-hidden": open ? null : "true" },
+        medalEmblem(medal),
+        h("strong", { class: "medal-name" }, medal.name),
+        h("span", { class: "meta" }, medal.how),
+        medal.song && songLine(medal.song))),
+    !open && h("p", { class: "meta" }, t("ach.reveal")),
+    open && h("button", { class: "play-button", type: "button", onclick: () => nextReveal(fresh, last) },
+      t(last ? "ach.done" : "ach.next")));
+}
+
+async function nextReveal(fresh, last) {
+  if (!last) {
+    state.reveal = (state.reveal || 0) + 1;
+    renderIntro();
+    return;
+  }
+  try {
+    state.overview.achievements = await api("/api/achievements/seen", { ids: fresh.map((medal) => medal.id) });
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  state.reveal = 0;
+  state.revealOpen = null;
+  renderShelf();
+  await loadAchievements();
+}
+
+function highlightChip(medal) {
+  return h("li", { class: "highlight-chip", title: medal.name }, medalEmblem(medal), h("span", null, medal.name));
+}
+
+function profileSection(data) {
+  const me = data.me;
+  const editing = Boolean(state.highlightDraft);
+  return h("section", { class: "home-section profile-card" },
+    h("div", { class: "section-head" },
+      h("h2", { class: "section-title" }, me.name),
+      h("p", { class: "meta" }, t("ach.count", { count: me.count, total: data.total }))),
+    editing ? highlightPicker(me)
+      : me.highlights.length ? h("ul", { class: "highlight-row" }, me.highlights.map(highlightChip))
+        : h("p", { class: "meta" }, t("ach.no_highlights")),
+    !editing && me.medals.length > 0 && h("button", {
+      class: "text-button",
+      type: "button",
+      onclick: () => { state.highlightDraft = me.highlights.map((medal) => medal.id); renderIntro(); },
+    }, t("ach.pick_highlights")));
+}
+
+function highlightPicker(me) {
+  const toggle = (id, input) => {
+    const draft = state.highlightDraft;
+    if (!input.checked) {
+      state.highlightDraft = draft.filter((other) => other !== id);
+    } else if (draft.length >= MAX_HIGHLIGHTS) {
+      input.checked = false;
+      toast(t("ach.highlights_hint", { max: MAX_HIGHLIGHTS }));
+    } else {
+      draft.push(id);
+    }
+  };
+  return h("div", { class: "highlight-picker" },
+    h("p", { class: "meta" }, t("ach.highlights_hint", { max: MAX_HIGHLIGHTS })),
+    h("ul", { class: "highlight-options" }, me.medals.map((medal) => h("li", null,
+      h("label", { class: "highlight-option" },
+        h("input", { type: "checkbox", checked: state.highlightDraft.includes(medal.id), onchange: (event) => toggle(medal.id, event.target) }),
+        medalEmblem(medal),
+        h("span", null, medal.name))))),
+    h("div", { class: "actions" },
+      h("button", { class: "play-button", type: "button", onclick: saveHighlights }, t("ach.save_highlights")),
+      h("button", { class: "text-button", type: "button", onclick: () => { state.highlightDraft = null; renderIntro(); } },
+        t("ach.cancel"))));
+}
+
+async function saveHighlights() {
+  try {
+    state.achievements = await api("/api/achievements/highlights", { ids: state.highlightDraft });
+    toast(state.achievements.message);
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
+  state.highlightDraft = null;
+  renderIntro();
+}
+
+function raceSection(titles, heading, empty, past = false) {
+  return h("section", { class: past ? "race is-past" : "home-section race" },
+    h("div", { class: "section-head" }, h(past ? "h3" : "h2", { class: "section-title" }, heading)),
+    titles.length ? h("ul", { class: "race-list" }, titles.map((title) => h("li", { class: "race-item" },
+      h("p", { class: "race-title" }, title.name),
+      h("p", { class: "meta" }, listFormat.format(title.holders), " · ", title.value))))
+      : h("p", { class: "meta" }, empty));
+}
+
+function monthLabel(month) {
+  const [year, number] = month.split("-").map(Number);
+  return new Date(year, number - 1, 1).toLocaleDateString(LOCALE, { month: "long", year: "numeric" });
+}
+
+function roomSection(data) {
+  const card = (person) => {
+    const open = state.openPerson === person.id;
+    return h("li", { class: open ? "friend-card is-open" : "friend-card" },
+      h("p", { class: "friend-name" }, person.name),
+      h("p", { class: "meta" }, t("ach.count", { count: person.count, total: data.total })),
+      person.highlights.length > 0 && h("ul", { class: "highlight-row" }, person.highlights.map(highlightChip)),
+      person.medals.length > 0 && h("button", {
+        class: "text-button",
+        type: "button",
+        "aria-expanded": String(open),
+        onclick: () => { state.openPerson = open ? null : person.id; renderIntro(); },
+      }, t(open ? "ach.hide_medals" : "ach.see_medals")),
+      open && h("ul", { class: "medal-grid is-compact" }, person.medals.map((medal) => medalCard(medal, data, false))));
+  };
+  return h("section", { class: "home-section" },
+    h("div", { class: "section-head" }, h("h2", { class: "section-title" }, t("ach.room"))),
+    data.people.length ? h("ul", { class: "friend-grid" }, data.people.map(card)) : h("p", { class: "meta" }, t("ach.room_empty")));
 }
 
 // ---------- Artists: a band's or artist's releases, with members' solo work and features
@@ -2655,6 +2941,7 @@ async function init() {
   await Promise.all([go(state.initialKey), refreshPlayer(), pollHunt()]);
   schedulePlayerPoll();
   setInterval(tick, 500);
+  setInterval(pollMedals, 120_000);
   if (!memory.get("tour-seen")) openTour(0);
 }
 

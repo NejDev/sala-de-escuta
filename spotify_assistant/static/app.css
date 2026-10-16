@@ -1067,6 +1067,47 @@ a.brand { color: inherit; text-decoration: none; }
 .tracks.feed { margin-top: 0; }
 .friends-access { max-width: 680px; }
 
+/* Achievements: medals, the reveal card, highlights and the month's race */
+.medal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+.medal-grid.is-compact { grid-template-columns: 1fr; margin-top: 12px; }
+.medal-card { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; border-radius: 8px; background: var(--velvet); }
+.medal-text { min-width: 0; }
+.medal-name { margin: 0; font-weight: 700; }
+.medal-text .meta { margin: 2px 0 0; }
+.medal-emblem { flex: none; display: grid; place-items: center; width: 52px; height: 52px; color: var(--ink); font-size: 20px; font-weight: 800;
+  background: radial-gradient(circle at 35% 30%, hsl(var(--hue) 70% 80%), hsl(var(--hue) 55% 48%)); }
+.medal-emblem.is-round { border-radius: 50%; }
+.medal-emblem.is-hex { clip-path: polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0 50%); }
+.medal-emblem.is-shield { clip-path: polygon(50% 0, 100% 15%, 92% 70%, 50% 100%, 8% 70%, 0 15%); }
+.medal-emblem.is-star { clip-path: polygon(50% 0, 62% 35%, 98% 35%, 69% 57%, 79% 91%, 50% 70%, 21% 91%, 31% 57%, 2% 35%, 38% 35%); font-size: 14px; }
+.medal-song-button { display: block; margin-top: 8px; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+.medal-song { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.medal-song .track-art { width: 36px; height: 36px; }
+.reveal-card { position: relative; display: block; width: min(340px, 100%); min-height: 240px; margin: 0 0 14px; padding: 0; border: 0;
+  border-radius: 12px; background: none; color: inherit; cursor: pointer; perspective: 900px; }
+.reveal-face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  padding: 20px; border-radius: 12px; text-align: center; backface-visibility: hidden; transition: transform .6s ease; }
+.reveal-back { background: linear-gradient(135deg, var(--velvet-raised), var(--line)); color: var(--mood); font-size: 64px; font-weight: 800; }
+.reveal-front { background: var(--velvet); transform: rotateY(180deg); }
+.reveal-card.is-open .reveal-back { transform: rotateY(180deg); }
+.reveal-card.is-open .reveal-front { transform: rotateY(360deg); }
+@media (prefers-reduced-motion: reduce) { .reveal-face { transition: none; } }
+.highlight-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; padding: 0; list-style: none; }
+.highlight-chip { display: flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; background: var(--velvet-raised); font-size: 14px; }
+.highlight-chip .medal-emblem { width: 28px; height: 28px; font-size: 12px; }
+.highlight-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 8px 0; padding: 0; list-style: none; }
+.highlight-option { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.highlight-option .medal-emblem { width: 32px; height: 32px; font-size: 13px; }
+.race-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.race-item { padding: 12px 16px; border-radius: 8px; background: var(--velvet); }
+.race-title { margin: 0; font-weight: 700; }
+.race.is-past { margin-top: 12px; }
+.race.is-past .section-title { font-size: 1.125rem; }
+.friend-card.is-open { grid-column: 1 / -1; }
+.friend-card .highlight-row { margin-bottom: 4px; }
+.medal-grid.is-compact .medal-card { background: var(--velvet-raised); }
+.nav-badge { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--mood); color: var(--ink); font-size: 12px; font-weight: 700; }
+
 /* Reviews: half-star ratings, a few words, private or open to the room. */
 .review-start { max-width: 680px; }
 .review-link { display: grid; gap: 8px; }
