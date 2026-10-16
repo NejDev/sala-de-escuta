@@ -274,9 +274,13 @@ function colorOf(playlist) {
 
 /** Announces new medals once per browser: the count already announced is kept, so a reload stays quiet. */
 function announceMedals(count) {
-  const announced = Number(memory.get("medals-announced")) || 0;
+  // Without browser storage the count is kept in memory for this session only.
+  const announced = Number(memory.get("medals-announced") ?? state.medalsAnnounced ?? 0) || 0;
   if (count > announced && state.view !== "achievements") toast(t("ach.new_toast"));
-  if (count !== announced) memory.set("medals-announced", String(Math.max(count, 0)));
+  if (count !== announced) {
+    memory.set("medals-announced", String(Math.max(count, 0)));
+    state.medalsAnnounced = Math.max(count, 0);
+  }
 }
 
 async function loadOverview() {
