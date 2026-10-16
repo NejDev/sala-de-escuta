@@ -357,6 +357,16 @@ class CloseMonthTest(Room):
         months = achievements.view("ana", False, no_fans, now=at(month=11, day=1))["months"]
         self.assertEqual([month["month"] for month in months], ["2026-10"])
 
+    def test_only_participants_compete(self):
+        self.join("paulo", "ana")
+        achievements.close_month({"paulo": [], "ana": []}, no_fans, False, now=at(day=20))  # sets the first month
+        plays = {"paulo": [play(uri=f"p{n}", when=at(day=1 + n % 28, hour=1)) for n in range(60)], "ana": [],
+                 "bia": [play(uri=f"b{n}", when=at(day=1 + n % 28, hour=1)) for n in range(80)]}  # bia is not in
+        achievements.close_month(plays, no_fans, False, now=at(month=11, day=1))
+        room = json.loads((self.data / "achievements.json").read_text(encoding="utf-8"))
+        self.assertEqual(room["months"]["2026-10"]["marathoner"], {"users": ["paulo"], "value": 60})
+        self.assertFalse((self.data / "users" / "bia" / "achievements.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

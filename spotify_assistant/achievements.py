@@ -437,6 +437,7 @@ def close_month(plays_by_user: dict[str, list[dict]], fans, lastfm: bool, now: f
                 datas[user_id] = load(user_id)
             except Unreadable as err:
                 log.warning("Achievements left alone: %s", err)
+        datas = {user_id: data for user_id, data in datas.items() if data["on"]}  # only participants compete
         firsts = {user_id: data["stats"]["artists"] for user_id, data in datas.items()}
         titles = monthly.standings(month, {user_id: plays_by_user[user_id] for user_id in datas}, firsts, fans)
         room["months"][month] = titles
