@@ -1464,7 +1464,7 @@ function medalCard(medal, data, own) {
       h("p", { class: "medal-name" }, medal.name),
       own && medal.how && h("p", { class: "meta" }, medal.how),
       h("p", { class: "meta" }, t("ach.earned_on", { date: new Date(medal.at * 1000).toLocaleDateString(LOCALE) }), " · ", rarity),
-      medal.lastfm && h("p", { class: "meta" }, lastfmLine(medal.lastfm)),
+      own && medal.lastfm && h("p", { class: "meta" }, lastfmLine(medal.lastfm)),
       medal.song && h("button", {
         class: "medal-song-button",
         type: "button",

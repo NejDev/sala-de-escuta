@@ -216,6 +216,20 @@ class ViewTest(Room):
         self.assertNotIn("how", shown)
         self.assertEqual(shown["holders"], 1)
 
+    def test_the_lastfm_line_only_for_whoever_earned_it(self):
+        heard = {"listeners": 30, "url": "https://www.last.fm/music/x"}
+        data = achievements.load("paulo")
+        data["earned"]["rare-50"] = {"at": at(), "song": None, "lastfm": heard}
+        data["highlights"] = ["rare-50"]
+        achievements._write(self.data / "users" / "paulo" / "achievements.json", data)
+        me = achievements.view("paulo", True, no_fans, now=at())["me"]
+        self.assertEqual([medal["lastfm"] for medal in me["medals"] + me["highlights"] if medal.get("lastfm")],
+                         [heard, heard])
+        paulo = next(person for person in achievements.view("ana", True, no_fans, now=at())["people"]
+                     if person["id"] == "paulo")
+        self.assertEqual(len(paulo["highlights"]), 1)
+        self.assertFalse(any("lastfm" in medal for medal in paulo["medals"] + paulo["highlights"]))
+
     def test_a_medal_nobody_earned_never_shows(self):
         seen = self.view("ana")
         earned = set(achievements.load("paulo")["earned"]) | set(achievements.load("ana")["earned"])

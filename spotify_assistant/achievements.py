@@ -605,10 +605,10 @@ def highlights_of(user_id: str, lastfm: bool) -> list[dict]:
 
 def _medal_view(medal_id: str, got: dict, holders: int, own: bool) -> dict:
     name, how = medal_texts(medal_id)
-    shown = {"id": medal_id, "name": name, "at": got["at"], "song": got.get("song"), "lastfm": got.get("lastfm"),
-             "holders": holders}
-    if own:
-        shown["how"] = how  # only whoever earned it learns how
+    shown = {"id": medal_id, "name": name, "at": got["at"], "song": got.get("song"), "holders": holders}
+    if own:  # only whoever earned it learns how (a Last.fm count would hint at it too)
+        shown["how"] = how
+        shown["lastfm"] = got.get("lastfm")
     return shown
 
 
