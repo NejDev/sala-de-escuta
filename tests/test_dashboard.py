@@ -143,6 +143,48 @@ class PauseMessageTest(unittest.TestCase):
         self.assertIn("esse tipo de pedido", dashboard.spotify_message(SpotifyError(429, "x", family="albums")))
 
 
+class SleepySpotify:
+    """Answers 404 (no active device) unless a device is named, like Spotify does."""
+
+    def __init__(self, devices):
+        self.listed = devices
+        self.played = []
+
+    def devices(self):
+        return self.listed
+
+    def play(self, *, context_uri=None, uris=None, offset_uri=None, device_id=None):
+        from spotify_assistant.api import SpotifyError
+
+        if device_id is None:
+            raise SpotifyError(404, "Player command failed: No active device found")
+        self.played.append((device_id, uris))
+
+
+class PlayTest(unittest.TestCase):
+    def setUp(self):
+        i18n.use("pt")
+        self.addCleanup(i18n.use, i18n.DEFAULT)
+
+    def test_wakes_the_computer_first(self):
+        sp = SleepySpotify([{"id": "phone", "type": "Smartphone"}, {"id": "pc", "type": "Computer"}])
+        dashboard.App._play(sp, None, ["spotify:track:1"], None)
+        self.assertEqual(sp.played, [("pc", ["spotify:track:1"])])
+
+    def test_skips_restricted_devices(self):
+        sp = SleepySpotify([{"id": "tv", "type": "Computer", "is_restricted": True}, {"id": "phone", "type": "Smartphone"}])
+        dashboard.App._play(sp, None, ["spotify:track:1"], None)
+        self.assertEqual(sp.played, [("phone", ["spotify:track:1"])])
+
+    def test_says_so_when_nothing_can_play(self):
+        for listed in ([], [{"id": "tv", "type": "TV", "is_restricted": True}]):
+            sp = SleepySpotify(listed)
+            with self.assertRaises(dashboard.UserError) as error:
+                dashboard.App._play(sp, None, ["spotify:track:1"], None)
+            self.assertIn("Nenhum Spotify aberto", str(error.exception))
+            self.assertEqual(sp.played, [])
+
+
 class FakeCounts:
     """Stands in for the cached Last.fm lookups: no request ever goes out."""
 

@@ -574,7 +574,8 @@ class App:
             if err.status != 404:
                 raise
             # No active device: wake the open Spotify (preferably the computer's).
-            devices = sp.devices()
+            # Restricted devices (some speakers and TVs) refuse Web API commands, so they can't be woken.
+            devices = [d for d in sp.devices() if not d.get("is_restricted")]
             if not devices:
                 raise UserError(t("err.no_device_open"), 409) from None
             device = next((d for d in devices if d.get("type") == "Computer"), devices[0])
